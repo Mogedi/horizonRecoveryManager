@@ -680,6 +680,14 @@ export default function DealPanel({
                   {layer2Error}
                 </div>
               )}
+              {layer2State === 'done' && (
+                <button
+                  onClick={startLayer2}
+                  className="text-xs text-gray-400 hover:text-gray-600 mb-4"
+                >
+                  ↻ Refresh contacts & activity from HubSpot
+                </button>
+              )}
 
               {/* AI Summary */}
               {layer2State === 'done' && (

@@ -213,6 +213,51 @@ function FlagGroup({
   )
 }
 
+function BriefingModal({ onClose }: { onClose: () => void }) {
+  const [state, setState] = useState<'loading' | 'done' | 'error'>('loading')
+  const [briefing, setBriefing] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    fetch('/api/briefing', { method: 'POST' })
+      .then(async r => {
+        if (!r.ok) {
+          const body = await r.json().catch(() => ({}))
+          throw new Error(body?.error ?? `Failed: ${r.status}`)
+        }
+        return r.json()
+      })
+      .then(data => { setBriefing(data.briefing); setState('done') })
+      .catch(e => { setError(e.message); setState('error') })
+  }, [])
+
+  return (
+    <>
+      <div className="fixed inset-0 z-50 bg-black/40" onClick={onClose} />
+      <div className="fixed inset-x-4 top-16 bottom-8 z-50 max-w-3xl mx-auto bg-white rounded-xl shadow-2xl flex flex-col overflow-hidden">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
+          <h2 className="text-lg font-semibold text-gray-900">Daily Briefing</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-xl leading-none">✕</button>
+        </div>
+        <div className="flex-1 overflow-auto px-6 py-5">
+          {state === 'loading' && (
+            <div className="flex items-center gap-3 text-sm text-gray-500">
+              <div className="w-4 h-4 border-2 border-gray-300 border-t-gray-700 rounded-full animate-spin" />
+              Generating your briefing — this may take 20–30 seconds…
+            </div>
+          )}
+          {state === 'error' && (
+            <p className="text-sm text-red-600">{error}</p>
+          )}
+          {state === 'done' && briefing && (
+            <p className="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap">{briefing}</p>
+          )}
+        </div>
+      </div>
+    </>
+  )
+}
+
 function DashboardContent() {
   const searchParams = useSearchParams()
   const [data, setData] = useState<DealsResponse | null>(null)
@@ -220,6 +265,7 @@ function DashboardContent() {
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
   const [selectedDealId, setSelectedDealId] = useState<string | null>(null)
+  const [showBriefing, setShowBriefing] = useState(false)
   const dealParamHandled = useRef(false)
 
   const fetchDeals = useCallback(async () => {
@@ -302,6 +348,12 @@ function DashboardContent() {
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <button
+            onClick={() => setShowBriefing(true)}
+            className="px-3 py-1.5 text-sm text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+          >
+            Daily Briefing
+          </button>
+          <button
             onClick={fetchDeals}
             disabled={loading || syncing}
             className="px-3 py-1.5 text-sm text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-40 transition-colors"
@@ -374,6 +426,11 @@ function DashboardContent() {
           fetchDeals()
         }}
       />
+    )}
+
+    {/* Daily Briefing modal */}
+    {showBriefing && (
+      <BriefingModal onClose={() => setShowBriefing(false)} />
     )}
     </>
   )

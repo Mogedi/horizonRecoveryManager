@@ -5,16 +5,18 @@ const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 })
 
-export async function callClaude(prompt: string): Promise<string> {
+const DEFAULT_SYSTEM =
+  'You are a case analyst for Horizon Recovery LLC, a surplus funds recovery firm. ' +
+  'You analyze HubSpot CRM activity for deals to help the owner prioritize their attention. ' +
+  'Always respond with valid JSON as instructed — no markdown, no preamble.'
+
+export async function callClaude(prompt: string, systemPrompt?: string): Promise<string> {
   let response
   try {
     response = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 1024,
-      system:
-        'You are a case analyst for Horizon Recovery LLC, a surplus funds recovery firm. ' +
-        'You analyze HubSpot CRM activity for deals to help the owner prioritize their attention. ' +
-        'Always respond with valid JSON as instructed — no markdown, no preamble.',
+      system: systemPrompt ?? DEFAULT_SYSTEM,
       messages: [{ role: 'user', content: prompt }],
     })
   } catch (err) {

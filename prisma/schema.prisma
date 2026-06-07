@@ -43,6 +43,7 @@ model Deal {
   activities DealActivity[]
   contacts   DealContact[]
   snoozes    DealSnooze[]
+  aiSummary  AiSummary?
 
   @@map("deals")
 }
@@ -111,6 +112,18 @@ model SyncLog {
   error        String?
 
   @@map("sync_log")
+}
+
+// AI-generated per-deal summaries — generated on demand, never auto-triggered
+model AiSummary {
+  id            Int      @id @default(autoincrement())
+  dealHubspotId String   @unique @map("deal_hubspot_id") // one summary per deal (upsert pattern)
+  summaryJson   Json     @map("summary_json")            // parsed JSON from Claude response
+  generatedAt   DateTime @default(now()) @map("generated_at") @db.Timestamptz(6)
+
+  deal Deal @relation(fields: [dealHubspotId], references: [hubspotId])
+
+  @@map("ai_summaries")
 }
 
 // Configurable settings — stageMap + ownerMap seeded in M2b; thresholds added in M7

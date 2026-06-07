@@ -2,15 +2,15 @@ import { NextResponse } from 'next/server'
 import { getDealsForQueue } from '@/lib/db/deals'
 import { evaluateAll, buildRuleCtx } from '@/lib/rules'
 import { loadStageMap } from '@/lib/db/settings'
-import { getLastSyncedAt } from '@/lib/db/sync-log'
+import { getLastSyncStatus } from '@/lib/db/sync-log'
 import { getMoActionDealIds } from '@/lib/db/summaries'
 import type { DealWithFlags } from '@/lib/rules'
 
 export async function GET() {
-  const [{ deals, snoozedDealIds }, stageMap, lastSyncedAt, moActionIds] = await Promise.all([
+  const [{ deals, snoozedDealIds }, stageMap, syncStatus, moActionIds] = await Promise.all([
     getDealsForQueue(),
     loadStageMap(),
-    getLastSyncedAt(),
+    getLastSyncStatus(),
     getMoActionDealIds(),
   ])
 
@@ -39,7 +39,8 @@ export async function GET() {
   return NextResponse.json({
     groups,
     stageMap,
-    lastSyncedAt: lastSyncedAt?.toISOString() ?? null,
+    lastSyncedAt: syncStatus.lastSyncedAt?.toISOString() ?? null,
+    lastSyncError: syncStatus.lastSyncError,
     totalDeals: deals.length,
   })
 }

@@ -698,10 +698,18 @@ export default function DealPanel({
                       Generating summary — this may take up to 20 seconds…
                     </div>
                   )}
-                  {summaryState === 'error' && summaryError && (
-                    <div className="mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
-                      {summaryError}
-                      <button onClick={generateSummary} className="ml-2 underline">Retry</button>
+                  {summaryState === 'error' && (
+                    <div className="mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-lg">
+                      <p className="text-sm font-medium text-red-800">Summary unavailable</p>
+                      {summaryError && (
+                        <p className="text-xs text-red-600 mt-0.5">{summaryError}</p>
+                      )}
+                      <button
+                        onClick={generateSummary}
+                        className="mt-2 text-xs text-red-700 underline"
+                      >
+                        Retry
+                      </button>
                     </div>
                   )}
                   {summaryState === 'done' && summaryData && (

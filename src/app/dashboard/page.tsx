@@ -30,6 +30,7 @@ type DealsResponse = {
   groups: Record<string, DealWithFlags[]>
   stageMap: Record<string, string>
   lastSyncedAt: string | null
+  lastSyncError: string | null
   totalDeals: number
 }
 
@@ -384,6 +385,17 @@ function DashboardContent() {
       {error && (
         <div className="mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
           {error}
+        </div>
+      )}
+
+      {/* Stale data banner — last sync failed */}
+      {data?.lastSyncError && (
+        <div className="mb-4 px-4 py-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+          Last sync failed — showing stale data.
+          {data.lastSyncedAt && (
+            <> Last successful sync: {relativeTime(data.lastSyncedAt)}.</>
+          )}
+          <span className="ml-1 text-amber-600">Run Sync Now to retry.</span>
         </div>
       )}
 

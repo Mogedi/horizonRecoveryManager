@@ -81,3 +81,28 @@ export async function getLastSyncedAt(): Promise<Date | null> {
   })
   return row?.completedAt ?? null
 }
+
+export type LastSyncStatus = {
+  lastSyncedAt: Date | null
+  lastSyncError: string | null
+}
+
+// Returns last successful sync time and the error from the most recent sync if it failed.
+export async function getLastSyncStatus(): Promise<LastSyncStatus> {
+  const recent = await prisma.syncLog.findFirst({
+    where: { syncType: 'layer1', completedAt: { not: null } },
+    orderBy: { completedAt: 'desc' },
+    select: { error: true, completedAt: true },
+  })
+
+  if (!recent) return { lastSyncedAt: null, lastSyncError: null }
+  if (!recent.error) return { lastSyncedAt: recent.completedAt, lastSyncError: null }
+
+  // Most recent attempt failed — find the last successful one
+  const lastSuccess = await prisma.syncLog.findFirst({
+    where: { syncType: 'layer1', completedAt: { not: null }, error: null },
+    orderBy: { completedAt: 'desc' },
+    select: { completedAt: true },
+  })
+  return { lastSyncedAt: lastSuccess?.completedAt ?? null, lastSyncError: recent.error }
+}

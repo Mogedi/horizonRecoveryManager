@@ -1,5 +1,4 @@
 import { businessDaysElapsed } from '@/lib/utils/business-days'
-import { AGREEMENT_SENT_NO_FOLLOWUP_DAYS } from '@/lib/utils/thresholds'
 import type { Rule, AttentionFlag } from './types'
 
 export const checkAgreement: Rule = (deal, ctx) => {
@@ -9,12 +8,12 @@ export const checkAgreement: Rule = (deal, ctx) => {
   if (!deal.lastActivityDate) return null
 
   const elapsed = businessDaysElapsed(deal.lastActivityDate, ctx.today)
-  if (elapsed < AGREEMENT_SENT_NO_FOLLOWUP_DAYS) return null
+  if (elapsed < ctx.agreementNoFollowupDays) return null
 
   return {
     type: 'agreement_no_followup',
     severity: 'urgent',
-    daysOverdue: elapsed - AGREEMENT_SENT_NO_FOLLOWUP_DAYS,
+    daysOverdue: elapsed - ctx.agreementNoFollowupDays,
     message: `No activity for ${elapsed} business days — follow up immediately`,
   } satisfies AttentionFlag
 }

@@ -21,6 +21,8 @@ export type RuleContext = {
   timezone: 'America/New_York'
   stageMap: Record<string, string>         // stage ID → stage name
   staleThresholds: Record<string, number>  // stage ID → business days (thresholds.ts → app_settings M7)
+  agreementNoFollowupDays: number          // business days before Agreement Sent fires (default: 2)
+  signedNoActivityDays: number             // business days before Signed/In Progress fires (default: 5)
   terminalStageIds: Set<string>
   snoozedDealIds: Set<string>             // preloaded once per request
 }

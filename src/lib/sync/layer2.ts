@@ -1,7 +1,13 @@
-import { getAssociationIds, getObject, batchReadContacts } from '@/lib/hubspot/client'
+import { getAssociationIds, batchReadObjects, batchReadContacts } from '@/lib/hubspot/client'
 import { mapContact, mapActivity } from '@/lib/hubspot/mapper'
 import { prisma } from '@/lib/db/client'
 import { asJson } from '@/lib/utils/json'
+import {
+  assertDailyLimitOk,
+  startSyncLog,
+  completeSyncLog,
+  failSyncLog,
+} from '@/lib/db/sync-log'
 
 // Properties to fetch per activity type
 const NOTE_PROPS = ['hs_note_body', 'hs_timestamp', 'hubspot_owner_id', 'hs_object_id']
@@ -19,6 +25,8 @@ export type Layer2SyncResult = {
 // Delete-and-reinsert in a single transaction to keep data consistent.
 // Only triggered manually (Mo clicks "Load Full Detail") — never auto-run.
 export async function runLayer2Sync(hubspotDealId: string): Promise<Layer2SyncResult> {
+  await assertDailyLimitOk()
+  const logEntry = await startSyncLog('layer2_deal')
   let apiCallsMade = 0
 
   // Step 1: Get association IDs for all 5 types (5 API calls)
@@ -31,14 +39,19 @@ export async function runLayer2Sync(hubspotDealId: string): Promise<Layer2SyncRe
   ])
   apiCallsMade += 5
 
-  // Step 2: Fetch object content (1 call per activity + 1 batch call for contacts)
-  const [notes, tasks, calls, emails] = await Promise.all([
-    Promise.all(noteIds.map(id => getObject('notes', id, NOTE_PROPS))),
-    Promise.all(taskIds.map(id => getObject('tasks', id, TASK_PROPS))),
-    Promise.all(callIds.map(id => getObject('calls', id, CALL_PROPS))),
-    Promise.all(emailIds.map(id => getObject('emails', id, EMAIL_PROPS))),
+  // Step 2: Batch read all activity objects (1 call per non-empty type, not 1 per object)
+  const [noteRes, taskRes, callRes, emailRes] = await Promise.all([
+    noteIds.length > 0 ? batchReadObjects('notes', noteIds, NOTE_PROPS) : Promise.resolve({ results: [] }),
+    taskIds.length > 0 ? batchReadObjects('tasks', taskIds, TASK_PROPS) : Promise.resolve({ results: [] }),
+    callIds.length > 0 ? batchReadObjects('calls', callIds, CALL_PROPS) : Promise.resolve({ results: [] }),
+    emailIds.length > 0 ? batchReadObjects('emails', emailIds, EMAIL_PROPS) : Promise.resolve({ results: [] }),
   ])
-  apiCallsMade += noteIds.length + taskIds.length + callIds.length + emailIds.length
+  const notes = noteRes.results
+  const tasks = taskRes.results
+  const calls = callRes.results
+  const emails = emailRes.results
+  // Count only non-empty types — each non-empty type is 1 batch API call
+  apiCallsMade += [noteIds, taskIds, callIds, emailIds].filter(ids => ids.length > 0).length
 
   let contacts: { id: string; properties: Record<string, string | null> }[] = []
   if (contactIds.length > 0) {
@@ -56,48 +69,54 @@ export async function runLayer2Sync(hubspotDealId: string): Promise<Layer2SyncRe
   ]
   const mappedContacts = contacts.map(r => mapContact(r))
 
-  // Step 4: Delete + reinsert in a single transaction
-  await prisma.$transaction(async (tx) => {
-    await tx.dealActivity.deleteMany({ where: { dealHubspotId: hubspotDealId } })
-    await tx.dealContact.deleteMany({ where: { dealHubspotId: hubspotDealId } })
+  try {
+    // Step 4: Delete + reinsert in a single transaction
+    await prisma.$transaction(async (tx) => {
+      await tx.dealActivity.deleteMany({ where: { dealHubspotId: hubspotDealId } })
+      await tx.dealContact.deleteMany({ where: { dealHubspotId: hubspotDealId } })
 
-    if (mappedActivities.length > 0) {
-      await tx.dealActivity.createMany({
-        data: mappedActivities.map(a => ({
-          dealHubspotId: hubspotDealId,
-          type: a.type,
-          body: a.body,
-          authorOwnerId: a.authorOwnerId,
-          direction: a.direction,
-          timestamp: a.timestamp,
-          metadata: asJson(a.metadata ?? undefined),
-          rawPayload: asJson(a.rawPayload ?? undefined),
-        })),
-      })
+      if (mappedActivities.length > 0) {
+        await tx.dealActivity.createMany({
+          data: mappedActivities.map(a => ({
+            dealHubspotId: hubspotDealId,
+            type: a.type,
+            body: a.body,
+            authorOwnerId: a.authorOwnerId,
+            direction: a.direction,
+            timestamp: a.timestamp,
+            metadata: asJson(a.metadata ?? undefined),
+            rawPayload: asJson(a.rawPayload ?? undefined),
+          })),
+        })
+      }
+
+      if (mappedContacts.length > 0) {
+        await tx.dealContact.createMany({
+          data: mappedContacts.map(c => ({
+            dealHubspotId: hubspotDealId,
+            contactHubspotId: c.contactHubspotId,
+            name: c.name,
+            contactType: c.contactType,
+            ownershipStatus: c.ownershipStatus,
+            isDeceased: c.isDeceased,
+            doNotContact: c.doNotContact,
+            phoneNumbers: c.phoneNumbers,
+            emailList: c.emailList,
+            rawPayload: asJson(c.rawPayload ?? undefined),
+          })),
+        })
+      }
+    })
+
+    await completeSyncLog(logEntry.id, apiCallsMade, 1)
+    return {
+      apiCallsMade,
+      activitiesStored: mappedActivities.length,
+      contactsStored: mappedContacts.length,
     }
-
-    if (mappedContacts.length > 0) {
-      await tx.dealContact.createMany({
-        data: mappedContacts.map(c => ({
-          dealHubspotId: hubspotDealId,
-          contactHubspotId: c.contactHubspotId,
-          name: c.name,
-          contactType: c.contactType,
-          ownershipStatus: c.ownershipStatus,
-          isDeceased: c.isDeceased,
-          doNotContact: c.doNotContact,
-          phoneNumbers: c.phoneNumbers,
-          emailList: c.emailList,
-          rawPayload: asJson(c.rawPayload ?? undefined),
-        })),
-      })
-    }
-  })
-
-  return {
-    apiCallsMade,
-    activitiesStored: mappedActivities.length,
-    contactsStored: mappedContacts.length,
+  } catch (err) {
+    await failSyncLog(logEntry.id, err instanceof Error ? err.message : String(err))
+    throw err
   }
 }
 

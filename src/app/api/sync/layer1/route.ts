@@ -19,15 +19,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const forceFromQuery = req.nextUrl.searchParams.get('force') === 'true'
-  let forceFromBody = false
-  try {
-    const body = await req.json().catch(() => ({}))
-    forceFromBody = body?.force === true
-  } catch {
-    // no body is fine
-  }
-  const force = forceFromQuery || forceFromBody
+  const force = req.nextUrl.searchParams.get('force') === 'true'
 
   try {
     const result = await runLayer1Sync(force)

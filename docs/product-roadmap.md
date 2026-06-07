@@ -19,19 +19,19 @@ HubSpot remains the source of truth. This tool adds an attention intelligence la
 
 **What M3 does NOT include:** Deal detail panel, Layer 2, snooze UI, AI summaries. Those are M4–M5.
 
-## Milestone 4 Target — The First Usable Tool
+## Milestone 4 — Shipped ✅
 
-The first version Mo can actually use daily.
+**What shipped:** Deal detail panel (slide-in from right). Layer 2 on-demand pull with call range confirmation. Activity timeline (calls, notes, emails, tasks). Contacts with phone/email/DNC/deceased. Snooze UI (7 categories, date picker, optional note). Snooze history. "Remove snooze" button. Property address in panel header. 62 tests passing.
 
-**New in M4:** Deal detail panel (slide-in), Layer 2 on-demand pull, snooze UI.
+**What M4 does NOT include:** AI summary button (M5), Tasks page (M6), Settings page (M7).
 
-**User actions added:**
-1. Click any deal → Layer 1 detail panel opens instantly (name, stage, amount, address, county, parcel, tax sale date)
-2. "Open in HubSpot" link from panel
-3. "Load Full Detail" → timeline (calls, notes, emails, tasks) + contacts appear
-4. Snooze a deal: category + date + optional note → deal disappears from queue
+## Milestone 5 Target — AI Context
 
-**Success criteria:** Mo can open any deal and see its full history without leaving the dashboard. He can snooze cases in normal attorney wait time so they stop polluting the queue.
+Mo gets full deal context from Claude in one click.
+
+**New in M5:** "Generate AI Summary" button in deal panel. 7-section bullet format. Stale badge when new activity arrives. Mo Action Required surfacing in `/api/deals`.
+
+**Success criteria:** Mo clicks "Generate AI Summary" on a Signed/In Progress deal and gets an actionable summary in under 15 seconds.
 
 ---
 
@@ -42,9 +42,9 @@ The first version Mo can actually use daily.
 | HubSpot Layer 1 sync (all deals, scheduled) | M2c | ✅ Done | 4x daily + manual refresh |
 | Attention queue by issue type | M3 | ✅ Done | Grouped, color-coded, collapsible |
 | Password authentication | M2a | ✅ Done | Shared password |
-| Deal detail panel with activity timeline | M4 | Planned | Slide-in, Layer 1 instant + Layer 2 on-demand |
-| Layer 2 on-demand pull (per deal) | M4 | Planned | Activities + contacts |
-| Snooze with structured categories | M4 | Planned | Removes deal from queue until wake date |
+| Deal detail panel with activity timeline | M4 | ✅ Done | Slide-in, Layer 1 instant + Layer 2 on-demand |
+| Layer 2 on-demand pull (per deal) | M4 | ✅ Done | Activities + contacts, batch API reads |
+| Snooze with structured categories | M4 | ✅ Done | Removes deal from queue until wake date |
 | Per-deal AI summary (bullet format) | M5 | Planned | 7 structured fields via Claude API |
 | Internal task list (Trello replacement) | M6 | Planned | Case-linked + general tasks |
 | Daily Briefing | M6 | Planned | AI-generated morning summary |
@@ -111,5 +111,5 @@ Observations and ideas captured during day-to-day use. Review periodically.
 
 ---
 
-*Last updated: 2026-06-07*
+*Last updated: 2026-06-07 (M4 complete)*
 *To update: Edit this file or use the in-app Roadmap page, then export and feed back to Claude.*

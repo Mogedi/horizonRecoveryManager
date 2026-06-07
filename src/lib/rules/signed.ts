@@ -1,5 +1,4 @@
 import { businessDaysElapsed } from '@/lib/utils/business-days'
-import { SIGNED_IN_PROGRESS_NO_ACTIVITY_DAYS } from '@/lib/utils/thresholds'
 import type { Rule, AttentionFlag } from './types'
 
 export const checkSigned: Rule = (deal, ctx) => {
@@ -9,12 +8,12 @@ export const checkSigned: Rule = (deal, ctx) => {
   if (!deal.lastActivityDate) return null
 
   const elapsed = businessDaysElapsed(deal.lastActivityDate, ctx.today)
-  if (elapsed < SIGNED_IN_PROGRESS_NO_ACTIVITY_DAYS) return null
+  if (elapsed < ctx.signedNoActivityDays) return null
 
   return {
     type: 'signed_no_activity',
     severity: 'warning',
-    daysOverdue: elapsed - SIGNED_IN_PROGRESS_NO_ACTIVITY_DAYS,
+    daysOverdue: elapsed - ctx.signedNoActivityDays,
     message: `No activity for ${elapsed} business days`,
   } satisfies AttentionFlag
 }

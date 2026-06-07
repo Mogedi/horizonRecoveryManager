@@ -55,6 +55,8 @@ function makeCtx(todayOverride: Date, snoozedIds: string[] = []): RuleContext {
       [ATTEMPTED_CONTACT_STAGE]: 7,
       [READY_STAGE]: 5,
     },
+    agreementNoFollowupDays: 2,
+    signedNoActivityDays: 5,
     terminalStageIds: new Set([TERMINAL_STAGE]),
     snoozedDealIds: new Set(snoozedIds),
   }

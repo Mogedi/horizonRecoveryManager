@@ -86,22 +86,30 @@ export async function getObject(objectType: string, objectId: string, properties
   )
 }
 
-// POST contacts/batch/read — fetch multiple contacts at once.
-export async function batchReadContacts(ids: string[]): Promise<{ results: { id: string; properties: Record<string, string | null> }[] }> {
+// POST /crm/v3/objects/{type}/batch/read — fetch multiple CRM objects at once.
+// Works for notes, tasks, calls, emails, contacts, deals, etc.
+// Use this instead of per-object getObject() calls to avoid N+1 API call patterns.
+export async function batchReadObjects(
+  objectType: string,
+  ids: string[],
+  properties: string[]
+): Promise<{ results: { id: string; properties: Record<string, string | null> }[] }> {
   return hubspotRequest<{ results: { id: string; properties: Record<string, string | null> }[] }>(
     'POST',
-    '/crm/v3/objects/contacts/batch/read',
-    {
-      inputs: ids.map(id => ({ id })),
-      properties: [
-        'firstname', 'lastname', 'email',
-        'phone', 'mobilephone',
-        'phone_1', 'phone_2', 'phone_3', 'phone_4', 'phone_5', 'phone_6', 'phone_7',
-        'phone_numbers__excess_elite', 'phone_numbers__beenverified_fastpeople_etc',
-        'is_deceased', 'do_not_contact',
-        'contact_type1', 'ownership_contact_status1', 'attorney1',
-        'hs_object_id',
-      ],
-    }
+    `/crm/v3/objects/${objectType}/batch/read`,
+    { inputs: ids.map(id => ({ id })), properties }
   )
+}
+
+// POST contacts/batch/read — fetch multiple contacts at once.
+export async function batchReadContacts(ids: string[]): Promise<{ results: { id: string; properties: Record<string, string | null> }[] }> {
+  return batchReadObjects('contacts', ids, [
+    'firstname', 'lastname', 'email',
+    'phone', 'mobilephone',
+    'phone_1', 'phone_2', 'phone_3', 'phone_4', 'phone_5', 'phone_6', 'phone_7',
+    'phone_numbers__excess_elite', 'phone_numbers__beenverified_fastpeople_etc',
+    'is_deceased', 'do_not_contact',
+    'contact_type1', 'ownership_contact_status1', 'attorney1',
+    'hs_object_id',
+  ])
 }

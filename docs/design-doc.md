@@ -385,42 +385,6 @@ CREATE TABLE internal_tasks (
 );
 ```
 
-### `document_checklist` — Per-deal document tracking
-
-```sql
-CREATE TYPE document_type AS ENUM (
-  'property_profile', 'tax_sale_deed', 'recovery_agreement',
-  'government_id', 'death_certificate', 'marriage_certificate',
-  'probate_records', 'will', 'heirship_docs', 'attorney_packet', 'other'
-);
-
-CREATE TABLE document_checklist (
-  id              SERIAL PRIMARY KEY,
-  deal_hubspot_id TEXT REFERENCES deals(hubspot_id),
-  document_type   document_type NOT NULL,
-  label           TEXT, -- custom label for 'other' type
-  status          TEXT DEFAULT 'unknown', -- unknown | present | missing | not_required
-  ai_inferred     BOOLEAN DEFAULT FALSE,
-  confirmed_by_user BOOLEAN DEFAULT FALSE,
-  source_note     TEXT,
-  last_checked_at TIMESTAMPTZ DEFAULT NOW()
-);
-```
-
-### `product_roadmap` — In-app editable
-
-```sql
-CREATE TABLE product_roadmap (
-  id          SERIAL PRIMARY KEY,
-  version_tag TEXT NOT NULL, -- 'v2', 'v3', 'v4'
-  title       TEXT NOT NULL,
-  description TEXT,
-  status      TEXT DEFAULT 'idea', -- idea | planned | in_progress | done
-  created_at  TIMESTAMPTZ DEFAULT NOW(),
-  updated_at  TIMESTAMPTZ DEFAULT NOW()
-);
-```
-
 ### `app_settings` — Configurable thresholds
 
 ```sql
@@ -575,12 +539,6 @@ AI-detected tasks shown with "AI suggested — accept?" prompt.
 
 **Not in settings:** Sync schedule (lives in `vercel.json` — static, requires redeploy to change. Not a UI concern).
 
-### Product Roadmap Page
-
-- Sections: v2, v3, v4+, Ideas
-- Each item: title, description, status badge
-- "Export as Markdown" button (downloads .md file for feeding back to AI)
-
 ---
 
 ## Attention Queue Logic
@@ -607,22 +565,26 @@ type Rule = (deal: NormalizedDeal, ctx: RuleContext) => AttentionFlag | null
 type NormalizedDeal = {
   hubspotId: string
   name: string | null
-  stage: string | null       // stage ID — resolve to name via ctx.stageMap
-  amount: number | null      // number, not Prisma Decimal — converted in db/deals.ts
-  stageEnteredAt: Date | null
-  lastActivityDate: Date | null
+  stage: string | null         // stage ID — resolve to name via ctx.stageMap
+  amount: number | null        // number, not Prisma Decimal — converted in db/deals.ts
+  stageEnteredAt: Date | null  // use for Stage Stale rules (time stuck in stage)
+  lastActivityDate: Date | null // use for Agreement/Signed rules (no recent activity)
   contactCount: number
+  hasValidPhone: boolean | null // null=Layer2 not loaded; false=no phones; true=has phones
   syncedAt: Date
-  // ... all other deal fields
 }
 
 // RuleContext: loaded once per /api/deals request, passed to every rule.
 // Snoozes are a Set for O(1) lookup — never query DB per deal.
+// All thresholds are passed via context so rules import nothing from thresholds.ts —
+// makes M7 (replacing hardcoded thresholds with app_settings) a one-call-site change.
 type RuleContext = {
   today: Date                              // injected — freezable in tests
   timezone: 'America/New_York'
   stageMap: Record<string, string>         // stage ID → name
   staleThresholds: Record<string, number>  // stage ID → business days (thresholds.ts in M3, app_settings in M7)
+  agreementNoFollowupDays: number          // default 2 — business days before Agreement Sent fires
+  signedNoActivityDays: number             // default 5 — business days before Signed fires
   terminalStageIds: Set<string>            // stages where no staleness rules fire
   snoozedDealIds: Set<string>              // pre-loaded once in db/deals.ts — O(1) per deal
 }
@@ -934,10 +896,8 @@ AI summary cache: never auto-regenerate. Show "New activity since last summary" 
 │   │       └── briefing/route.ts      # Daily Briefing (M6)
 │   └── lib/
 │       ├── hubspot/
-│       │   ├── client.ts              # Rate-limited HTTP client (3 req/s cap, exponential backoff)
-│       │   ├── mapper.ts              # Raw HubSpot → internal Deal/Contact/Activity types
-│       │   ├── schema.ts              # M1: property/pipeline/owner schema fetcher
-│       │   └── sampler.ts             # M1: one-deal deep pull, saves to docs/research/
+│       │   ├── client.ts              # Rate-limited HTTP client (3 req/s cap, exponential backoff, batchReadObjects)
+│       │   └── mapper.ts              # Raw HubSpot → internal Deal/Contact/Activity types
 │       ├── sync/
 │       │   ├── layer1.ts              # Batch deal sync (smart + full refresh modes)
 │       │   └── layer2.ts              # Per-deal sync (on demand only)
@@ -1031,7 +991,6 @@ Vercel Cron configuration (`vercel.json`) — **Pro plan only**:
 /api/tasks                GET, POST
 /api/tasks/[id]           PATCH, DELETE
 /api/settings             GET, PATCH
-/api/roadmap              GET, PATCH
 /api/auth/login           POST
 /api/auth/logout          POST
 ```

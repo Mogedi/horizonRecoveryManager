@@ -397,6 +397,9 @@ export default function DealPanel({
                 {deal.ownerName ? ` · ${deal.ownerName}` : ''}
                 {deal.amount ? ` · ${formatAmount(deal.amount)}` : ''}
               </p>
+              {deal.propertyAddress && (
+                <p className="text-xs text-gray-500 mt-0.5">{deal.propertyAddress}</p>
+              )}
               {(deal.county || deal.parcelId || deal.taxSaleDate) && (
                 <p className="text-xs text-gray-400 mt-0.5">
                   {[
@@ -486,7 +489,11 @@ export default function DealPanel({
               )}
 
               {/* Contacts */}
-              <SectionHeader title={`Contacts (${contacts?.length ?? 0})`} />
+              <SectionHeader title={
+                layer2State === 'done'
+                  ? `Contacts (${contacts?.length ?? 0})`
+                  : `Contacts (${deal.contactCount > 0 ? `${deal.contactCount} — load full detail for names` : '0'})`
+              } />
               {contacts && contacts.length > 0 ? (
                 contacts.map(c => <ContactItem key={c.id} contact={c} />)
               ) : (

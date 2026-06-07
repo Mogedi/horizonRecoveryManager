@@ -1,6 +1,5 @@
 import { hubspotSearchAll } from '@/lib/hubspot/client'
 import { mapDeal } from '@/lib/hubspot/mapper'
-import { loadStageMap } from '@/lib/db/settings'
 import {
   assertDailyLimitOk,
   startSyncLog,
@@ -33,9 +32,6 @@ export async function runLayer1Sync(force = false): Promise<Layer1SyncResult> {
   await assertDailyLimitOk()
 
   const logEntry = await startSyncLog('layer1')
-
-  // stageMap loaded for seed/validation; mapDeal stores raw stage IDs, map resolves at display time
-  await loadStageMap()
 
   const lastSyncedAt = force ? null : await getLastSyncedAt()
   const mode: 'smart' | 'full' = lastSyncedAt ? 'smart' : 'full'

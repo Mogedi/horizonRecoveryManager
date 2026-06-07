@@ -111,3 +111,28 @@ The markdown file (`docs/product-roadmap.md`) is the roadmap. An in-app editor t
 
 **Daily Briefing belongs in M6, not M5.**
 Per-deal AI summaries are complex enough to be their own milestone. Daily Briefing requires Layer 2 data, cached summaries, and employee activity stats. Shipping both in one milestone increases risk of shipping neither well. Split them.
+
+---
+
+## M4 Retrospective Findings (Post-M4 Audit)
+
+**Layer 2 individual `getObject()` calls are N+1 — use batch reads.**
+The original Layer 2 sync fetched each note/task/call/email with a separate API call: `Promise.all(noteIds.map(id => getObject(...)))`. A deal with 30 notes = 30 API calls. HubSpot's batch read endpoint (`POST /crm/v3/objects/{type}/batch/read`) exists for all CRM object types and accepts an array of IDs, returning all objects in one call. Added `batchReadObjects()` to `client.ts` and updated `layer2.ts` to use it. Now a deal with 30 notes, 20 tasks, 10 calls = 3 API calls instead of 60. Same pattern we already used for contacts.
+
+**Layer 2 API calls were invisible to the daily rate limiter.**
+`runLayer2Sync` never called `assertDailyLimitOk()` or wrote to `sync_log`. The 75K hard stop and 60K warning only tracked Layer 1 calls. Fixed: added both to `runLayer2Sync`, using sync_type `'layer2_deal'`.
+
+**Agreement.ts and signed.ts bypassed the injectable threshold design.**
+These two rules imported constants directly from `thresholds.ts` instead of reading from `ctx`. The `staleness.ts` rule correctly read from `ctx.staleThresholds`. This inconsistency would have required code changes inside rule files when M7 replaces `thresholds.ts` with `app_settings`. Fixed: added `agreementNoFollowupDays` and `signedNoActivityDays` to `RuleContext`. All three rules now import nothing from `thresholds.ts` — M7 is a one-call-site change.
+
+**`getLayer2SyncedAt` returned null if deal had contacts but no activities.**
+The function only checked `deal_activities`. A deal with 3 contacts but no notes/calls/emails would show `layer2SyncedAt = null`, causing the panel to show "Load Full Detail" again even after a successful sync. Fixed: now checks both `deal_activities` and `deal_contacts`, returns the later timestamp.
+
+**`propertyAddress` was fetched by the API but never displayed in DealPanel.**
+The deal header showed county, parcel, tax sale date but not the street address — the most identifying information. Fixed: added address display line in the panel header.
+
+**Panel showed `Contacts (0)` before Layer 2 was loaded, even when Layer 1 had contact count.**
+When `contactCount = 3` but Layer 2 wasn't loaded, the panel header said "Contacts (0)" — misleading. Fixed: show `Contacts (N — load full detail for names)` using Layer 1's contactCount when Layer 2 isn't loaded yet.
+
+**Known gap: DNC-only contacts not flagged.**
+The upgraded `contacts.ts` rule checks for valid phone numbers when Layer 2 is loaded. It does NOT check if all contacts have `doNotContact = true`. A deal could have 3 contacts with valid phones but all DNC — rule returns null, but the deal is functionally unreachable. Low frequency, not worth fixing now, but document it. If Mo reports "no contacts to call" on flagged deals, this is why.

@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { runLayer2Sync, estimateLayer2Calls } from '@/lib/sync/layer2'
+import { runLayer2Sync } from '@/lib/sync/layer2'
 
-// GET /api/sync/layer2/[id] — returns estimated call count (shown in UI before Mo confirms)
+// GET /api/sync/layer2/[id] — returns call range shown in confirmation dialog before Mo pulls
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const estimate = await estimateLayer2Calls(id)
-  return NextResponse.json({ hubspotId: id, estimatedCalls: estimate })
+  return NextResponse.json({
+    hubspotId: id,
+    callRangeMessage: '5–50+ API calls depending on deal activity. Actual count shown after load.',
+  })
 }
 
 // POST /api/sync/layer2/[id] — Mo clicked "Load Full Detail" and confirmed the call count

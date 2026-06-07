@@ -1,12 +1,7 @@
-import { type Prisma } from '@prisma/client'
 import { getAssociationIds, getObject, batchReadContacts } from '@/lib/hubspot/client'
 import { mapContact, mapActivity } from '@/lib/hubspot/mapper'
 import { prisma } from '@/lib/db/client'
-
-function asJson(v: unknown): Prisma.InputJsonValue | undefined {
-  if (v === undefined) return undefined
-  return v as Prisma.InputJsonValue
-}
+import { asJson } from '@/lib/utils/json'
 
 // Properties to fetch per activity type
 const NOTE_PROPS = ['hs_note_body', 'hs_timestamp', 'hubspot_owner_id', 'hs_object_id']
@@ -106,15 +101,6 @@ export async function runLayer2Sync(hubspotDealId: string): Promise<Layer2SyncRe
   }
 }
 
-// Returns estimated API call count for Layer 2 WITHOUT hitting the API.
-// Used by the UI to show Mo the cost before she confirms.
-export async function estimateLayer2Calls(hubspotDealId: string): Promise<number> {
-  const deal = await prisma.deal.findUnique({
-    where: { hubspotId: hubspotDealId },
-    select: { contactCount: true },
-  })
-  // 5 association calls + estimated activity calls based on contact count
-  // Conservative estimate: 5 assoc + deal.contactCount (batch read) + ~5 activity calls
-  const contactBatchCall = (deal?.contactCount ?? 0) > 0 ? 1 : 0
-  return 5 + contactBatchCall + 5 // 5 assoc + 1 batch + estimated activity fetches
-}
+// No estimateLayer2Calls — any estimate requires the association calls anyway.
+// UI shows static range: "5–50+ API calls depending on deal activity"
+// After first Layer 2 sync, UI shows actual count from sync_log.

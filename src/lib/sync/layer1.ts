@@ -1,4 +1,3 @@
-import { type Prisma } from '@prisma/client'
 import { hubspotSearchAll } from '@/lib/hubspot/client'
 import { mapDeal } from '@/lib/hubspot/mapper'
 import { loadStageMap } from '@/lib/db/settings'
@@ -10,12 +9,7 @@ import {
   getLastSyncedAt,
 } from '@/lib/db/sync-log'
 import { prisma } from '@/lib/db/client'
-
-// Safely cast unknown/object values to Prisma's Json type.
-function asJson(v: unknown): Prisma.InputJsonValue | undefined {
-  if (v === undefined) return undefined
-  return v as Prisma.InputJsonValue
-}
+import { asJson } from '@/lib/utils/json'
 
 const PIPELINE_ID = '2172337854'
 
@@ -39,7 +33,9 @@ export async function runLayer1Sync(force = false): Promise<Layer1SyncResult> {
   await assertDailyLimitOk()
 
   const logEntry = await startSyncLog('layer1')
-  const stageMap = await loadStageMap()
+
+  // stageMap loaded for seed/validation; mapDeal stores raw stage IDs, map resolves at display time
+  await loadStageMap()
 
   const lastSyncedAt = force ? null : await getLastSyncedAt()
   const mode: 'smart' | 'full' = lastSyncedAt ? 'smart' : 'full'
@@ -71,53 +67,57 @@ export async function runLayer1Sync(force = false): Promise<Layer1SyncResult> {
     })
     apiCallsMade += callCount
 
-    for (const raw of results) {
-      const deal = mapDeal(raw, stageMap)
-      await prisma.deal.upsert({
-        where: { hubspotId: deal.hubspotId },
-        update: {
-          name: deal.name,
-          stage: deal.stage,
-          pipeline: deal.pipeline,
-          ownerId: deal.ownerId,
-          amount: deal.amount,
-          estimatedSurplus: deal.estimatedSurplus,
-          closeDate: deal.closeDate,
-          lastActivityDate: deal.lastActivityDate,
-          stageEnteredAt: deal.stageEnteredAt,
-          lastModified: deal.lastModified,
-          contactCount: deal.contactCount,
-          propertyAddress: deal.propertyAddress,
-          county: deal.county,
-          parcelId: deal.parcelId,
-          taxSaleDate: deal.taxSaleDate,
-          hubspotUrl: deal.hubspotUrl,
-          rawPayload: asJson(deal.rawPayload),
-          syncedAt: new Date(),
-        },
-        create: {
-          hubspotId: deal.hubspotId,
-          name: deal.name,
-          stage: deal.stage,
-          pipeline: deal.pipeline,
-          ownerId: deal.ownerId,
-          amount: deal.amount,
-          estimatedSurplus: deal.estimatedSurplus,
-          closeDate: deal.closeDate,
-          lastActivityDate: deal.lastActivityDate,
-          stageEnteredAt: deal.stageEnteredAt,
-          lastModified: deal.lastModified,
-          contactCount: deal.contactCount,
-          propertyAddress: deal.propertyAddress,
-          county: deal.county,
-          parcelId: deal.parcelId,
-          taxSaleDate: deal.taxSaleDate,
-          hubspotUrl: deal.hubspotUrl,
-          rawPayload: asJson(deal.rawPayload),
-        },
-      })
-      dealsSynced++
-    }
+    const deals = results.map(raw => mapDeal(raw))
+    dealsSynced = deals.length
+
+    // Batch all upserts in one transaction — atomic and benefits from Prisma 7 query pipelining
+    await prisma.$transaction(
+      deals.map(deal =>
+        prisma.deal.upsert({
+          where: { hubspotId: deal.hubspotId },
+          update: {
+            name: deal.name,
+            stage: deal.stage,
+            pipeline: deal.pipeline,
+            ownerId: deal.ownerId,
+            amount: deal.amount,
+            estimatedSurplus: deal.estimatedSurplus,
+            closeDate: deal.closeDate,
+            lastActivityDate: deal.lastActivityDate,
+            stageEnteredAt: deal.stageEnteredAt,
+            lastModified: deal.lastModified,
+            contactCount: deal.contactCount,
+            propertyAddress: deal.propertyAddress,
+            county: deal.county,
+            parcelId: deal.parcelId,
+            taxSaleDate: deal.taxSaleDate,
+            hubspotUrl: deal.hubspotUrl,
+            rawPayload: asJson(deal.rawPayload),
+            syncedAt: new Date(),
+          },
+          create: {
+            hubspotId: deal.hubspotId,
+            name: deal.name,
+            stage: deal.stage,
+            pipeline: deal.pipeline,
+            ownerId: deal.ownerId,
+            amount: deal.amount,
+            estimatedSurplus: deal.estimatedSurplus,
+            closeDate: deal.closeDate,
+            lastActivityDate: deal.lastActivityDate,
+            stageEnteredAt: deal.stageEnteredAt,
+            lastModified: deal.lastModified,
+            contactCount: deal.contactCount,
+            propertyAddress: deal.propertyAddress,
+            county: deal.county,
+            parcelId: deal.parcelId,
+            taxSaleDate: deal.taxSaleDate,
+            hubspotUrl: deal.hubspotUrl,
+            rawPayload: asJson(deal.rawPayload),
+          },
+        })
+      )
+    )
 
     await completeSyncLog(logEntry.id, apiCallsMade, dealsSynced)
     return { dealsSynced, apiCallsMade, mode }

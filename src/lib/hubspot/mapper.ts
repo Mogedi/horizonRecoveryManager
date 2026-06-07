@@ -91,11 +91,9 @@ const PHONE_FIELDS = [
 
 // ─── Mappers ──────────────────────────────────────────────────────────────────
 
-// stageMap is accepted for API consistency but stage IDs are stored as-is.
-// stageMap is used at display time, not in storage.
+// Stage IDs are stored as-is. stageMap is resolved at display time in the UI/API layer.
 export function mapDeal(
-  raw: { id: string; properties: Record<string, string | null | undefined>; url?: string | null },
-  _stageMap: Record<string, string>
+  raw: { id: string; properties: Record<string, string | null | undefined>; url?: string | null }
 ): MappedDeal {
   const p = raw?.properties ?? {}
   return {

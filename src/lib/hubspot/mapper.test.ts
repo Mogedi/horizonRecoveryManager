@@ -13,37 +13,32 @@ const rawContacts = sampleContactsFile.results
 const rawNotes = sampleNotesFile.results
 const rawTasks = sampleTasksFile.results
 
-const stageMap: Record<string, string> = {
-  '3477730036': 'Attempted Contact',
-  '3477730034': 'New Case',
-}
-
 // ─── mapDeal ────────────────────────────────────────────────────────────────
 
 describe('mapDeal', () => {
   it('extracts deal name', () => {
-    const d = mapDeal(rawDeal, stageMap)
+    const d = mapDeal(rawDeal)
     expect(d.name).toBe('CHATHAM - 701 W 48th St - Idella Grant ($36K)')
   })
 
-  it('stores stage ID (not name) — resolved via stageMap at display time', () => {
-    const d = mapDeal(rawDeal, stageMap)
+  it('stores stage ID (not name) — resolved via stageMap at display time in API layer', () => {
+    const d = mapDeal(rawDeal)
     expect(d.stage).toBe('3477730036')
   })
 
   it('uses amount as primary value', () => {
-    const d = mapDeal(rawDeal, stageMap)
+    const d = mapDeal(rawDeal)
     expect(d.amount).toBeCloseTo(35848.41)
   })
 
   it('estimated_surplus is null (confirmed null on all 150 deals)', () => {
-    const d = mapDeal(rawDeal, stageMap)
+    const d = mapDeal(rawDeal)
     expect(d.estimatedSurplus).toBeNull()
   })
 
   it('handles all missing properties gracefully — never throws', () => {
     const empty = { id: 'test123', properties: {}, url: null }
-    const d = mapDeal(empty, stageMap)
+    const d = mapDeal(empty)
     expect(d.hubspotId).toBe('test123')
     expect(d.name).toBeNull()
     expect(d.amount).toBeNull()
@@ -51,12 +46,12 @@ describe('mapDeal', () => {
   })
 
   it('includes hubspotUrl from raw.url', () => {
-    const d = mapDeal(rawDeal, stageMap)
+    const d = mapDeal(rawDeal)
     expect(d.hubspotUrl).toContain('322527156927')
   })
 
   it('parses stage_entered_at as a Date', () => {
-    const d = mapDeal(rawDeal, stageMap)
+    const d = mapDeal(rawDeal)
     if (d.stageEnteredAt) {
       expect(d.stageEnteredAt).toBeInstanceOf(Date)
     }

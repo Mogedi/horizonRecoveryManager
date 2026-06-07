@@ -7,6 +7,31 @@ datasource db {
   // Prisma 7: no url/directUrl here. See prisma.config.ts (CLI) and src/lib/db/client.ts (app).
 }
 
+// M9+: Multi-source activity event type
+enum ActivitySource {
+  HUBSPOT
+  JUSTCALL
+  GOOGLE
+  USER
+  AI
+}
+
+// M9+: Phone number status for dead number detection
+enum PhoneStatus {
+  active
+  disconnected
+  invalid
+  unknown
+}
+
+// M9+: Pipeline group a deal belongs to (derived from stage ID via PIPELINE_GROUP constant)
+enum PipelineGroup {
+  setup
+  outreach
+  case_mgmt
+  terminal
+}
+
 enum SnoozeCategory {
   waiting_on_attorney
   waiting_on_county
@@ -54,11 +79,18 @@ model Deal {
   rawPayload       Json?     @map("raw_payload")
   syncedAt         DateTime  @default(now()) @map("synced_at") @db.Timestamptz(6)
 
-  activities DealActivity[]
-  contacts   DealContact[]
-  snoozes    DealSnooze[]
-  aiSummary  AiSummary?
-  tasks      InternalTask[]
+  // M9+ denorm cache — populated by JustCall sync; avoids JOIN on every attention queue load
+  callAttemptCount  Int       @default(0) @map("call_attempt_count")
+  lastCallAttemptAt DateTime? @map("last_call_attempt_at") @db.Timestamptz(6)
+
+  activities     DealActivity[]
+  contacts       DealContact[]
+  snoozes        DealSnooze[]
+  aiSummary      AiSummary?
+  tasks          InternalTask[]
+  activityEvents ActivityEvent[]  // M9+
+  phoneNumbers   PhoneNumber[]    // M9+
+  pipelineStates PipelineState[]  // M9+
 
   @@map("deals")
 }
@@ -166,4 +198,83 @@ model AppSetting {
   updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
 
   @@map("app_settings")
+}
+
+// M9+: Unified multi-source event log — JustCall calls, Google emails, HubSpot (future), etc.
+// deal_activities stays for HubSpot Layer 2 data; new sources write here.
+model ActivityEvent {
+  id            Int            @id @default(autoincrement())
+  dealHubspotId String?        @map("deal_hubspot_id") // null = unmatched call (phone not in registry)
+  source        ActivitySource
+  externalId    String?        @map("external_id") // JustCall call ID, Gmail message ID, etc.
+  type          String         // call | note | email | task | sms
+  happenedAt    DateTime       @map("happened_at") @db.Timestamptz(6)
+  durationSecs  Int?           @map("duration_secs")
+  direction     String?        // inbound | outbound
+  outcome       String?        // answered | voicemail | no_answer | busy
+  fromNumber    String?        @map("from_number")   // E.164
+  toNumber      String?        @map("to_number")     // E.164
+  agentId       String?        @map("agent_id")      // JustCall agent ID or HubSpot owner ID
+  body          String?        // note text / email excerpt / call transcript
+  metadata      Json?
+  rawPayload    Json?          @map("raw_payload")
+  createdAt     DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  deal Deal? @relation(fields: [dealHubspotId], references: [hubspotId], onDelete: Cascade)
+
+  @@unique([source, externalId], name: "activity_events_dedup")
+  @@index([dealHubspotId, happenedAt])
+  @@index([source, happenedAt])
+  @@map("activity_events")
+}
+
+// M9+: E.164 phone registry — populated from deal_contacts during Layer 2 sync.
+// Used to match JustCall call logs (by to_number) to deals without a deal ID.
+model PhoneNumber {
+  id            Int         @id @default(autoincrement())
+  numberE164    String      @map("number_e164")     // e.g., +14045551234
+  dealHubspotId String?     @map("deal_hubspot_id") // null if not yet matched to a deal
+  contactName   String?     @map("contact_name")
+  status        PhoneStatus @default(unknown)
+  lastSeenAt    DateTime?   @map("last_seen_at") @db.Timestamptz(6)
+  createdAt     DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  deal Deal? @relation(fields: [dealHubspotId], references: [hubspotId], onDelete: Cascade)
+
+  @@index([numberE164])
+  @@index([dealHubspotId])
+  @@map("phone_numbers")
+}
+
+// M9+: Operational state per deal per pipeline group.
+// One row per (deal, pipeline). Auto-computed from event data in future; seeded for now.
+model PipelineState {
+  id            Int           @id @default(autoincrement())
+  dealHubspotId String        @map("deal_hubspot_id")
+  pipeline      PipelineGroup
+  status        String        @default("not_started") // not_started | active | completed | blocked
+  enteredAt     DateTime?     @map("entered_at") @db.Timestamptz(6)
+  completedAt   DateTime?     @map("completed_at") @db.Timestamptz(6)
+  updatedAt     DateTime      @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  deal Deal @relation(fields: [dealHubspotId], references: [hubspotId], onDelete: Cascade)
+
+  @@unique([dealHubspotId, pipeline])
+  @@map("pipeline_states")
+}
+
+// M9+: Integration registry — one row per external data source.
+// Gate: check is_active before running any sync for a source.
+// config holds non-secret options (lookback days, max records per sync, etc.)
+// Secrets (API keys) live in environment variables only — never in this table.
+model SyncSource {
+  id           Int       @id @default(autoincrement())
+  name         String    @unique // HUBSPOT | JUSTCALL | GOOGLE
+  isActive     Boolean   @default(false) @map("is_active")
+  lastSyncedAt DateTime? @map("last_synced_at") @db.Timestamptz(6)
+  config       Json?     // e.g., { "maxRecordsPerSync": 500, "lookbackDays": 90 }
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@map("sync_sources")
 }

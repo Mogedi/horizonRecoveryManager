@@ -1,5 +1,8 @@
 import { prisma } from './client'
+import { withBatchTransaction } from './transaction'
 import type { NormalizedDeal } from '@/lib/rules/types'
+import type { MappedDeal } from '@/lib/hubspot/mapper'
+import { asJson } from '@/lib/utils/json'
 
 // Single source for all deal data consumed by the rules pipeline.
 // Converts Prisma Decimal → number so rules never see Decimal objects.
@@ -59,4 +62,82 @@ export async function getDealsForQueue(): Promise<{
   const snoozedDealIds = new Set(activeSnoozes.map(s => s.dealHubspotId))
 
   return { deals, snoozedDealIds }
+}
+
+// Returns a single deal with all fields needed by the deal panel route.
+export async function getDealById(hubspotId: string) {
+  return prisma.deal.findUnique({
+    where: { hubspotId },
+    select: {
+      hubspotId: true,
+      name: true,
+      stage: true,
+      ownerId: true,
+      amount: true,
+      hubspotUrl: true,
+      propertyAddress: true,
+      county: true,
+      parcelId: true,
+      taxSaleDate: true,
+      contactCount: true,
+      lastActivityDate: true,
+      stageEnteredAt: true,
+      syncedAt: true,
+    },
+  })
+}
+
+// Upserts all deals in a single batched transaction with a 30s timeout.
+// Replaces the direct prisma.$transaction call in layer1.ts.
+export async function upsertDeals(deals: MappedDeal[]): Promise<void> {
+  if (deals.length === 0) return
+
+  await withBatchTransaction(
+    deals.map(deal =>
+      prisma.deal.upsert({
+        where: { hubspotId: deal.hubspotId },
+        update: {
+          name: deal.name,
+          stage: deal.stage,
+          pipeline: deal.pipeline,
+          ownerId: deal.ownerId,
+          amount: deal.amount,
+          estimatedSurplus: deal.estimatedSurplus,
+          closeDate: deal.closeDate,
+          lastActivityDate: deal.lastActivityDate,
+          stageEnteredAt: deal.stageEnteredAt,
+          lastModified: deal.lastModified,
+          contactCount: deal.contactCount,
+          propertyAddress: deal.propertyAddress,
+          county: deal.county,
+          parcelId: deal.parcelId,
+          taxSaleDate: deal.taxSaleDate,
+          hubspotUrl: deal.hubspotUrl,
+          rawPayload: asJson(deal.rawPayload),
+          syncedAt: new Date(),
+        },
+        create: {
+          hubspotId: deal.hubspotId,
+          name: deal.name,
+          stage: deal.stage,
+          pipeline: deal.pipeline,
+          ownerId: deal.ownerId,
+          amount: deal.amount,
+          estimatedSurplus: deal.estimatedSurplus,
+          closeDate: deal.closeDate,
+          lastActivityDate: deal.lastActivityDate,
+          stageEnteredAt: deal.stageEnteredAt,
+          lastModified: deal.lastModified,
+          contactCount: deal.contactCount,
+          propertyAddress: deal.propertyAddress,
+          county: deal.county,
+          parcelId: deal.parcelId,
+          taxSaleDate: deal.taxSaleDate,
+          hubspotUrl: deal.hubspotUrl,
+          rawPayload: asJson(deal.rawPayload),
+          syncedAt: new Date(),
+        },
+      })
+    )
+  )
 }

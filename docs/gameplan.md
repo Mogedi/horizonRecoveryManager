@@ -4,82 +4,43 @@
 
 Build in proof-of-concept layers. Do not one-shot the full app.
 
-1. Research HubSpot APIs and save raw output
-2. Create Private App, pull schema and one sample deal
-3. Mo reviews the output and decides what fields matter
-4. Design the database schema based on real data
-5. Build Layer 1 sync + attention queue
-6. Add Layer 2 only after Layer 1 works
-7. Add AI only after Layer 2 works
-
-Never write application code before real HubSpot data has been reviewed. Never build a database schema from assumptions.
-
-Use TDD where practical. Commit frequently.
+- Verify data shapes before writing code
+- Sample before bulk: pull a small dataset, confirm it looks right, then pull everything
+- Build the smallest working thing; refactor after it proves value
+- Never build database schemas from assumptions
+- Commit at every passing test gate
 
 ---
 
 ## North Star
 
 The dashboard is successful when Mo can open it and within 60 seconds answer:
+
 1. What needs my attention right now?
-2. Which cases are stuck?
-3. What should I personally do today?
-4. Which employee needs coaching?
-5. What is likely to close next?
+2. Which cases are stuck, and why?
+3. How many call attempts has Kathleen made on each outreach deal?
+4. What should I personally do today?
+5. Which employee needs coaching?
 
 **This is not a reporting dashboard. It is an owner-attention dashboard.**
 
-**Design philosophy:** Build the smallest useful thing. HubSpot is the source of truth. This dashboard adds an attention intelligence layer on top. A future hub linking multiple Horizon tools is a P3 consideration — do not architect for it now. Keep the code clean and modular, but solve actual problems first.
+**Read-only permanently.** HubSpot is the source of truth. The dashboard adds an intelligence layer on top. No HubSpot writes — ever. No `src/lib/hubspot/actions.ts` without Mo's explicit approval.
 
 ---
 
-## Demoable Product (Milestone 3 Target)
+## Phase 1 Complete (M0–M8) ✅
 
-The minimum weekend build that proves the dashboard is materially better than using HubSpot alone.
+All original milestones shipped. See `docs/archive/milestones-m0-m8.md` for full history.
 
-**Pages:** `/login`, `/dashboard`, deal detail slide-in panel
-
-**Database tables (5 — not 11):**
-- `deals` — Layer 1 cache
-- `deal_activities` — Layer 2 activity cache
-- `deal_contacts` — Layer 2 contact cache
-- `deal_snoozes` — snooze state
-- `sync_log` — last-synced timestamp + call count
-
-*Defer to post-M3:* `ai_summaries`, `internal_tasks`, `document_checklist`, `product_roadmap`, `app_settings` (hardcode thresholds instead)
-
-**Sync jobs (2):**
-- Layer 1: all deals, scheduled 4x/day + manual trigger
-- Layer 2: one deal on demand, triggered by opening detail panel
-
-**API routes (8):**
-- `POST /api/auth/login`
-- `POST /api/auth/logout`
-- `POST /api/sync/layer1`
-- `POST /api/sync/layer2/[id]`
-- `GET /api/deals` — list with attention flags applied
-- `GET /api/deals/[id]` — single deal + cached Layer 2
-- `POST /api/deals/[id]/snooze`
-- `DELETE /api/deals/[id]/snooze`
-- `POST /api/deals/[id]/summary` — AI summary (uses Layer 2 cache)
-
-**User actions (7):**
-1. Log in with shared password → land on `/dashboard`
-2. See attention queue: all flagged deals grouped by issue, color-coded
-3. Click "Refresh" → triggers Layer 1 sync, updates "Last synced" timestamp
-4. Click any deal → slide-in panel with contacts + activity timeline
-5. Click "Load full detail" → pulls Layer 2 (activities + contacts) for that deal
-6. Click "Generate AI Summary" → Claude summarizes the deal in bullet form
-7. Click "Snooze" → pick category + date → deal disappears from queue until wake date
-
-**Success criteria:**
-- Mo sees all flagged deals grouped by reason in 5 seconds — no filtering or searching required
-- Clicking one deal surfaces full context (contacts, timeline) without opening HubSpot tabs
-- Snoozed cases don't pollute the queue
-- "Last synced 11 minutes ago" is always visible
-- AI summary answers "what's blocking this case" in 10 seconds
-
-Everything after this is enhancement, not MVP.
+**What's running in production:**
+- Layer 1 sync (all 150 deals, 4×/day via Vercel cron)
+- Attention queue: flagged deals grouped by issue type (Stage Stale, Agreement No Follow-Up, Signed No Activity, No Contacts, Mo Action Required, Snoozed, Healthy)
+- Deal detail panel: Layer 2 on-demand (contacts, notes, calls, emails, tasks)
+- Per-deal AI summary (7 structured fields via Claude claude-sonnet-4-6)
+- Internal task list (6 categories, Trello replacement)
+- Daily Briefing modal (AI-generated, attention queue + tasks + employee activity)
+- Settings page (configurable staleness thresholds, sync log)
+- 175 tests passing
 
 ---
 
@@ -89,491 +50,354 @@ Each milestone follows this pattern:
 
 ```
 1. Read preconditions
-2. If preconditions unmet → STOP, report what Mo needs to provide
+2. If preconditions unmet → STOP, report exactly what Mo needs to provide
 3. Work through checklist autonomously
 4. After each sub-milestone: run tests → if PASS, git commit → if FAIL, STOP and report
 5. When milestone complete → report what was built, wait for Mo before starting next
 ```
 
-Commit format: `[M0] description` | `[M1] description` | `[M2a] description` etc.
+Commit format: `[M9a] description` | `[M10] description` etc.
 
-Never commit if tests fail. Never commit `.env.local`. Add `docs/research/` to `.gitignore`.
+Never commit if tests fail. Never commit `.env.local` or secrets. `docs/research/` in `.gitignore`.
 
----
-
-## Milestone 0: HubSpot Private App Setup
-
-> **AGENT PRECONDITIONS:** Mo must complete this milestone manually. There is no code to write. Stop immediately if HubSpot token is not provided. Do not proceed to M1 without a working token.
-
-**Goal:** HubSpot access token in hand, ready to run API research scripts. No application code yet.
-
-**This milestone is setup, not building.**
-
-**Prerequisites needed from Mo:**
-- [ ] HubSpot Personal Access Key (or Private App token — either works)
-- [ ] Anthropic API key (get from console.anthropic.com — for later)
-
-**Checklist:**
-- [ ] Generate a HubSpot Personal Access Key: HubSpot → Settings → Integrations → Private Apps (if redirected, use Personal Access Key instead — both work as Bearer tokens)
-- [ ] Ensure "CRM Objects" scope is checked (covers deals, contacts, notes, calls, emails, tasks)
-- [ ] Copy the access token
-- [ ] Create `docs/research/` directory for raw API output files
-- [ ] Create `.env.local` with `HUBSPOT_ACCESS_TOKEN=your_token_here`
-- [ ] Confirm token works: `curl -H "Authorization: Bearer $HUBSPOT_ACCESS_TOKEN" https://api.hubapi.com/crm/v3/owners`
-
-**Done when:** HubSpot API responds successfully to a test request (returns owner list with Marwa, Kathleen, etc.).
+**STOP AND WAIT when:**
+- A required credential is missing
+- About to make real API calls to a new service (JustCall, Google) — confirm sample scope first
+- About to do a full historical data pull — Mo must approve the sample first
+- Schema destructive change (column drop, table drop, enum removal)
+- Tests fail and root cause is unclear after one fix attempt
+- A new external API returns a response shape not in the docs
 
 ---
 
-## Milestone 1: HubSpot API Research
+## Milestone 9: Three-Pipeline DB Foundation
 
-> **AGENT PRECONDITIONS:** `HUBSPOT_ACCESS_TOKEN` must be set in `.env.local` and verified working (curl test returns 200). Stop if token missing or invalid.
-> **AGENT:** Run all API scripts autonomously. Save raw output. Do NOT interpret or design from the data — stop after saving and report to Mo for review. Mo must fill in `field-mapping.md` before the agent continues to M2.
-> **COMMIT:** `[M1] raw API output — {list of files saved}`
+> **AGENT PRECONDITIONS:** M8 complete. No new credentials needed — this is schema + DB work only.
+> **COMMIT:** `[M9a] multi-source schema migration` → `[M9b] sync_sources seed + PIPELINE_GROUP constant`
 
-**Goal:** Know exactly what data we can pull before writing any sync code. Output is raw JSON files + documented field mappings. Database schema is designed after this milestone, not before.
+**Goal:** Database tables and constants that support multi-source event tracking and pipeline-aware deal analysis. Rules engine unchanged in this milestone — existing attention queue keeps working.
 
-**This milestone is research, not building.**
+### What this unlocks
 
-**Output file locations:**
-```
-docs/research/
-  deal-properties.json       -- GET /crm/v3/properties/deals
-  contact-properties.json    -- GET /crm/v3/properties/contacts
-  pipeline-stages.json       -- GET /crm/v3/pipelines/deals
-  owners.json                -- GET /crm/v3/owners
-  sample-deal.json           -- one deal from Layer 1 search
-  sample-deal-contacts.json  -- contacts linked to sample deal
-  sample-deal-notes.json     -- notes for sample deal
-  sample-deal-calls.json     -- calls for sample deal
-  sample-deal-emails.json    -- emails for sample deal
-  sample-deal-tasks.json     -- tasks for sample deal
-  field-mapping.md           -- Mo-confirmed field name decisions
-```
+Before M9, all activity data comes from HubSpot's Layer 2. M9 adds the infrastructure to receive calls from JustCall, emails from Google, and any future source — all normalized into one table. Phone numbers get a dedicated registry for cross-source matching.
 
-**API call count log:** Record calls made per test. Total should stay under 50 for the full M1 research run.
+### Stage-to-Pipeline Mapping
 
-**Checklist — Step 1: Schema Discovery**
-- [x] Run `GET /crm/v3/properties/deals` → saved to `docs/research/deal-properties.json` (183 properties)
-- [x] Run `GET /crm/v3/properties/contacts` → saved to `docs/research/contact-properties.json` (453 properties)
-- [x] Run `GET /crm/v3/pipelines/deals` → saved to `docs/research/pipeline-stages.json` — pipeline is **"Cases – Surplus Funds"** (not "KSR Plus Funds"), 16 stages
-- [x] Run `GET /crm/v3/owners` → saved to `docs/research/owners.json` — 3 owners confirmed: Mo, Kathleen, Marwa
+Code constant — not configurable. Architectural, not a setting.
 
-**Checklist — Step 2: Sample Deal Pull**
-- [x] Sample deal: CHATHAM - 701 W 48th St - Idella Grant ($36K), ID: 322527156927
-- [x] Layer 1 search for sample deal → saved to `docs/research/sample-deal.json`
-- [x] Contacts (3) pulled with all phone fields → saved to `docs/research/sample-deal-contacts.json`
-- [x] First 5 notes → saved to `docs/research/sample-deal-notes.json` (HTML-formatted)
-- [x] Calls → saved to `docs/research/sample-deal-calls.json` (0 calls — endpoint works but deal has none)
-- [x] First 1 email → saved to `docs/research/sample-deal-emails.json` (sales-email-read scope confirmed working)
-- [x] First 5 tasks → saved to `docs/research/sample-deal-tasks.json` (all "Follow Up Call" type)
+| Stage | ID | Pipeline Group |
+|---|---|---|
+| More Research Need | 3501274836 | `terminal` (no rules fire) |
+| F | 3639720641 | `terminal` (no rules fire) |
+| New Case | 3477730034 | `setup` |
+| Ready for Outreach | 3477730035 | `setup` |
+| Attempted Contact | 3477730036 | `outreach` |
+| Contact Made | 3477730037 | `outreach` |
+| Follow-Up Needed | 3477730038 | `outreach` |
+| Engaged / Interested | 3477730039 | `outreach` |
+| Letter Outreach - Final Attempt | 3551234806 | `outreach` |
+| Agreement Sent | 3477730040 | `case_mgmt` |
+| Signed / In Progress | 3478695644 | `case_mgmt` |
+| Closed – Paid | 3478695645 | `terminal` |
+| Dead / Not Interested | 3478695646 | `terminal` |
+| DNC | 3513772741 | `terminal` |
+| Blocked, Missing Info | 3513772742 | `terminal` |
+| Exhausted | 3741613778 | `terminal` |
 
-**Checklist — Step 3: Mo Reviews Output**
-- [ ] **Mo reviews `sample-deal.json`** — all field names are confirmed correct in `field-mapping.md`, but Mo should visually verify the data looks right
-- [ ] **Mo reviews `sample-deal-contacts.json`** — confirm contact types, phone data looks right (note: one phone field has a date "02/06/2024" as value — known data quality issue)
-- [ ] **Mo: What does stage "F" (ID: 3639720641) mean?** — not in any known stage definition
-- [ ] **Mo: confirm `estimated_surplus` vs `amount`** — are these the same? Which should be displayed?
-- [ ] **Mo: confirm email direction** — does "EMAIL" vs "INCOMING_EMAIL" distinction matter for Mo Action Required rule?
-- [x] Field names documented in `docs/research/field-mapping.md`
+### New Prisma Models
 
-**Checklist — Step 4: Decisions — RESOLVED**
-- [x] Google Drive files via API → **NOT accessible** (UI-sidebar integration only)
-- [x] Email direction → `hs_email_direction` exists but observed value is "EMAIL" — **open question on all possible values**
-- [x] `last_activity_date` → `notes_last_updated` confirmed; use `hs_v2_date_entered_current_stage` for staleness
-- [x] `num_associated_contacts` → **confirmed available in Layer 1 CRM Search**
-- [x] Phone field variants → **11 variants confirmed** — see `field-mapping.md`
-- [ ] Update `docs/hubspot-api-research.md` with M1 summary report
+**`activity_events`** — Unified multi-source event log. Replaces `deal_activities` for new data sources. HubSpot's `deal_activities` table stays for legacy Layer 2 data; `activity_events` receives JustCall and Google data going forward.
 
-**Done when:** Raw JSON files exist in `docs/research/`. Mo has reviewed them and confirmed field mappings. `field-mapping.md` documents which HubSpot property names map to our internal Deal/Contact/Activity fields. Database schema can now be designed.
+**`phone_numbers`** — E.164 normalized phone registry. Populated from `deal_contacts.phoneNumbers` during Layer 2 sync. Used to match incoming JustCall calls to deals without a deal ID.
 
-## Milestone 2: Project Skeleton + Database + Sync Engine
+**`pipeline_states`** — One row per deal per pipeline group. Tracks operational status (not_started | active | completed | blocked). Future: auto-computed from event data. For now: seeded/updated manually or by sync.
+
+**`sync_sources`** — Integration registry. One row per external data source. Tracks active/inactive, last synced, config. Gate: check `isActive` before syncing a source.
+
+### Denormalized Cache Columns on `deals`
+
+`callAttemptCount` and `lastCallAttemptAt` — computed from JustCall `activity_events`. Updated atomically when a JustCall sync inserts new call events for a deal. Avoid a JOIN on every attention queue load.
+
+### Checklist
+
+**9a — Schema Migration (TDD: write tests against new schema first):**
+- [ ] Add `ActivitySource` enum: `HUBSPOT | JUSTCALL | GOOGLE | USER | AI`
+- [ ] Add `ActivityEvent` model with `@@unique([source, externalId])` and `@@index([dealHubspotId, happenedAt])`
+- [ ] Add `PhoneStatus` enum: `active | disconnected | invalid | unknown`
+- [ ] Add `PhoneNumber` model with `@@index([numberE164])` and `@@index([dealHubspotId])`
+- [ ] Add `PipelineGroup` enum: `setup | outreach | case_mgmt | terminal`
+- [ ] Add `PipelineState` model with `@@unique([dealHubspotId, pipeline])`
+- [ ] Add `SyncSource` model
+- [ ] Add `callAttemptCount Int @default(0)` and `lastCallAttemptAt DateTime?` to `Deal`
+- [ ] Add relations: `Deal` → `ActivityEvent[]`, `PhoneNumber[]`, `PipelineState[]`
+- [ ] `npm run db:migrate` → migration name: `add-multi-source-foundation`
+- [ ] `npm run db:generate`
+
+**9b — Constants + Seed:**
+- [ ] Add `PIPELINE_GROUP: Record<string, 'setup' | 'outreach' | 'case_mgmt' | 'terminal'>` to `src/lib/db/settings.ts` (keyed by stage ID)
+- [ ] Add `src/lib/db/activity-events.ts` — `getActivityEvents(dealHubspotId)`, `upsertActivityEvent(event)`
+- [ ] Add `src/lib/db/phone-numbers.ts` — `lookupDealByPhone(e164)`, `upsertPhoneNumber(number, dealHubspotId)`
+- [ ] Seed `sync_sources`: HUBSPOT (active=true), JUSTCALL (active=false), GOOGLE (active=false)
+- [ ] `npm test` — existing 175 tests still pass + new DB function tests
+- [ ] Git commit: `[M9] multi-source DB foundation`
+
+**Done when:** Migration runs cleanly, new tables exist in DB, sync_sources seeded, 175+ tests passing, attention queue still works exactly as before.
+
+---
+
+## Milestone 10: JustCall Integration — Sample Mode
 
 > **AGENT PRECONDITIONS:**
-> - `docs/research/field-mapping.md` must exist and be filled in ✅ (done in M1)
-> - `pipeline-stages.json` must exist ✅ (done in M1)
-> - `owners.json` must exist ✅ (done in M1)
-> - Mo must provide `DATABASE_URL` and `DIRECT_URL` from Neon ⬜ (Mo action required before M2b)
-> - GitHub repo must exist and Vercel project connected ⬜ (Mo action required before M2a deploy step)
+> - M9 complete
+> - `JUSTCALL_API_KEY` set in `.env.local` (Mo provides)
+> - **STOP AND CONFIRM before any JustCall API call:** Tell Mo the scope (last 24h, max 20 records) and wait for explicit go-ahead
 >
-> **M1 RESOLVED:**
-> - `amount` is the primary display field — confirmed populated 100% of deals. `estimated_surplus` is null on all 150 deals. Store both, display `amount`. ✅ resolved (M1-EXT)
-> - Email `hs_email_direction` values — do not implement directional logic until confirmed.
-> - Task counts in Layer 1 — not available; `task_count`/`open_task_count` columns dropped.
-
-**Goal:** Working Next.js app skeleton, schema finalized from M1 findings, reliable data pipeline.
-
-**2a — Project Skeleton** ✅ COMPLETE
-- [x] Next.js 16+ app with TypeScript + Tailwind (App Router)
-- [x] Prisma + @prisma/adapter-pg; Vitest test framework
-- [x] `.env.local`, `.env.example`, `.gitignore` (research/ + .env.local)
-- [x] `src/lib/db/client.ts` — Prisma singleton (globalThis pattern)
-- [x] `src/proxy.ts` — auth cookie check (Next.js 16: renamed from middleware.ts; exports `proxy`)
-- [x] `/login/page.tsx` → sets HTTP-only cookie → redirects to `/dashboard`
-- [x] `/dashboard/layout.tsx` — sidebar layout
-
-**2b — Database Schema** ✅ COMPLETE
-- [x] Neon database + env vars set
-- [x] Prisma schema: `deals`, `deal_activities`, `deal_contacts`, `deal_snoozes`, `sync_log`, `app_settings` (+ `ai_summaries`, `internal_tasks` added in M5)
-- [x] Field names confirmed from M1 research (field-mapping.md)
-- [x] `app_settings` seeded with `stage_map` + `owner_map`
-- [x] `thresholds.ts` — hardcoded staleness thresholds (replaced by app_settings in M7)
-
-**2c — Sync Engine** ✅ COMPLETE (commit 7697a66)
-- [x] `/src/lib/utils/rate-limiter.ts` — TokenBucket, 3 req/s, injectable jitter for tests
-- [x] `/src/lib/hubspot/client.ts` — rate-limited fetch, 429 backoff, HubSpotError
-- [x] `/src/lib/hubspot/mapper.ts` — mapDeal/mapContact/mapActivity, only file with HubSpot property names
-- [x] `/src/lib/db/settings.ts` — loadStageMap/loadOwnerMap from app_settings
-- [x] `/src/lib/db/sync-log.ts` — daily call tracking, getDailyCallCount, assertDailyLimitOk
-- [x] `/src/lib/sync/layer1.ts` — smart sync + full refresh, upserts deals
-- [x] `/src/lib/sync/layer2.ts` — per-deal, delete+reinsert in transaction
-- [x] `/api/sync/layer1/route.ts` + `/api/sync/layer2/[id]/route.ts`
-- [x] `vercel.json` — cron 4x/day weekdays EDT
-- [x] 28 tests passing, 0 TypeScript errors
-
-**Done when:** Real HubSpot data is in the database, syncing on schedule, last-synced timestamp visible in production.
-
----
-
-## Milestone 3: Attention Queue UI ✅ COMPLETE
-
-> **AGENT PRECONDITIONS:** M2 complete, real deals in `deals` table, sync log shows successful Layer 1 sync.
-> **COMMIT:** `[M3] business-days utility + tests` → `[M3] attention rules + tests` → `[M3] attention queue UI`
-
-**Goal:** The full attention queue renders with real data. First demoable milestone.
-
-**Checklist — Pre-M3 fixes (done in [M2c-fix] commit):**
-- [x] Fix N+1 upsert in layer1.ts — `$transaction([...array])` bulk upsert (Prisma 7 pipelining)
-- [x] Fix `asJson` — `JSON.parse(JSON.stringify(v))` before cast, in shared `utils/json.ts`
-- [x] Remove `_stageMap` from `mapDeal` signature + call sites + mapper tests
-- [x] Remove `estimateLayer2Calls()` — replaced with honest static range message in Layer 2 GET route
-
-**Checklist — Rules Engine (TDD):**
-- [x] `/src/lib/db/deals.ts` — `getDealsForQueue()`: loads deals, Decimal→number, preloads snooze Set
-- [x] `/src/lib/utils/business-days.ts` — 10 tests, `America/New_York` via `Intl.DateTimeFormat`
-- [x] `/src/lib/rules/staleness.ts` — `stageEnteredAt`, skips terminals, `ctx.staleThresholds`
-- [x] `/src/lib/rules/agreement.ts` — Agreement Sent + `lastActivityDate` > 2 business days
-- [x] `/src/lib/rules/signed.ts` — Signed/In Progress + `lastActivityDate` > 5 business days
-- [x] `/src/lib/rules/contacts.ts` — Layer 1 version: `contactCount === 0`
-- [x] `/src/lib/rules/snooze.ts` — preloaded Set lookup, suppresses all other flags
-- [x] `/src/lib/rules/index.ts` — `applyRules` + `evaluateAll`
-- [x] 59 tests passing, 0 TypeScript errors
-
-**Checklist — API + UI:**
-- [x] `/api/deals/route.ts` — parallel fetch, groups by flag type, returns stageMap
-- [x] Dashboard: collapsible attention groups (flagged first, Snoozed/Healthy collapsed at bottom)
-- [x] Deal card: name, stage name (resolved from stageMap), last activity relative date, flag reason
-- [x] Synced timestamp always visible; "No sync data" shown when DB empty
-- [x] Refresh button (re-fetches `/api/deals`) + Sync Now button (POST `/api/sync/layer1`) + Force Refresh
-- [x] Layer 1 sync route: fixed cron auth header (`Authorization: Bearer <CRON_SECRET>`), added cookie auth for browser
-
-**Layer 2-dependent rules (Mo Action Required, phone check) are added in M4 after Layer 2 works.**
-
-**Done when:** Dashboard opens and shows real deals in the right attention groups. Mo can look at it and say "yes, that's what needs attention."
-
-**Pending acceptance test (requires real data in DB):** Mo triggers Sync Now → deals appear → flagged deals grouped by reason. Snoozed deals in collapsed group. Last synced visible.
-
----
-
-## Milestone 4: Deal Detail Panel ✅ COMPLETE
-
-> **AGENT PRECONDITIONS:** M3 complete, attention queue rendering correctly with real data.
-> **AGENT:** Panel opens immediately with Layer 1 data. Layer 2 pull is behind "Load Full Detail" button with static call count range. Test snooze creates correct DB row and removes deal from queue in next render.
-> **COMMIT:** `[M4] deal panel — Layer 1 display` → `[M4] Layer 2 pull — on demand` → `[M4] snooze — save + remove from queue`
-
-**Goal:** Click a deal, see everything relevant, snooze it.
-
-**Checklist:**
-- [x] Slide-in panel component (fixed overlay from right, backdrop closes on click)
-- [x] Panel header: deal name, stage name, owner, amount, county, parcel ID, tax sale date
-- [x] "Open in HubSpot" link (from `deals.hubspot_url`)
-- [x] Panel opens with Layer 1 data immediately — fetches `/api/deals/[id]`
-- [x] "Load Full Detail" button → shows static call range → confirmation → POSTs to `/api/sync/layer2/[id]`
-- [x] Activity timeline (calls, notes, emails, tasks) sorted newest first
-- [x] Linked contacts: name, relationship, deceased flag, phone numbers, DNC status
-- [x] Snooze button → modal: 7 category options, date picker, optional note
-- [x] Snooze saved to `deal_snoozes` table — panel closes, queue re-fetches
-- [x] "Remove snooze" button for active snooze
-- [x] Snooze history collapsible at bottom of panel
-- [x] `contacts.ts` upgraded: checks `hasValidPhone` from deal_contacts, falls back to contactCount; no longer fires on terminal stages; 3 new tests added
-- [x] Cookie auth added to Layer 2 sync route (browser doesn't need x-dashboard-token)
-- [x] `GET /api/deals/[id]` — Layer 1 + cached Layer 2 + snooze data
-- [x] `POST /api/deals/[id]/snooze` + `DELETE /api/deals/[id]/snooze`
-- [x] 62 tests passing, 0 TypeScript errors
-
-**Done when:** Mo can open any deal, see all relevant context, and snooze it with a reason and date.
-
----
-
-## Milestone 5: AI Summary
-
-> **AGENT PRECONDITIONS:** M4 complete. `ANTHROPIC_API_KEY` set in `.env.local`. Layer 2 working for at least one real deal (activities + contacts in DB).
-> **AGENT:** Schema migration first. Build `prompts.ts` next — print the constructed prompt and inspect it manually before wiring the Claude API. Use JSON structured output (not markdown sections) — the prompt must ask for a JSON object with exact keys. Write parsing tests before wiring the API. Summary button is ALWAYS manual — no auto-trigger. Do NOT add Daily Briefing here (M6). Do NOT create `internal_tasks` rows here (M6).
-> **COMMIT:** `[M5] ai_summaries schema migration` → `[M5] AI client + prompts + tests` → `[M5] per-deal summary — generate + cache` → `[M5] mo-action group wired to /api/deals`
-
-**Goal:** Per-deal AI summaries working. Mo can get full deal context from Claude in one click.
-
-**Checklist — Schema (must be first):**
-- [x] Add `AiSummary` model to `prisma/schema.prisma`
-- [x] `npm run db:migrate` → `add-ai-summaries`
-- [x] `npm run db:generate`
-
-**Checklist — AI Library (TDD):**
-- [x] `npm install @anthropic-ai/sdk`
-- [x] `/src/lib/ai/errors.ts` — `AIError` class (isolated from SDK for testability)
-- [x] `/src/lib/ai/client.ts` — `callClaude()` wrapper, throws `AIError`
-- [x] `/src/lib/ai/prompts.ts` — `buildSummaryPrompt()` with JSON instruction, lookback filter
-- [x] `/src/lib/ai/summary.ts` — `parseSummaryResponse()` with full validation
-- [x] `/src/lib/ai/generate.ts` — `runSummaryGeneration()` orchestrator
-- [x] `prompts.test.ts` + `summary.test.ts` — 14 tests all green
-
-**Checklist — API + UI:**
-- [x] `/src/lib/db/summaries.ts` — `getLatestSummary()`, `upsertSummary()`, `getMoActionDealIds()`
-- [x] `POST /api/deals/[id]/summary` — cookie-authed
-- [x] `GET /api/deals/[id]` — includes `summaryData`
-- [x] `GET /api/deals` — `mo_action_required` group via `getMoActionDealIds()`
-- [x] DealPanel: Generate button, `AiSummaryBlock` (6 sections, stale badge, ↻ Regenerate)
-- [x] `dashboard/page.tsx`: `mo_action_required` in `FLAG_CONFIG` + `DISPLAY_ORDER`
-- [x] git commit: `[M5] per-deal AI summary`
-- [ ] git tag: `sprint-5-done`
-
-**Not in M5:** Daily Briefing (M6), internal_tasks creation (M6), suggested follow-up questions (P2), document checklist (deferred indefinitely), Mo Action Required keyword heuristics (not building — AI handles it).
-
-**Done when:** Mo can click "Generate AI Summary" on any deal with Layer 2 loaded and get a useful, actionable summary in under 20 seconds.
-
----
-
-## Milestone 6: Tasks + Daily Briefing
-
-> **AGENT PRECONDITIONS:** M5 complete. `ai_summaries` table has real data from at least 3 deals.
-> **AGENT:** Schema migration first (internal_tasks table). Tasks is the primary deliverable — complete all task functionality before starting Daily Briefing. If tasks runs long, Daily Briefing slips cleanly; tasks alone makes M6 a success. Test task CRUD with real DB. Daily Briefing prompt must be manually inspected before wiring to Claude.
-> **COMMIT:** `[M6] internal_tasks schema migration` → `[M6] tasks API + UI` → `[M6] daily briefing`
-
-**Goal:** Tasks replaces Trello. Daily Briefing gives Mo a morning summary in one click.
-
-**Checklist — Schema (must be first):**
-- [x] Add `InternalTask` model to `prisma/schema.prisma`:
-  - `id`, `dealHubspotId` (nullable FK → deals), `title`, `notes`, `status` (open/done), `dueDate`, `category` enum (case/business/vendor/legal/networking/other), `source` (always `'manual'` in v1), `createdAt`, `completedAt`
-- [x] `npm run db:migrate` → migration name: `add-internal-tasks`
-- [x] `npm run db:generate`
-
-**Checklist — Tasks (primary deliverable):**
-- [x] `/src/lib/db/tasks.ts` — `getOpenTasks()`, `createTask()`, `completeTask()`, `deleteTask()`
-- [x] `GET /api/tasks` — returns open + recent completed tasks
-- [x] `POST /api/tasks` — creates task (manual source)
-- [x] `PATCH /api/tasks/[id]` — mark complete
-- [x] `DELETE /api/tasks/[id]` — delete
-- [x] Tasks page (`/dashboard/tasks`) renders all open tasks sorted by due date
-- [x] Tasks grouped by category (case / business / vendor / legal / networking)
-- [x] Case-linked tasks show deal name with clickable link to open the deal panel
-- [x] Add task form: title, notes, due date, category, optional deal link
-- [x] Mark task complete (moves to "Completed" section, last 30 days)
-- [x] Delete task
-- [x] Task count badge on "Tasks" link in sidebar navigation
-- [x] **Mo Action Required → task prompt**: when Mo clicks "Generate AI Summary" and `mo_action_required: true`, show a "Create task" prompt below the summary — pre-fills `suggested_next_step` as the task title. Mo can accept (creates task with `source: 'manual'`) or dismiss. No auto-create. `source: 'ai_detected'` is NOT used — all tasks are manual source regardless of origin.
-
-**Checklist — Daily Briefing (secondary, ships after tasks):**
-- [x] "Daily Briefing" button on dashboard header
-- [x] `/api/briefing` route — builds context from Layer 1 flags + cached AI summaries + open tasks
-- [x] Briefing prompt: what happened, what needs attention, suggested priorities for today, open tasks
-- [x] Employee activity section: count notes/calls per owner in last 7 days from `deal_activities` — **silently omit if fewer than 7 days of data exist** (no placeholder, no error)
-- [x] Briefing renders in a full-width modal
-- [x] Briefing is always freshly generated — no caching
-- [x] **Acceptance:** Mo clicks "Daily Briefing" → receives a concise morning briefing in under 30 seconds covering flagged deals, open tasks, and (if available) employee activity. Employee section silently absent if no Layer 2 data.
-- [x] git commit: `[M6] tasks + daily briefing`
-- [x] git tag: `sprint-6-done`
-
-**Done when:** Mo can manage his daily case and business tasks without Trello. Daily Briefing is a bonus if tasks ships cleanly.
-
----
-
-## Milestone 7: Settings
-
-> **AGENT PRECONDITIONS:** M6 complete. `app_settings` table exists (seeded in M2b).
-> **AGENT:** When settings are saved, attention queue rules must read from `app_settings` instead of `thresholds.ts`. Replace thresholds.ts lookups with DB lookups. Verify staleness rules still work after the switch.
-> **COMMIT:** `[M7] app_settings seed defaults` → `[M7] settings API` → `[M7] settings UI — thresholds editable`
-
-**Goal:** Configurable staleness thresholds without requiring a code deploy.
-
-**What changes in M7:** All rules currently read from `thresholds.ts` constants passed as `RuleContext` fields. In M7, `buildRuleCtx()` (in `src/lib/rules/ctx.ts`) loads the same values from `app_settings` instead of hardcoded constants. Rules don't change at all — only `ctx.ts` changes. Both `/api/deals` and `briefing.ts` automatically pick up the new values since they both call `buildRuleCtx()`.
-
-**Checklist:**
-- [x] Seed `app_settings` with all threshold defaults (if not already done in M2b):
-  - `stage_stale_ready_for_outreach = 5`
-  - `stage_stale_attempted_contact = 7`
-  - `stage_stale_contact_made = 5`
-  - `stage_stale_follow_up_needed = 5`
-  - `stage_stale_engaged_interested = 3`
-  - `stage_stale_letter_outreach = 14`
-  - `agreement_sent_no_followup_days = 2`
-  - `signed_no_activity_days = 5`
-  - `ai_summary_lookback_days = 28`
-- [x] Update `src/lib/rules/ctx.ts` (`buildRuleCtx`): make async, load thresholds from `app_settings` via `loadThresholds()` instead of `thresholds.ts` constants. Update all callers to `await buildRuleCtx(...)` (two callers: `/api/deals` route and `briefing.ts`).
-- [x] Update `generate.ts`: replace `AI_SUMMARY_LOOKBACK_DAYS` import with value loaded from `app_settings`
-- [x] `GET /api/settings` — returns all editable settings as `{ key, value, label }` objects
-- [x] `PATCH /api/settings` — saves one or more settings (validate: must be positive integer)
-- [x] Settings page (`/dashboard/settings`) renders all threshold values as editable number inputs
-- [x] Settings save → immediately affects attention queue and AI summary lookback on next request
-- [x] Sync log visible in settings: last 10 syncs, call counts, errors, timestamps
-- [x] Note: sync schedule is NOT in settings — lives in `vercel.json`, requires redeploy to change
-- [x] **Acceptance:** Mo changes "Attempted Contact" from 7 to 10 days → attention queue immediately reflects the new threshold without a code deploy.
-- [x] git commit: `[M7] configurable thresholds — settings page`
-- [x] git tag: `sprint-7-done`
-
-**Not in M7:** In-app Product Roadmap page (the markdown file IS the roadmap — no in-app editor needed).
-
-**Done when:** Mo can change any staleness threshold from the dashboard and see it take effect immediately without a code deploy.
-
----
-
-## Milestone 8: Polish & Production
-
-**Goal:** Production-ready, stable, and maintainable.
-
-**Checklist:**
-- [x] Error boundaries on all major components — `error.tsx` at dashboard, tasks, settings routes
-- [x] HubSpot API down → amber stale-data banner with last successful sync time (`getLastSyncStatus()` in sync-log.ts, surfaced via `/api/deals`)
-- [x] Anthropic API down → "Summary unavailable" header + raw error detail in DealPanel (AIError → 502 → user-friendly display)
-- [x] Loading states on all async operations (dashboard skeleton, tasks skeleton, settings skeleton, DealPanel loading header, Layer 2 animate-pulse, summary generating pulse)
-- [x] Mobile warning: `md:hidden` full-screen overlay in dashboard layout — "Desktop required"
-- [x] Empty state messages: no deals → "No deals yet. Run Sync Now."; no tasks → "No open tasks. Click + Add Task"; no sync history → "No sync history yet."
-- [ ] **Mo:** Cloudflare domain pointing to Vercel (production URL)
-- [ ] **Mo:** All Vercel environment variables confirmed set in production:
-  - `DATABASE_URL`, `DIRECT_URL`, `HUBSPOT_ACCESS_TOKEN`, `DASHBOARD_PASSWORD`, `ANTHROPIC_API_KEY`, `CRON_SECRET`
-- [ ] **Mo:** Manual run-through of all features in production environment
-- [ ] **Mo:** Verify cron fires in production — check sync_log after first scheduled run, confirm entries exist with `sync_type = 'layer1'` and non-null `completed_at`
-
-**Done when:** The production URL loads, password gate works, data syncs on schedule, and Mo can use it as his daily driver without watching the terminal.
-
----
-
-## Design Doc Coverage Checklist
-
-Use this to verify the design-doc.md covers everything before building.
-
-### Architecture
-- [x] Tech stack defined
-- [x] Design philosophy defined (KISS, smallest useful thing, proof-of-concept layers)
-- [x] Full file structure defined (src/lib/rules/, src/lib/hubspot/, src/lib/db/, etc.)
-- [x] Two-layer data model defined (Layer 1 cheap+broad, Layer 2 on-demand only)
-- [x] Layer 1 fields enumerated (some field names TBD from M1)
-- [x] Layer 2 content defined (always on-demand — no auto-pull)
-- [x] Sync schedule defined (4x daily, smart sync default, full refresh available)
-- [x] Rate limiter spec (3 req/s = 30% of Starter limit)
-- [x] Caching strategy defined (DB is the cache, raw_payload for flexibility)
-
-### Database
-- [x] `deals` table
-- [x] `deal_activities` table
-- [x] `deal_contacts` table
-- [x] `deal_snoozes` table with categories
-- [x] `ai_summaries` table with JSON shape
-- [x] `internal_tasks` table
-- [ ] ~~`document_checklist` table~~ — removed (deferred indefinitely)
-- [ ] ~~`product_roadmap` table~~ — removed (markdown file is sufficient)
-- [x] `app_settings` table with defaults
-- [x] `sync_log` table
-
-### Business Logic
-- [x] Stage health rules (all 9 stages)
-- [x] Attention triggers (all categories)
-- [x] Business days calculation
-- [x] Snooze system (categories, wake behavior)
-- [x] Mo Action Required — surfaced from AI summary JSON (no keyword heuristics)
-- [ ] ~~Document checklist~~ — removed (deferred indefinitely)
-- [x] AI summary staleness: computed at read time (`lastActivityDate > generatedAt`)
-
-### UI
-- [x] Dashboard home layout
-- [x] Summary cards
-- [x] Attention group structure
-- [x] Deal card fields
-- [x] Deal detail panel layout
-- [x] Activity timeline
-- [x] Contacts display
-- [x] Document checklist display
-- [x] AI summary format
-- [x] Suggested follow-up questions
-- [x] Snooze modal
-- [x] Tasks page
-- [x] Settings page
-- [x] Product Roadmap page
-
-### AI
-- [x] Per-deal summary prompt structure
-- [x] Daily Briefing prompt structure
-- [x] Cache strategy
-- [x] Mo Action Required → task suggestion flow
-- [x] Conversational follow-up design
-
-### HubSpot
-- [x] Private App scopes listed
-- [x] Layer 1 API call documented
-- [x] Layer 2 API calls documented
-- [x] Schema discovery endpoints
-- [x] Rate limiting approach
-
-### Open Questions Remaining (resolve in M1)
-- [x] HubSpot plan tier: **Starter confirmed**
-- [x] Email notifications: **dashboard only in v1**
-- [x] Layer 2 auto-pull: **no auto-pull — always on-demand**
-- [x] Timezone: **America/New_York**
-- [x] Google Drive file API availability → **NOT accessible via API** (UI sidebar only)
-- [x] Email body text accessible on Starter plan → **✅ confirmed** (`hs_email_text` via `sales-email-read`)
-- [x] Email direction field accessible → **⚠️ partial** — field exists (`hs_email_direction`), observed value is `"EMAIL"` not assumed `"INCOMING_EMAIL"`. Full value set unconfirmed — do not implement directional Mo Action Required logic until confirmed
-- [x] All custom deal property names → **✅ confirmed** — see `field-mapping.md`
-- [x] All custom contact property names → **✅ confirmed** — 11 phone variants, `is_deceased`, `do_not_contact`, `contact_type1`
-- [x] `last_activity_date` exact property name → **`notes_last_updated`** ✅; also store `hs_v2_date_entered_current_stage` → `stage_entered_at`
-- [x] `contact_count` in CRM Search → **`num_associated_contacts` ✅ confirmed available**
-- [x] `task_count` / `open_task_count` → **not confirmed — omit columns in M2b, add back when confirmed**
-- [ ] Mo Action Required heuristics — validate against real note data in M4 (after Layer 2 working)
-
----
-
-## HubSpot Token Setup Guide
-
-*(For Mo — complete before Milestone 0)*
-
-**Option A: Personal Access Key (simpler — HubSpot now recommends this)**
-1. Log into HubSpot
-2. Go to: Settings → Integrations → Private Apps (it redirects to Personal Access Key flow)
-3. Ensure **CRM Objects** is checked ("Read data from HubSpot objects in the CRM")
-4. Click "Generate personal access key"
-5. Copy the token
-6. Paste into `.env.local` as `HUBSPOT_ACCESS_TOKEN=your_token_here`
-
-**Option B: Private App (legacy — still works)**
-1. Log into HubSpot
-2. Go to: Settings → Integrations → Private Apps → Go to Legacy Apps
-3. Create a private app with scopes: `crm.objects.deals.read`, `crm.objects.contacts.read`, `crm.objects.notes.read`, `crm.objects.tasks.read`, `crm.objects.calls.read`, `crm.objects.emails.read`, `crm.schemas.deals.read`, `crm.schemas.contacts.read`
-4. Copy the access token → paste into `.env.local`
-
-Both options produce a Bearer token used identically in API calls.
-
----
-
-## Dependencies Between Milestones
-
-```
-M0 (Private App Setup)
-  └── M1 (API Research + Schema Discovery) ← Mo reviews raw data here
-        └── M2a (Project Skeleton)
-              └── M2b (DB Schema — finalized from M1 findings)
-                    └── M2c (Sync Engine) ✅
-                          └── M3 (Attention Queue) ✅ ← First demo
-                                └── M4 (Deal Panel + Snooze + Layer 2)
-                                      └── M5 (AI Summary — per-deal, manual only)
-                                            └── M6 (Tasks + Daily Briefing)
-                                                  └── M7 (Settings — configurable thresholds)
-                                                        └── M8 (Polish + Deploy)
+> **COMMIT:** `[M10a] justcall client + normalizer` → `[M10b] sample sync + verification`
+
+**Goal:** Pull a tiny sample of JustCall call records. Verify the data looks right (phone numbers normalize correctly, calls match to deals). Mo approves before anything larger is pulled.
+
+**Rate limits (verified from account):**
+- Burst: 60 req/min → 30% cap = **18 req/min**
+- Hourly: 3600 req/hr → 30% cap = **1,080 req/hr**
+- Webhooks: not rate-limited
+
+**JustCall API base:** `https://api.justcall.io/v2.1`
+
+**Auth:** `Authorization: <api_key>:<api_secret>` header
+
+### PhoneProvider Interface
+
+All phone integrations implement this. JustCall is the first. RingCentral, GoHighLevel, or any future provider implements the same interface and plugs in without changes downstream.
+
+```typescript
+// src/lib/integrations/phone-provider.ts
+export interface NormalizedCallLog {
+  externalId: string          // JustCall call ID (string)
+  happenedAt: Date
+  durationSecs: number | null
+  direction: 'inbound' | 'outbound'
+  outcome: 'answered' | 'voicemail' | 'no_answer' | 'busy'
+  fromNumberE164: string
+  toNumberE164: string
+  agentId: string | null      // JustCall agent ID
+  rawPayload: unknown
+}
+
+export interface PhoneProvider {
+  getCallLogs(since: Date, until: Date): Promise<NormalizedCallLog[]>
+}
 ```
 
-**Critical path:** M1 (API research + Mo review) must complete before DB schema is finalized. Everything else is sequential. M7 can be done in parallel with M5–M6 if needed.
+### Sample Mode Definition
 
-**Things we decided NOT to build:**
-- `mo-action.ts` keyword heuristics rule — AI summary's `mo_action_required` field handles this
-- In-app Product Roadmap page — the markdown file is the roadmap
-- `product_roadmap` DB table — follows from above
-- Document checklist UI and AI inference — too complex, Google Drive already exists
-- "Snooze Expired" attention group — expired snoozes naturally reappear in their normal flag group
-- Summary cards row (🔴/🟡 counts in header) — requires data from M5+ to be meaningful
-- Schema drift monitor — too speculative for current needs
+Sample = last 24 hours of calls, max 20 records total. Exits early if 20 records hit. Shows Mo:
+- How many calls matched to known deal phone numbers
+- How many had no match (unmatched = phone not in phone_numbers table)
+- The raw normalized records (redacted for display)
+
+### Checklist
+
+**10a — JustCall Client + Normalizer (TDD):**
+- [ ] `src/lib/integrations/phone-provider.ts` — `PhoneProvider` interface + `NormalizedCallLog` type
+- [ ] `src/lib/integrations/justcall/types.ts` — JustCall API response shapes (typed from actual API docs)
+- [ ] `src/lib/integrations/justcall/normalize.ts` — E.164 normalizer (`+14045551234`, `(404) 555-1234`, `14045551234` all → `+14045551234`); handle US numbers only for now (10-digit min)
+- [ ] `src/lib/integrations/justcall/client.ts` — implements `PhoneProvider`; `TokenBucket(18, 'per_minute')` rate cap; all calls flow through `request()` method; `JustCallError extends IntegrationError`
+- [ ] `normalize.test.ts` — 8+ tests: E.164 normalization for common formats, rejects obviously invalid strings
+- [ ] `client.test.ts` — mock HTTP, test rate cap enforced, test `JustCallError` on 4xx
+- [ ] Tests pass: `npm test`
+
+**10b — Sample Sync:**
+- [ ] `src/lib/integrations/justcall/sync.ts` — `syncJustCallSample()`: fetches last 24h, max 20 records, writes to `activity_events`, returns match report
+- [ ] `POST /api/sync/justcall` — cookie-authed; body: `{ mode: 'sample' }` only for now
+- [ ] Add JustCall sync status to settings page (last synced, records pulled, match rate)
+- [ ] **STOP:** Run sample sync → inspect `activity_events` table → show Mo match report → wait for approval
+- [ ] Git commit: `[M10] justcall sample sync`
+
+**Done when:** Sample sync runs, data appears in `activity_events`, Mo has reviewed and said "looks right, pull everything."
+
+---
+
+## Milestone 11: JustCall Full Pull + Phone Matching + Rules Refactor
+
+> **AGENT PRECONDITIONS:**
+> - M10 complete
+> - Mo has explicitly approved the sample data and said to pull everything
+> - Layer 2 has been run on at least 50 deals (phone_numbers need population source)
+
+**Goal:** Full JustCall history matched to deals. Call cadence rules replace time-based staleness rules for outreach stages.
+
+### Phone Matching Strategy
+
+JustCall call logs have `from_number` (agent) and `to_number` (contact). We match `to_number` (E.164) against `phone_numbers.numberE164` to find the deal.
+
+Population source: `deal_contacts.phoneNumbers` (already pulled via Layer 2). Each phone in that array gets normalized to E.164 and inserted into `phone_numbers` with `dealHubspotId`.
+
+Unmatched calls: logged in `activity_events` with `dealHubspotId = null`. These become the "unmatched" coverage gap that Mo can investigate.
+
+### Rules Refactor
+
+After full JustCall data is loaded and match rate is acceptable (>80% of calls matched):
+
+**Remove from outreach stages:**
+- `stage_stale_ready_for_outreach` (5 days)
+- `stage_stale_attempted_contact` (7 days)
+- `stage_stale_contact_made` (5 days)
+- `stage_stale_follow_up_needed` (5 days)
+- `stage_stale_engaged_interested` (3 days)
+
+**Keep for outreach:**
+- `stage_stale_letter_outreach` (14 days) — time IS the right signal for Letter Outreach
+
+**Add:**
+- `call_due_today` — deal in outreach stage, next call is due today or overdue
+- `calls_exhausted` — 7+ call attempts with no answer
+- `setup_incomplete` — deal in setup stage with 0 contacts or no valid phone
+
+**Call Cadence Logic:**
+- No calls yet (count = 0): next call due = stage entered date
+- Attempts 1–7: next call = lastCallAttemptAt + 2 business days
+- Attempts 7+: next call = lastCallAttemptAt + 7 business days (weekly resurface)
+
+### Checklist
+
+**11a — Phone Population:**
+- [ ] `src/lib/db/phone-numbers.ts` — `populateFromDealContacts()`: iterate all `deal_contacts`, normalize each phone number, upsert into `phone_numbers` with `dealHubspotId`
+- [ ] Run population against existing Layer 2 data
+- [ ] Verify coverage: how many deals have at least one phone number in the registry?
+
+**11b — Full JustCall Pull:**
+- [ ] `src/lib/integrations/justcall/sync.ts` — add `syncJustCallFull(since: Date)`: paginated pull, all records since date, rate cap enforced
+- [ ] Match each call to a deal via `phone_numbers` table
+- [ ] Upsert into `activity_events` (skip duplicates via `@@unique([source, externalId])`)
+- [ ] Update `deal.callAttemptCount` + `deal.lastCallAttemptAt` atomically per deal
+- [ ] Pull last 90 days of JustCall history
+- [ ] Report: total calls pulled, matched count, unmatched count, match rate
+
+**11c — Rules Engine Refactor:**
+- [ ] `src/lib/rules/types.ts` — add `'call_due_today' | 'calls_exhausted' | 'setup_incomplete'`; conditionally remove `'stage_stale'` (keep for `letter_outreach` stage only)
+- [ ] `src/lib/rules/call-cadence.ts` — `checkCallCadence(deal, ctx)` — fires `call_due_today` for outreach deals; uses `deal.callAttemptCount`, `deal.lastCallAttemptAt`, `ctx.pipelineGroups`
+- [ ] `src/lib/rules/calls-exhausted.ts` — `checkCallsExhausted(deal, ctx)` — fires after 7+ attempts
+- [ ] `src/lib/rules/setup-readiness.ts` — `checkSetupReadiness(deal, ctx)` — fires for setup-stage deals with no phone
+- [ ] `src/lib/rules/staleness.ts` — narrow to only fire for `letter_outreach` + case_mgmt stages; remove outreach stage IDs
+- [ ] `src/lib/rules/ctx.ts` — add `pipelineGroups`, `callCadenceMaxAttempts`, `callCadenceInitialSpacingDays`, `callCadenceResurfaceDays` to `RuleContext`; load cadence settings from `app_settings`
+- [ ] `src/lib/rules/index.ts` — new rule order: snooze → setupReadiness → callCadence → callsExhausted → agreement → signed → contacts → staleness (letter only)
+- [ ] TDD: write rule tests before implementation; confirm red → green
+
+**11d — Settings + UI:**
+- [ ] Delete `app_settings` keys: `stage_stale_ready_for_outreach`, `stage_stale_attempted_contact`, `stage_stale_contact_made`, `stage_stale_follow_up_needed`, `stage_stale_engaged_interested`
+- [ ] Seed new cadence settings: `call_cadence_max_attempts = 7`, `call_cadence_initial_spacing_days = 2`, `call_cadence_resurface_days = 7`
+- [ ] Settings page: replace removed stale inputs with "Call Cadence" group
+- [ ] Attention queue: remove `stage_stale` from `FLAG_CONFIG`/`DISPLAY_ORDER`; add `call_due_today`, `calls_exhausted`, `setup_incomplete`
+- [ ] New display order: mo_action_required → agreement_no_followup → calls_exhausted → call_due_today → setup_incomplete → signed_no_activity → no_contacts → snoozed
+- [ ] `npm test` — all tests pass
+- [ ] Git commit: `[M11] justcall full pull + call cadence rules`
+
+**Done when:** Attention queue shows call cadence signals (not time-based) for outreach stages. Full JustCall history matched. Settings page shows cadence controls.
+
+---
+
+## Milestone 12: Deal Workspace Redesign
+
+> **AGENT PRECONDITIONS:** M11 complete. Design layout with Mo before building.
+
+**Goal:** Replace the organically grown DealPanel (800+ lines) with a principled three-pipeline-aware layout. Each pipeline group gets its own section. Call history from JustCall visible per deal.
+
+**Design work first — do not build before Mo approves the layout.**
+
+### Layout Concept
+
+```
+┌─────────────────────────────────────────────────┐
+│  BREVARD - 2671 San Filippo Dr SE ($33K)        │ ← header
+│  Stage: Attempted Contact · Outreach Pipeline   │
+├─────────────────────────────────────────────────┤
+│ PIPELINE STATUS                                  │
+│ [Setup ✅] [Outreach — 3 calls] [Case Mgmt ○]  │ ← pipeline track
+├─────────────────────────────────────────────────┤
+│ PIPELINE-SPECIFIC PANEL                          │
+│ (changes based on current pipeline group)        │
+│                                                  │
+│ Outreach: 3 call attempts | Next call: tomorrow  │
+│ JustCall history: 3 voicemails, 0 answered       │
+│ Kathleen — last call Jun 5 at 2:14pm             │
+├─────────────────────────────────────────────────┤
+│ UNIFIED ACTIVITY TIMELINE                         │
+│ (HubSpot notes + JustCall calls + Google emails) │
+└─────────────────────────────────────────────────┘
+```
+
+### Checklist
+
+- [ ] Design three-panel layout — show Mo mockup, wait for approval
+- [ ] Pipeline status track (top): visual indicator of which pipeline group deal is in
+- [ ] Pipeline 1 (Setup) section: contact count, phone registry status, missing documents
+- [ ] Pipeline 2 (Outreach) section: callAttemptCount, lastCallAttemptAt, cadence status, next call due, JustCall history (from `activity_events WHERE source = JUSTCALL`)
+- [ ] Pipeline 3 (Case Mgmt) section: agreement status, documents, attorney status, blockers
+- [ ] Unified timeline: merge `deal_activities` (HubSpot) + `activity_events` (JustCall, Google), sort newest first
+- [ ] `npm test`
+- [ ] Git commit: `[M12] deal workspace redesign`
+
+**Done when:** DealPanel shows pipeline-specific information. JustCall call history visible per deal. Unified timeline includes all sources.
+
+---
+
+## Milestone 13: Google Workspace Integration
+
+> **AGENT PRECONDITIONS:** M12 complete. Mo provides Google OAuth credentials and API keys.
+
+**Goal:** Pull emails and calendar events from Google. Populate `activity_events` with email events. Match emails to deals via contact email addresses.
+
+**When Mo is ready:** Provide `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN` in `.env.local`. The scaffold at `src/lib/integrations/google/client.ts` already exists.
+
+**Rate limits (Gmail API — verify before implementation):**
+- Quota: 250 req/s per user (read-only)
+- 30% cap = **75 req/s**
+
+### Email Matching Strategy
+
+Gmail API returns email threads. For each email:
+1. Extract `from` and `to` email addresses
+2. Look up in `deal_contacts.emailList` via a join on normalized address
+3. If match found → log to `activity_events` with `dealHubspotId`
+4. If no match → skip (don't store emails not related to deals)
+
+### Checklist
+
+- [ ] Google OAuth setup (read-only: `gmail.readonly`, `calendar.readonly`)
+- [ ] `src/lib/integrations/google/client.ts` — `GoogleClient` implementing email + calendar pulls; 30% rate cap; `GoogleError extends IntegrationError`
+- [ ] `src/lib/integrations/google/sync.ts` — `syncGoogleEmails()`: pull last N days of Gmail, match to contacts, populate activity_events
+- [ ] Contact email index: add `@@index([contactHubspotId])` to DealContact if missing
+- [ ] Populate `activity_events` with `source = GOOGLE` email events
+- [ ] Add Google sync to settings page status
+- [ ] Sample first (last 7 days, max 50 emails) → Mo approves → full pull
+- [ ] `npm test`
+- [ ] Git commit: `[M13] google workspace integration`
+
+**Done when:** Emails from/to deal contacts appear in the unified timeline alongside HubSpot notes and JustCall calls.
+
+---
+
+## Dependencies
+
+```
+M0–M8 (Complete) ✅
+  └── M9: DB Foundation (schema, PIPELINE_GROUP, sync_sources)
+        └── M10: JustCall Sample (client, normalizer, sample pull → Mo approves)
+              └── M11: JustCall Full Pull + Rules Refactor
+                    └── M12: Deal Workspace Redesign
+                          └── M13: Google Workspace Integration
+```
+
+**Parallel tracks:**
+- M12 (workspace design work) can start while M11 is in QA
+- M13 can be scaffolded at any time; only needs API keys to activate
+
+---
+
+## What This Does NOT Include
+
+- HubSpot writes of any kind (permanent policy — `src/lib/hubspot/actions.ts` must not exist)
+- Auto-generated AI summaries (manual only, forever)
+- Auto-generated JustCall/Google syncs (manual trigger or scheduled, not triggered by AI)
+- Employee portal / Marwa or Kathleen having dashboard access (P3)
+- Multi-pipeline support beyond "Cases – Surplus Funds" (P3)

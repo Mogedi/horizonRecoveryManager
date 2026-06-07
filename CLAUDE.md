@@ -1,5 +1,43 @@
 # CLAUDE.md — Horizon Recovery Operations Dashboard
 
+## Module Map — Quick Reference
+
+| Path | Entry points |
+|------|-------------|
+| `src/lib/db/` | All DB. No Prisma outside here. |
+| `src/lib/db/deals.ts` | `getDealsForQueue`, `getDealById`, `upsertDeals` |
+| `src/lib/db/activities.ts` | `getEmployeeActivitySummary`, `replaceLayer2Data` |
+| `src/lib/db/activity-events.ts` | `getActivityEvents`, `upsertActivityEvent` — multi-source event log (M9+) |
+| `src/lib/db/phone-numbers.ts` | `lookupDealByPhone`, `upsertPhoneNumber`, `populateFromDealContacts` (M9+) |
+| `src/lib/db/tasks.ts` | `getOpenTasks`, `createTask`, `closeTask` |
+| `src/lib/db/settings.ts` | `loadStageMap`, `loadOwnerMap`, `loadStaleThresholds`, `PIPELINE_GROUP` |
+| `src/lib/db/transaction.ts` | `withTransaction`, `withBatchTransaction` |
+| `src/lib/hubspot/client.ts` | HubSpot API — rate limited, retried, HubSpotError |
+| `src/lib/hubspot/mapper.ts` | ONLY file knowing raw HubSpot property names |
+| `src/lib/sync/layer1.ts` | Hourly deal list sync (2 API calls, 150 deals) |
+| `src/lib/sync/layer2.ts` | On-demand full detail sync (5–50+ calls, manual only) |
+| `src/lib/integrations/phone-provider.ts` | `PhoneProvider` interface + `NormalizedCallLog` type (M10+) |
+| `src/lib/integrations/justcall/client.ts` | JustCall API — 18 req/min cap, JustCallError (M10+) |
+| `src/lib/integrations/justcall/sync.ts` | `syncJustCallSample()`, `syncJustCallFull(since)` (M10+) |
+| `src/lib/integrations/justcall/normalize.ts` | E.164 normalization + NormalizedCallLog conversion (M10+) |
+| `src/lib/integrations/google/client.ts` | Google API scaffold — awaiting credentials (M13) |
+| `src/lib/rules/` | Pure rule functions. `index.ts` → `evaluateAll`. |
+| `src/lib/rules/call-cadence.ts` | `checkCallCadence` — outreach pipeline cadence (M11+) |
+| `src/lib/rules/calls-exhausted.ts` | `checkCallsExhausted` — 7+ attempts (M11+) |
+| `src/lib/rules/setup-readiness.ts` | `checkSetupReadiness` — Pipeline 1 phone check (M11+) |
+| `src/lib/ai/client.ts` | Anthropic SDK singleton. `callClaude`, `callClaudeStreaming`. |
+| `src/lib/ai/briefing.ts` | Morning briefing stream |
+| `src/lib/ai/generate.ts` | Per-deal AI summary |
+| `src/lib/errors.ts` | `IntegrationError` base + `HubSpotError`, `JustCallError`, `GoogleError` |
+| `src/lib/ai/errors.ts` | `AIError` (separate hierarchy) |
+| `src/lib/utils/format.ts` | `formatAmount`, `relativeDate`, `formatDate` |
+| `src/lib/utils/business-days.ts` | `businessDaysElapsed` — always America/New_York |
+| `src/lib/utils/rate-limiter.ts` | `TokenBucket` — in-memory, replace before AWS |
+| `src/app/api/` | Next.js route handlers — thin only |
+| `src/proxy.ts` | Next.js 16 Middleware (was middleware.ts) |
+
+---
+
 ## What This Is
 Owner-attention layer on top of HubSpot CRM for Horizon Recovery LLC. Answers: "What needs Mo's attention right now?" Read-only Phase 1. Single user (Mo). Shared password auth.
 
@@ -14,6 +52,9 @@ Third-party platforms change constantly. Before acting on any platform-specific 
 | HubSpot API scopes | Exact scope strings available in Service Keys UI |
 | HubSpot API endpoints | Endpoint paths, response shapes, deprecated routes |
 | HubSpot rate limits | req/s and req/day for Starter plan |
+| JustCall API | Endpoint paths, auth format, rate limits per plan tier |
+| JustCall rate limits | Burst and hourly limits — verify against current account settings |
+| Google Workspace API | Gmail/Calendar API endpoints, OAuth scopes, quota limits |
 | Vercel plan limits | Cron frequency, function timeout per plan (Hobby vs Pro) |
 | Next.js version | Current stable version, create-next-app flags |
 | Prisma + Neon | Current connection string pattern, adapter availability |
@@ -28,14 +69,15 @@ When you search: mark what you confirmed, what you couldn't confirm, and what co
 
 | File | Contains |
 |---|---|
-| `docs/design-doc.md` | Architecture, internal types, DB schema, file structure, rate limiter, caching, API routes |
-| `docs/gameplan.md` | Milestones M0–M8 with checklists and agent protocols per milestone |
-| `docs/product-roadmap.md` | P0/P1/P2/P3 priority system |
+| `docs/design-doc.md` | Architecture, internal types, DB schema, file structure, rate limiter, caching, API routes, multi-source architecture (M9+) |
+| `docs/gameplan.md` | Active milestones M9–M13 with checklists and agent protocols |
+| `docs/product-roadmap.md` | P1/P2/P3 priority system, current milestone status |
 | `docs/business-context.md` | Business domain, pipeline stages, deal health rules, stage definitions |
 | `docs/hubspot-api-research.md` | M1 research scripts + field mapping template |
 | `docs/api-reference.md` | API inputs/outputs — read before writing any API call code |
 | `docs/research/field-mapping.md` | Confirmed HubSpot property name → internal field mapping (filled in during M1) |
 | `docs/research/pipeline-stages.json` | Pipeline ID and all stage ID → name mappings |
+| `docs/archive/milestones-m0-m8.md` | Historical milestone checklists (M0–M8 complete) |
 
 ---
 
@@ -69,7 +111,9 @@ Check `docs/gameplan.md`. Find the first milestone with unchecked items. Read it
 - A decision is needed that docs do not cover
 - About to make a destructive or hard-to-reverse change (schema drop, file delete, etc.)
 - Approaching rate limit (daily call count > 60,000)
-- **About to add any HubSpot write capability** (creating notes, moving stages, creating deals, creating contacts, sending anything). Phase 1 is strictly read-only. Write capabilities belong in `src/lib/hubspot/actions.ts` which does not exist yet — creating it requires Mo's explicit approval.
+- **About to add any HubSpot write capability** (creating notes, moving stages, creating deals, creating contacts, sending anything). Permanently read-only. Write capabilities belong in `src/lib/hubspot/actions.ts` which does not exist — creating it requires Mo's explicit approval.
+- **About to run JustCall sync in full mode** — must run sample mode (last 24h, max 20 records) first and wait for Mo's explicit approval before pulling full history.
+- **About to run Google sync for the first time** — must run sample mode (last 7 days, max 50 emails) first and wait for Mo's explicit approval before pulling full history.
 
 ---
 
@@ -93,16 +137,33 @@ Check `docs/gameplan.md`. Find the first milestone with unchecked items. Read it
 Pipeline name:     Cases – Surplus Funds (pipeline ID from pipeline-stages.json)
 Total deals:       150 (2 pages of 100 in CRM search)
 Timezone:          America/New_York
+
+--- HubSpot ---
 HubSpot plan:      Starter — 100 req/10s, 250,000 req/day
-Rate cap:          30% = 3 req/s max, 75,000 req/day max, warn at 60,000
+HubSpot cap:       30% = 3 req/s max, 75,000 req/day max, warn at 60,000
 Daily warn:        If sync_log daily call count > 60,000, stop auto syncs, allow manual only
 Layer 1 sync:      2 API calls for all 150 deals (2 pages)
 Layer 2 per deal:  7–9 API calls (5 association + 1 batch per non-empty type)
 Worst case/day:    ~1,360 calls if all 150 deals get Layer 2 = 1.8% of daily cap
 Surplus field:     amount (NOT estimated_surplus — confirmed null on 100% of deals)
+
+--- JustCall ---
+JustCall API:      https://api.justcall.io/v2.1
+JustCall auth:     Authorization: <api_key>:<api_secret> header
+JustCall burst:    60 req/min → 30% cap = 18 req/min
+JustCall hourly:   3600 req/hr → 30% cap = 1,080 req/hr
+JustCall sample:   Last 24h, max 20 records — Mo must approve before full pull
+JustCall full:     Last 90 days on first run; since last_synced_at thereafter
+Phone format:      E.164 (e.g., +14045551234) — normalize all numbers before storing
+
+--- AI ---
 AI model:          claude-sonnet-4-6
 AI lookback:       28 days of activity history per summary
-Staleness source:  /src/lib/utils/thresholds.ts (hardcoded for M3, replaced by app_settings in M7)
+
+--- Architecture ---
+Staleness source:  app_settings table (was thresholds.ts in M3; moved to DB in M7)
+Pipeline groups:   setup | outreach | case_mgmt | terminal (see PIPELINE_GROUP in settings.ts)
+JustCall key:      .env.local only — never in code or git (key visible in JustCall dashboard)
 ```
 
 ---
@@ -250,3 +311,38 @@ If this discipline slips and property names appear outside mapper.ts, the schema
 ## Prisma Decimal — DB Read Rule
 
 `amount` and `estimatedSurplus` are `Decimal` objects when read from DB (not plain numbers). Always call `.toNumber()` before comparisons, or use `db/deals.ts` which handles conversion. Never compare Decimal objects directly to numbers.
+
+---
+
+## Service Layer Architecture — Three Enforced Boundaries
+
+### Boundary 1 — DB Access
+
+**All DB reads and writes go through `src/lib/db/` functions. Never import `prisma` directly outside `src/lib/db/`.** Zero exceptions.
+
+**All `$transaction` calls go through `withTransaction()` or `withBatchTransaction()` in `src/lib/db/transaction.ts`.** Both enforce a 30s timeout and `maxWait: 5000`. Never call `prisma.$transaction()` directly.
+
+### Boundary 2 — External API Clients
+
+**All HubSpot API calls go through `src/lib/hubspot/client.ts`** (existing rule, still applies).
+
+**All Anthropic calls go through `src/lib/ai/client.ts`** — use `callClaude()` for blocking responses, `callClaudeStreaming()` for streaming. Never instantiate `new Anthropic()` outside `src/lib/ai/client.ts`.
+
+**New external service integrations go in `src/lib/integrations/<service-name>/`.** Follow the pattern in `src/lib/hubspot/client.ts`:
+- One `request()` method all calls flow through
+- Per-service `TokenBucket` instance (not the shared HubSpot one)
+- Service-specific error class extending `IntegrationError` from `src/lib/errors.ts`
+- `log.info` on every call with service, endpoint, and duration
+- Exponential backoff on 429 up to MAX_RETRIES
+
+Scaffold clients exist for Google Workspace (`src/lib/integrations/google/client.ts`) and skip-tracing (`src/lib/integrations/skip-tracing/client.ts`).
+
+### Boundary 3 — Errors
+
+- `src/lib/errors.ts` — `IntegrationError` (base) + `HubSpotError`, `GoogleError`, `SkipTracingError`, `BrowserError`
+- `src/lib/ai/errors.ts` — `AIError` (AI-specific, not an integration error)
+- No other `AIError` definitions exist. Never import `AIError` from `src/lib/errors.ts`.
+
+### AWS / Multi-Instance Migration Gate
+
+The `TokenBucket` in `src/lib/utils/rate-limiter.ts` is **in-memory and per-invocation** — correct for Vercel serverless (each function invocation is isolated). **Before deploying to AWS multi-instance containers:** replace `TokenBucket` with a DB-backed leaky bucket reading from a `rate_limit` table per service. The daily call cap in Postgres already coordinates across invocations. The per-second bucket does not.

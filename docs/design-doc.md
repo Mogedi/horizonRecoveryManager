@@ -1035,3 +1035,296 @@ Resolved in M1:
 8. ✅ **Contact count in Layer 1** — `num_associated_contacts` confirmed available in CRM Search.
 9. ⚠️ **Task counts in Layer 1** — not yet confirmed. May require Layer 2.
 10. ⚠️ **Calls endpoint** — sample deal had 0 calls. Need deal with calls to test `hs_call_body` etc.
+
+---
+
+## Multi-Source Architecture (M9+)
+
+Phase 1 (M0–M8) pulls all data from HubSpot. Phase 2 adds JustCall as a second source, Google Workspace as a third. The architecture is designed so each new source plugs in without changing downstream rules or UI code.
+
+### Three-Pipeline Model
+
+Each HubSpot stage belongs to one of three operational pipelines. Rules and UI layouts change based on which pipeline a deal is in. See `docs/gameplan.md` for the full stage-to-pipeline mapping.
+
+| Pipeline | Stages | Health Signal |
+|---|---|---|
+| **Setup** | New Case, Ready for Outreach | Data completeness — does this deal have phone numbers and required documents? |
+| **Outreach** | Attempted Contact through Letter Outreach | Call cadence — how many attempts, what was the outcome, when is the next call due? |
+| **Case Management** | Agreement Sent, Signed/In Progress | Workflow state — time-based staleness IS the right signal here |
+| **Terminal** | Dead, DNC, Blocked, Exhausted, Closed-Paid, F, More Research Need | No rules fire |
+
+The `PIPELINE_GROUP` constant in `src/lib/db/settings.ts` maps each stage ID to its pipeline group. Never compare pipeline group strings against raw stage names.
+
+### New DB Tables (M9)
+
+#### `activity_events` — Multi-source unified event log
+
+Replaces `deal_activities` as the destination for new data sources. The existing `deal_activities` table stays for HubSpot Layer 2 data (backward compatible). New sources write to `activity_events`.
+
+Key constraints:
+- `@@unique([source, externalId])` — prevents duplicate inserts on re-sync
+- `@@index([dealHubspotId, happenedAt])` — attention queue joins by deal + date
+- `@@index([source, happenedAt])` — coverage queries by source
+- `dealHubspotId` can be null for unmatched calls (JustCall phone not found in phone registry)
+
+```sql
+CREATE TABLE activity_events (
+  id              SERIAL PRIMARY KEY,
+  deal_hubspot_id TEXT REFERENCES deals(hubspot_id) ON DELETE CASCADE,  -- null = unmatched
+  source          TEXT NOT NULL,  -- HUBSPOT | JUSTCALL | GOOGLE | USER | AI
+  external_id     TEXT,           -- JustCall call ID, HubSpot engagement ID, Gmail message ID
+  type            TEXT NOT NULL,  -- call | note | email | task | sms
+  happened_at     TIMESTAMPTZ NOT NULL,
+  duration_secs   INT,
+  direction       TEXT,           -- inbound | outbound
+  outcome         TEXT,           -- answered | voicemail | no_answer | busy
+  from_number     TEXT,           -- E.164
+  to_number       TEXT,           -- E.164
+  agent_id        TEXT,           -- JustCall agent ID or HubSpot owner ID
+  body            TEXT,           -- note text / email body excerpt / transcript
+  metadata        JSONB,
+  raw_payload     JSONB,
+  created_at      TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(source, external_id)
+);
+CREATE INDEX idx_activity_events_deal_time ON activity_events(deal_hubspot_id, happened_at);
+CREATE INDEX idx_activity_events_source_time ON activity_events(source, happened_at);
+```
+
+#### `phone_numbers` — E.164 phone registry
+
+Normalized phone number registry. Populated from `deal_contacts.phone_numbers` during Layer 2 sync. Used to match incoming JustCall calls to deals by phone number.
+
+```sql
+CREATE TABLE phone_numbers (
+  id              SERIAL PRIMARY KEY,
+  number_e164     TEXT NOT NULL,   -- e.g. +14045551234
+  deal_hubspot_id TEXT REFERENCES deals(hubspot_id) ON DELETE CASCADE,
+  contact_name    TEXT,
+  status          TEXT DEFAULT 'unknown',  -- active | disconnected | invalid | unknown
+  last_seen_at    TIMESTAMPTZ,
+  created_at      TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_phone_numbers_e164 ON phone_numbers(number_e164);
+CREATE INDEX idx_phone_numbers_deal ON phone_numbers(deal_hubspot_id);
+```
+
+#### `pipeline_states` — Per-deal pipeline group status
+
+One row per deal per pipeline group. Tracks operational status (not_started | active | completed | blocked). Auto-computed in the future from `activity_events`; seeded manually for now.
+
+```sql
+CREATE TABLE pipeline_states (
+  id              SERIAL PRIMARY KEY,
+  deal_hubspot_id TEXT NOT NULL REFERENCES deals(hubspot_id) ON DELETE CASCADE,
+  pipeline        TEXT NOT NULL,  -- setup | outreach | case_mgmt | terminal
+  status          TEXT DEFAULT 'not_started',
+  entered_at      TIMESTAMPTZ,
+  completed_at    TIMESTAMPTZ,
+  updated_at      TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(deal_hubspot_id, pipeline)
+);
+```
+
+#### `sync_sources` — Integration registry
+
+One row per external data source. Gate: check `is_active` before running a source's sync. `config` stores non-secret options (max records per sync, lookback days, etc.). Secrets live in environment variables only.
+
+```sql
+CREATE TABLE sync_sources (
+  id            SERIAL PRIMARY KEY,
+  name          TEXT UNIQUE NOT NULL,  -- HUBSPOT | JUSTCALL | GOOGLE
+  is_active     BOOLEAN DEFAULT FALSE,
+  last_synced_at TIMESTAMPTZ,
+  config        JSONB,
+  created_at    TIMESTAMPTZ DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+Seed:
+```sql
+INSERT INTO sync_sources (name, is_active) VALUES
+  ('HUBSPOT', true),
+  ('JUSTCALL', false),
+  ('GOOGLE', false);
+```
+
+### Denormalized Cache Columns on `deals`
+
+```sql
+ALTER TABLE deals ADD COLUMN call_attempt_count INT DEFAULT 0;
+ALTER TABLE deals ADD COLUMN last_call_attempt_at TIMESTAMPTZ;
+```
+
+Updated atomically when JustCall sync inserts call events for a deal. Avoids JOINing `activity_events` on every attention queue load. Rules read `deal.callAttemptCount` directly.
+
+### PhoneProvider Interface
+
+All phone call integrations implement this interface. JustCall is the first implementation. RingCentral, GoHighLevel, or any future provider implements the same interface — the sync job calls `provider.getCallLogs(since, until)` without knowing which provider it is.
+
+```typescript
+// src/lib/integrations/phone-provider.ts
+
+export interface NormalizedCallLog {
+  externalId: string           // provider-specific call ID (string — never number, IDs can be large)
+  happenedAt: Date
+  durationSecs: number | null
+  direction: 'inbound' | 'outbound'
+  outcome: 'answered' | 'voicemail' | 'no_answer' | 'busy'
+  fromNumberE164: string       // normalized to E.164 before this point
+  toNumberE164: string         // normalized to E.164 before this point
+  agentId: string | null       // provider's agent/user identifier
+  rawPayload: unknown
+}
+
+export interface PhoneProvider {
+  getCallLogs(since: Date, until: Date): Promise<NormalizedCallLog[]>
+}
+```
+
+### JustCall Integration
+
+**API base:** `https://api.justcall.io/v2.1`
+**Auth:** `Authorization: <api_key>:<api_secret>` header
+**Endpoint:** `GET /calls` with `from_datetime`, `to_datetime`, `page`, `per_page` params
+
+**Rate limits (from Mo's account — verified 2026-06-07):**
+- Burst: 60 req/min → 30% cap = **18 req/min**
+- Hourly: 3600 req/hr → 30% cap = **1,080 req/hr**
+- Webhooks: not rate-limited
+
+**File locations:**
+- `src/lib/integrations/phone-provider.ts` — interface (shared)
+- `src/lib/integrations/justcall/types.ts` — JustCall API response shapes
+- `src/lib/integrations/justcall/normalize.ts` — E.164 normalization + `NormalizedCallLog` conversion
+- `src/lib/integrations/justcall/client.ts` — `JustCallClient implements PhoneProvider`; `TokenBucket(18, 'per_minute')`; `JustCallError extends IntegrationError`
+- `src/lib/integrations/justcall/sync.ts` — `syncJustCallSample()` and `syncJustCallFull(since)`
+
+**Phone matching flow:**
+1. JustCall sync runs → gets `to_number` for each call (E.164)
+2. Lookup `phone_numbers` WHERE `number_e164 = to_number` → get `deal_hubspot_id`
+3. If found: insert `activity_events` with matched `deal_hubspot_id` + update deal cache cols
+4. If not found: insert `activity_events` with `deal_hubspot_id = null` (unmatched)
+5. Coverage report: matched / total = match rate (goal: >80%)
+
+**E.164 normalization rules (US numbers only in v1):**
+- Strip all non-digit characters
+- If 11 digits starting with 1: remove leading 1 → 10 digits
+- If 10 digits: prepend `+1`
+- If fewer than 10 digits: reject (not a valid US number)
+- Store in `phone_numbers.number_e164` exactly as `+1XXXXXXXXXX`
+
+**Sample mode:** Last 24 hours of calls, max 20 records. Mo must approve sample before full pull.
+
+**Full mode:** All calls since `sync_sources.last_synced_at` for JUSTCALL (or last 90 days if first run). Paginated. Updates `sync_sources.last_synced_at` on completion.
+
+### Google Workspace Integration
+
+Scaffold exists at `src/lib/integrations/google/client.ts`. Not yet active. Mo will provide OAuth credentials when ready.
+
+**Auth:** OAuth 2.0 refresh token flow (read-only scopes: `gmail.readonly`, `calendar.readonly`)
+
+**Email matching flow:**
+1. Gmail sync pulls emails from last N days
+2. For each email: extract `from` and `to` addresses
+3. Match against `deal_contacts.email_list` (normalized address)
+4. If match: insert into `activity_events` with `source = GOOGLE`, `type = email`
+5. Unmatched emails: skip (do not store emails not related to deals)
+
+**Rate limits:** Verify before implementation. Gmail API: typically 250 units/second. 30% cap = 75 req/s.
+
+**File locations:**
+- `src/lib/integrations/google/client.ts` — `GoogleClient`; `GoogleError extends IntegrationError`
+- `src/lib/integrations/google/sync.ts` — `syncGoogleEmails()`, `syncGoogleCalendar()`
+
+### New Rules (M11)
+
+After JustCall data is loaded and match rate is acceptable:
+
+**`src/lib/rules/call-cadence.ts`**
+```typescript
+// Fires: deal in outreach stage + next call is due (based on callAttemptCount + lastCallAttemptAt)
+// Cadence: 0 attempts → call immediately; 1–7 → every 2 biz days; 7+ → every 7 biz days
+// Severity: 'warning' if due today; 'urgent' if overdue by 1+ biz days
+export function checkCallCadence(deal: NormalizedDeal, ctx: RuleContext): AttentionFlag | null
+```
+
+**`src/lib/rules/calls-exhausted.ts`**
+```typescript
+// Fires: deal in outreach stage + callAttemptCount >= ctx.callCadenceMaxAttempts (default 7)
+// + deal NOT in Letter Outreach stage
+// Severity: 'urgent'
+// Message: "7 call attempts — consider Letter Outreach"
+export function checkCallsExhausted(deal: NormalizedDeal, ctx: RuleContext): AttentionFlag | null
+```
+
+**`src/lib/rules/setup-readiness.ts`**
+```typescript
+// Fires: deal in Setup pipeline (New Case, Ready for Outreach) + contactCount = 0 OR no valid phones
+// Severity: 'warning'
+// Message: "No valid phone numbers — not ready for outreach"
+export function checkSetupReadiness(deal: NormalizedDeal, ctx: RuleContext): AttentionFlag | null
+```
+
+### Updated `NormalizedDeal` (M11)
+
+Add to existing type:
+```typescript
+callAttemptCount: number      // 0 if no JustCall data loaded
+lastCallAttemptAt: Date | null
+pipelineGroup: 'setup' | 'outreach' | 'case_mgmt' | 'terminal'  // derived from stage via PIPELINE_GROUP
+```
+
+### Updated `RuleContext` (M11)
+
+Add to existing type:
+```typescript
+pipelineGroups: Record<string, 'setup' | 'outreach' | 'case_mgmt' | 'terminal'>
+callCadenceMaxAttempts: number          // default 7 (from app_settings)
+callCadenceInitialSpacingDays: number   // default 2 (from app_settings)
+callCadenceResurfaceDays: number        // default 7 (from app_settings, after exhaustion)
+```
+
+### New API Routes (M10–M11)
+
+```
+POST /api/sync/justcall     — trigger JustCall sync (body: { mode: 'sample' | 'full' })
+POST /api/sync/google       — trigger Google sync (M13, not yet built)
+```
+
+### Rate Limit Summary — All Sources
+
+| Source | Plan Limit | 30% Cap | Tracked In |
+|---|---|---|---|
+| HubSpot | 100 req/10s | 3 req/s, 75k/day | sync_log.api_calls_made |
+| JustCall | 60 req/min burst, 3600/hr | 18 req/min | sync_sources.config |
+| Google (Gmail) | ~250 req/s | 75 req/s | sync_sources.config |
+
+Every external API call goes through that service's `client.ts`. Never call external APIs directly in route handlers or sync jobs.
+
+### File Structure — New Paths (M9+)
+
+```
+src/lib/
+├── integrations/
+│   ├── phone-provider.ts              # PhoneProvider interface + NormalizedCallLog type
+│   ├── justcall/
+│   │   ├── types.ts                   # JustCall API response shapes
+│   │   ├── normalize.ts               # E.164 normalization + NormalizedCallLog conversion
+│   │   ├── client.ts                  # JustCallClient implements PhoneProvider
+│   │   └── sync.ts                    # syncJustCallSample() + syncJustCallFull(since)
+│   ├── google/
+│   │   ├── client.ts                  # GoogleClient (scaffold — awaiting credentials)
+│   │   └── sync.ts                    # syncGoogleEmails() + syncGoogleCalendar()
+│   └── skip-tracing/
+│       └── client.ts                  # Scaffold — future skip trace integration
+├── db/
+│   ├── activity-events.ts             # NEW: getActivityEvents(), upsertActivityEvent()
+│   └── phone-numbers.ts              # NEW: lookupDealByPhone(), upsertPhoneNumber(), populateFromDealContacts()
+└── rules/
+    ├── call-cadence.ts               # NEW: checkCallCadence() — outreach pipeline
+    ├── calls-exhausted.ts             # NEW: checkCallsExhausted() — outreach pipeline
+    └── setup-readiness.ts            # NEW: checkSetupReadiness() — setup pipeline
+```
+

@@ -1,0 +1,13 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  // Connection URLs configured in prisma.config.ts (Prisma 7)
+  // DIRECT_URL used by CLI for migrations
+  // DATABASE_URL (pooled) used by PrismaClient via @prisma/adapter-pg
+}
+
+// Schema populated in M2b after field-mapping.md confirmed.
+// All tables will include raw_payload Json for schema flexibility.

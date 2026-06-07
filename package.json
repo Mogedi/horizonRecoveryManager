@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:log": "next dev 2>&1 | tee /tmp/horizon-dev.log",
     "build": "next build",
     "start": "next start",
     "test": "vitest run --passWithNoTests",
@@ -13,7 +14,8 @@
     "db:studio": "dotenv -e .env.local -- prisma studio",
     "db:generate": "prisma generate",
     "db:seed": "dotenv -e .env.local -- node prisma/seed.mjs",
-    "smoke": "bash scripts/smoke-test.sh"
+    "smoke": "bash scripts/smoke-test.sh",
+    "check:logs": "bash scripts/check-logs.sh"
   },
   "prisma": {
     "seed": "npm run db:seed"

@@ -313,39 +313,27 @@ docs/research/
 **Goal:** Per-deal AI summaries working. Mo can get full deal context from Claude in one click.
 
 **Checklist — Schema (must be first):**
-- [ ] Add `AiSummary` model to `prisma/schema.prisma`:
-  - `id`, `dealHubspotId` (FK → deals), `summaryJson JSONB`, `generatedAt TIMESTAMPTZ`
-  - **No `is_stale` column** — compute staleness at read time: `deal.lastActivityDate > summary.generatedAt`
-  - **No `activity_count_at_gen`** — unused
-- [ ] `npm run db:migrate` → migration name: `add-ai-summaries`
-- [ ] `npm run db:generate`
+- [x] Add `AiSummary` model to `prisma/schema.prisma`
+- [x] `npm run db:migrate` → `add-ai-summaries`
+- [x] `npm run db:generate`
 
 **Checklist — AI Library (TDD):**
-- [ ] `npm install @anthropic-ai/sdk`
-- [ ] `/src/lib/ai/client.ts` — thin Anthropic SDK wrapper, throws `AIError` on failure
-- [ ] `/src/lib/ai/prompts.ts` — `buildSummaryPrompt(deal, contacts, activities, lookbackDays)`:
-  - Filters activities to `lookbackDays` window (default from `AI_SUMMARY_LOOKBACK_DAYS` in `thresholds.ts`)
-  - Prompt instructs Claude to return **a JSON object** with exact keys:
-    `current_status`, `last_meaningful_activity`, `blockers` (array), `who_needs_something`, `suggested_next_step`, `mo_action_required` (boolean), `documents_mentioned_missing` (array)
-  - **Write the test first:** `prompts.test.ts` — verify prompt contains deal name, stage, contacts, activity bodies, and the JSON instruction string before calling Claude
-- [ ] `/src/lib/ai/summary.ts` — orchestrates: build prompt → call Claude → parse JSON response → upsert into `ai_summaries`
-  - Parse: `JSON.parse(response)` — throw `AIError` if malformed
-  - Upsert: delete old summary for deal + insert new one (no versioning in v1)
-  - **Write parsing tests first** (mock Claude response, verify field extraction) before wiring real API
+- [x] `npm install @anthropic-ai/sdk`
+- [x] `/src/lib/ai/errors.ts` — `AIError` class (isolated from SDK for testability)
+- [x] `/src/lib/ai/client.ts` — `callClaude()` wrapper, throws `AIError`
+- [x] `/src/lib/ai/prompts.ts` — `buildSummaryPrompt()` with JSON instruction, lookback filter
+- [x] `/src/lib/ai/summary.ts` — `parseSummaryResponse()` with full validation
+- [x] `/src/lib/ai/generate.ts` — `runSummaryGeneration()` orchestrator
+- [x] `prompts.test.ts` + `summary.test.ts` — 14 tests all green
 
 **Checklist — API + UI:**
-- [ ] `/src/lib/db/summaries.ts` — `getLatestSummary(hubspotId)`, `upsertSummary(hubspotId, json)`
-- [ ] `POST /api/deals/[id]/summary` — cookie-authed, calls `runSummaryGeneration(id)`, returns summary
-- [ ] Add `summaryData` to `GET /api/deals/[id]` response (latest summary if exists)
-- [ ] "Generate AI Summary" button in DealPanel — visible when Layer 2 is loaded (contacts + activities needed)
-- [ ] Summary renders in panel: 7 sections as labeled bullet groups
-- [ ] "Generated X minutes ago" timestamp below summary
-- [ ] **Stale badge:** show "New activity since summary — consider regenerating" when `deal.lastActivityDate > summary.generatedAt`
-- [ ] "↻ Regenerate" button — always manual, re-calls `/api/deals/[id]/summary`
-- [ ] **Mo Action Required group in `/api/deals`:** load all `ai_summaries` with `mo_action_required = true` as a Set; add to groups as `'mo_action_required'` (urgent, shown first). **No `internal_tasks` row creation here** — that is M6.
-- [ ] Add `'mo_action_required'` to `FLAG_CONFIG` and `DISPLAY_ORDER` in `dashboard/page.tsx`
-- [ ] **Acceptance:** Mo clicks "Generate AI Summary" on a Signed/In Progress deal with Layer 2 loaded → receives 7-section JSON summary in under 20 seconds. Stale badge appears after a Layer 1 sync that updates `lastActivityDate`. Mo Action Required group appears in dashboard if any summary has `mo_action_required: true`.
-- [ ] git commit: `[M5] per-deal AI summary`
+- [x] `/src/lib/db/summaries.ts` — `getLatestSummary()`, `upsertSummary()`, `getMoActionDealIds()`
+- [x] `POST /api/deals/[id]/summary` — cookie-authed
+- [x] `GET /api/deals/[id]` — includes `summaryData`
+- [x] `GET /api/deals` — `mo_action_required` group via `getMoActionDealIds()`
+- [x] DealPanel: Generate button, `AiSummaryBlock` (6 sections, stale badge, ↻ Regenerate)
+- [x] `dashboard/page.tsx`: `mo_action_required` in `FLAG_CONFIG` + `DISPLAY_ORDER`
+- [x] git commit: `[M5] per-deal AI summary`
 - [ ] git tag: `sprint-5-done`
 
 **Not in M5:** Daily Briefing (M6), internal_tasks creation (M6), suggested follow-up questions (P2), document checklist (deferred indefinitely), Mo Action Required keyword heuristics (not building — AI handles it).

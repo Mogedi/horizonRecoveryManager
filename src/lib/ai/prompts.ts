@@ -31,7 +31,7 @@ const JSON_INSTRUCTION = `Return ONLY a valid JSON object with exactly these key
   "blockers": ["list any blockers, or empty array if none"],
   "who_needs_something": "who is waiting on whom, or null if nobody",
   "suggested_next_step": "the single most important thing Mo should do next",
-  "mo_action_required": true,
+  "mo_action_required": true or false,
   "documents_mentioned_missing": ["any missing docs mentioned in notes, or empty array"]
 }`
 

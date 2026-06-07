@@ -1,8 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { AIError } from './errors'
 
-export { AIError }
-
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 })

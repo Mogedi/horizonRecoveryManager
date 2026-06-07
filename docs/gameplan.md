@@ -368,9 +368,8 @@ docs/research/
 - [ ] Add task form: title, notes, due date, category, optional deal link
 - [ ] Mark task complete (moves to "Completed" section, last 30 days)
 - [ ] Delete task
-- [ ] AI-detected tasks from M5 (`source: 'ai_detected'`) shown with "Accept" and "Dismiss" buttons — Accept converts to manual source; Dismiss deletes
 - [ ] Task count badge on "Tasks" link in sidebar navigation
-- [ ] **Mo Action Required → create internal_tasks**: when Mo clicks "Generate AI Summary" and `mo_action_required: true`, prompt Mo to create a task or skip (do not auto-create without input)
+- [ ] **Mo Action Required → task prompt**: when Mo clicks "Generate AI Summary" and `mo_action_required: true`, show a "Create task" prompt below the summary — pre-fills `suggested_next_step` as the task title. Mo can accept (creates task with `source: 'manual'`) or dismiss. No auto-create. `source: 'ai_detected'` is NOT used — all tasks are manual source regardless of origin.
 
 **Checklist — Daily Briefing (secondary, ships after tasks):**
 - [ ] "Daily Briefing" button on dashboard header
@@ -409,7 +408,7 @@ docs/research/
   - `signed_no_activity_days = 5`
   - `ai_summary_lookback_days = 28`
 - [ ] Update `/api/deals` route: replace hardcoded constants with `loadThresholds()` from `app_settings`
-- [ ] Update `summary.ts`: replace hardcoded `AI_SUMMARY_LOOKBACK_DAYS` with value loaded from `app_settings`
+- [ ] Update `generate.ts`: replace `AI_SUMMARY_LOOKBACK_DAYS` import with value loaded from `app_settings`
 - [ ] `GET /api/settings` — returns all editable settings as `{ key, value, label }` objects
 - [ ] `PATCH /api/settings` — saves one or more settings (validate: must be positive integer)
 - [ ] Settings page (`/dashboard/settings`) renders all threshold values as editable number inputs
@@ -469,8 +468,8 @@ Use this to verify the design-doc.md covers everything before building.
 - [x] `deal_snoozes` table with categories
 - [x] `ai_summaries` table with JSON shape
 - [x] `internal_tasks` table
-- [x] `document_checklist` table
-- [x] `product_roadmap` table
+- [ ] ~~`document_checklist` table~~ — removed (deferred indefinitely)
+- [ ] ~~`product_roadmap` table~~ — removed (markdown file is sufficient)
 - [x] `app_settings` table with defaults
 - [x] `sync_log` table
 
@@ -479,9 +478,9 @@ Use this to verify the design-doc.md covers everything before building.
 - [x] Attention triggers (all categories)
 - [x] Business days calculation
 - [x] Snooze system (categories, wake behavior)
-- [x] Mo Action Required detection heuristics
-- [x] Document checklist (all document types)
-- [x] AI summary cache invalidation rules
+- [x] Mo Action Required — surfaced from AI summary JSON (no keyword heuristics)
+- [ ] ~~Document checklist~~ — removed (deferred indefinitely)
+- [x] AI summary staleness: computed at read time (`lastActivityDate > generatedAt`)
 
 ### UI
 - [x] Dashboard home layout

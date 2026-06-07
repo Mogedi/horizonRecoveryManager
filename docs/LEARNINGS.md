@@ -136,3 +136,25 @@ When `contactCount = 3` but Layer 2 wasn't loaded, the panel header said "Contac
 
 **Known gap: DNC-only contacts not flagged.**
 The upgraded `contacts.ts` rule checks for valid phone numbers when Layer 2 is loaded. It does NOT check if all contacts have `doNotContact = true`. A deal could have 3 contacts with valid phones but all DNC — rule returns null, but the deal is functionally unreachable. Low frequency, not worth fixing now, but document it. If Mo reports "no contacts to call" on flagged deals, this is why.
+
+---
+
+## M5 Retrospective Findings (Post-M5 Audit)
+
+**Anthropic SDK instantiates at module load time and triggers browser-detection errors in Vitest.**
+`new Anthropic({ apiKey })` runs the moment the module is imported. Vitest's jsdom environment looks like a browser, so the SDK throws. Fix: put `AIError` in its own file (`errors.ts`) with no SDK dependency. `summary.ts` (pure parsing) imports from `errors.ts`. `client.ts` (SDK) and `generate.ts` (orchestrator) are never imported by test files — they only pull in `summary.ts` and `prompts.ts`. This isolation pattern is required for any SDK that auto-detects environment. Applies to future integrations (Stripe, Twilio, etc.).
+
+**Prisma upsert returns the full record — don't re-fetch after writing.**
+`prisma.aiSummary.upsert()` returns the updated `AiSummary` row including `generatedAt`. The original `generate.ts` called `upsertSummary()` then immediately called `getLatestSummary()` for the timestamp — a wasted round-trip. Fixed: use the upsert return value directly.
+
+**Snooze must always beat AI inference in dashboard grouping.**
+The `mo_action_required` dashboard group was overriding the `snoozed` group. A deal Mo explicitly snoozed would reappear as "Mo Action Required" if its AI summary had `mo_action_required: true`. This is wrong — Mo's explicit decision (snooze) must override AI inference. Fixed: check for `snoozed` flag before checking `moActionIds` in the grouping loop.
+
+**JSON prompt templates with example values bias the model.**
+`"mo_action_required": true` in the prompt template anchors Claude toward `true`. Use `true or false` (descriptive) as the placeholder, not an actual boolean value. Same principle applies to any future prompt template with boolean or categorical fields.
+
+**`ai_detected` task source was a design fiction.**
+M5 shipped with M6 planned to show "Accept / Dismiss" buttons for tasks auto-created by AI. But M5 never created any `ai_detected` rows — and the M5 summary generation correctly doesn't auto-create tasks. The entire `ai_detected` source concept was built on a planned flow that never existed. Cut for M6: all tasks are `manual` source. When Mo generates a summary and sees `mo_action_required: true`, we offer a "Create task" prompt that pre-fills `suggested_next_step` — but all tasks created this way are still manual source.
+
+**Prisma upsert `generatedAt` uses `new Date()` at call time, not DB server time.**
+The `upsertSummary` function sets `generatedAt: new Date()` (JavaScript). If the app server and DB server clocks drift by >1 second, staleness comparisons against `lastActivityDate` (which is UTC from HubSpot) could be off. In practice, Neon and Vercel are both AWS us-east-1 and clock drift is negligible. Not worth fixing, but if stale badges appear on fresh summaries, check this first.

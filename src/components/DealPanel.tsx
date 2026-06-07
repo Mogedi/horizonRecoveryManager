@@ -199,13 +199,11 @@ function AiSummaryBlock({
   generatedAt,
   lastActivityDate,
   onRegenerate,
-  regenerating,
 }: {
   summary: SummaryJson
   generatedAt: string
   lastActivityDate: string | null
   onRegenerate: () => void
-  regenerating: boolean
 }) {
   const generatedDate = new Date(generatedAt)
   const isStale = lastActivityDate && new Date(lastActivityDate) > generatedDate
@@ -273,10 +271,9 @@ function AiSummaryBlock({
         </div>
         <button
           onClick={onRegenerate}
-          disabled={regenerating}
-          className="text-xs text-gray-400 hover:text-gray-700 disabled:opacity-40"
+          className="text-xs text-gray-400 hover:text-gray-700"
         >
-          {regenerating ? '…' : '↻ Regenerate'}
+          ↻ Regenerate
         </button>
       </div>
     </div>
@@ -640,16 +637,7 @@ export default function DealPanel({
                       generatedAt={summaryData.generatedAt}
                       lastActivityDate={deal.lastActivityDate}
                       onRegenerate={generateSummary}
-                      regenerating={false}
                     />
-                  )}
-                  {summaryState === 'done' && !summaryData && (
-                    <button
-                      onClick={generateSummary}
-                      className="w-full py-2 text-sm text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 mb-4"
-                    >
-                      Generate AI Summary
-                    </button>
                   )}
                 </>
               )}

@@ -34,15 +34,19 @@ export async function GET() {
   const results = evaluateAll(deals, ctx)
 
   // Group by primary flag type. A deal with multiple flags appears under its first (highest-priority) flag.
-  // mo_action_required is injected from ai_summaries — it overrides other groupings for those deals.
-  // Healthy = no flags. Snoozed = in snoozed bucket.
+  // Snooze always wins — it is an explicit Mo decision and overrides AI inference.
+  // mo_action_required is injected from ai_summaries for non-snoozed deals only.
+  // Healthy = no flags.
   const groups: Record<string, DealWithFlags[]> = {}
   for (const result of results) {
+    const primaryFlag = result.flags[0]?.type ?? null
     let key: string
-    if (moActionIds.has(result.deal.hubspotId)) {
+    if (primaryFlag === 'snoozed') {
+      key = 'snoozed'
+    } else if (moActionIds.has(result.deal.hubspotId)) {
       key = 'mo_action_required'
     } else {
-      key = result.flags.length > 0 ? result.flags[0].type : 'healthy'
+      key = primaryFlag ?? 'healthy'
     }
     if (!groups[key]) groups[key] = []
     groups[key].push(result)

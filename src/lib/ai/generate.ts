@@ -2,7 +2,7 @@ import { callClaude } from './client'
 import { AIError } from './errors'
 import { buildSummaryPrompt } from './prompts'
 import { parseSummaryResponse } from './summary'
-import { getLatestSummary, upsertSummary } from '@/lib/db/summaries'
+import { upsertSummary } from '@/lib/db/summaries'
 import { getActivitiesForDeal } from '@/lib/db/activities'
 import { getContactsForDeal } from '@/lib/db/contacts'
 import { prisma } from '@/lib/db/client'
@@ -58,8 +58,6 @@ export async function runSummaryGeneration(hubspotId: string): Promise<{
   const rawText = await callClaude(prompt)
   const summary = parseSummaryResponse(rawText)
 
-  await upsertSummary(hubspotId, summary)
-
-  const stored = await getLatestSummary(hubspotId)
-  return { summary, generatedAt: stored?.generatedAt ?? new Date() }
+  const stored = await upsertSummary(hubspotId, summary)
+  return { summary, generatedAt: stored.generatedAt }
 }

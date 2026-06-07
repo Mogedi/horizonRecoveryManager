@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef, Suspense } from 'react'
+import { useSearchParams } from 'next/navigation'
 import DealPanel from '@/components/DealPanel'
 
 type AttentionFlag = {
@@ -212,12 +213,14 @@ function FlagGroup({
   )
 }
 
-export default function DashboardPage() {
+function DashboardContent() {
+  const searchParams = useSearchParams()
   const [data, setData] = useState<DealsResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
   const [selectedDealId, setSelectedDealId] = useState<string | null>(null)
+  const dealParamHandled = useRef(false)
 
   const fetchDeals = useCallback(async () => {
     setLoading(true)
@@ -256,6 +259,15 @@ export default function DashboardPage() {
   useEffect(() => {
     fetchDeals()
   }, [fetchDeals])
+
+  // Open deal panel when navigated from tasks page with ?deal=<hubspotId>
+  useEffect(() => {
+    if (!data || dealParamHandled.current) return
+    const dealId = searchParams.get('deal')
+    if (!dealId) return
+    dealParamHandled.current = true
+    setSelectedDealId(dealId)
+  }, [data, searchParams])
 
   const orderedGroups = DISPLAY_ORDER.filter(key => data?.groups[key]?.length).map(key => ({
     key,
@@ -364,5 +376,13 @@ export default function DashboardPage() {
       />
     )}
     </>
+  )
+}
+
+export default function DashboardPage() {
+  return (
+    <Suspense>
+      <DashboardContent />
+    </Suspense>
   )
 }

@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import Link from 'next/link'
 import LogoutButton from '@/components/LogoutButton'
+import TaskCountBadge from '@/components/TaskCountBadge'
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
   return (
@@ -15,6 +16,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
           </Link>
           <Link href="/dashboard/tasks" className="flex items-center px-3 py-2 text-sm text-gray-700 rounded-md hover:bg-gray-50">
             Tasks
+            <TaskCountBadge />
           </Link>
           <Link href="/dashboard/settings" className="flex items-center px-3 py-2 text-sm text-gray-700 rounded-md hover:bg-gray-50">
             Settings

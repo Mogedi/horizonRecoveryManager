@@ -8,6 +8,7 @@
     "build": "next build",
     "start": "next start",
     "test": "vitest run --passWithNoTests",
+    "posttest": "bash scripts/check-dev-logs.sh",
     "test:watch": "vitest",
     "db:migrate": "dotenv -e .env.local -- prisma migrate dev",
     "db:push": "dotenv -e .env.local -- prisma db push",

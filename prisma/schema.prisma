@@ -4,10 +4,120 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  // Connection URLs configured in prisma.config.ts (Prisma 7)
-  // DIRECT_URL used by CLI for migrations
-  // DATABASE_URL (pooled) used by PrismaClient via @prisma/adapter-pg
+  // Prisma 7: no url/directUrl here. See prisma.config.ts (CLI) and src/lib/db/client.ts (app).
 }
 
-// Schema populated in M2b after field-mapping.md confirmed.
-// All tables will include raw_payload Json for schema flexibility.
+enum SnoozeCategory {
+  waiting_on_attorney
+  waiting_on_county
+  waiting_on_client
+  waiting_on_documents
+  waiting_on_probate
+  filed_normal_wait
+  other
+}
+
+// Layer 1 cache — all deals in the pipeline
+model Deal {
+  id               Int       @id @default(autoincrement())
+  hubspotId        String    @unique @map("hubspot_id")
+  name             String?
+  stage            String?   // stage ID — resolve to name via stageMap; never compare raw strings
+  pipeline         String?
+  ownerId          String?   @map("owner_id") // mostly Marwa (data entry) — not used for routing
+  amount           Decimal?  @db.Decimal(12, 2) // primary display value — confirmed 100% populated
+  estimatedSurplus Decimal?  @map("estimated_surplus") @db.Decimal(12, 2) // null on all current deals
+  closeDate        DateTime? @map("close_date") @db.Date
+  lastActivityDate DateTime? @map("last_activity_date") @db.Timestamptz(6) // notes_last_updated
+  stageEnteredAt   DateTime? @map("stage_entered_at") @db.Timestamptz(6)   // hs_v2_date_entered_current_stage
+  lastModified     DateTime? @map("last_modified") @db.Timestamptz(6)      // hs_lastmodifieddate — delta filter
+  contactCount     Int       @default(0) @map("contact_count")
+  propertyAddress  String?   @map("property_address") // properties_address
+  county           String?                            // enumeration: 25 GA counties + "Other"
+  parcelId         String?   @map("parcel_id")        // parcel_id__deal
+  taxSaleDate      DateTime? @map("tax_sale_date") @db.Date
+  hubspotUrl       String?   @map("hubspot_url")
+  rawPayload       Json?     @map("raw_payload")
+  syncedAt         DateTime  @default(now()) @map("synced_at") @db.Timestamptz(6)
+
+  activities DealActivity[]
+  contacts   DealContact[]
+  snoozes    DealSnooze[]
+
+  @@map("deals")
+}
+
+// Layer 2 cache — notes, emails, calls, tasks per deal (on demand only)
+model DealActivity {
+  id            Int       @id @default(autoincrement())
+  dealHubspotId String    @map("deal_hubspot_id")
+  type          String    // note | email | call | task
+  body          String?   // HTML-stripped for notes; plain text for others
+  authorOwnerId String?   @map("author_owner_id") // hubspot_owner_id on engagement
+  direction     String?   // inbound | outbound (email direction — values not fully confirmed)
+  timestamp     DateTime? @db.Timestamptz(6)
+  metadata      Json?
+  rawPayload    Json?     @map("raw_payload")
+  syncedAt      DateTime  @default(now()) @map("synced_at") @db.Timestamptz(6)
+
+  deal Deal @relation(fields: [dealHubspotId], references: [hubspotId])
+
+  @@map("deal_activities")
+}
+
+// Layer 2 cache — contacts linked to a deal
+model DealContact {
+  id               Int      @id @default(autoincrement())
+  dealHubspotId    String   @map("deal_hubspot_id")
+  contactHubspotId String?  @map("contact_hubspot_id")
+  name             String?
+  contactType      String?  @map("contact_type")     // contact_type1: owner, heir, attorney, etc.
+  ownershipStatus  String?  @map("ownership_status") // ownership_contact_status1
+  isDeceased       Boolean  @default(false) @map("is_deceased")
+  doNotContact     Boolean  @default(false) @map("do_not_contact")
+  phoneNumbers     Json?    @map("phone_numbers") // validated array from all 11 phone field variants
+  emailList        Json?    @map("email_list")
+  rawPayload       Json?    @map("raw_payload")
+  syncedAt         DateTime @default(now()) @map("synced_at") @db.Timestamptz(6)
+
+  deal Deal @relation(fields: [dealHubspotId], references: [hubspotId])
+
+  @@map("deal_contacts")
+}
+
+// Snooze state — internal, not from HubSpot
+model DealSnooze {
+  id            Int            @id @default(autoincrement())
+  dealHubspotId String         @map("deal_hubspot_id")
+  category      SnoozeCategory
+  freeformNote  String?        @map("freeform_note")
+  snoozeUntil   DateTime       @map("snooze_until") @db.Date
+  createdAt     DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  wokeAt        DateTime?      @map("woke_at") @db.Timestamptz(6)
+
+  deal Deal @relation(fields: [dealHubspotId], references: [hubspotId])
+
+  @@map("deal_snoozes")
+}
+
+// API usage tracking — daily call counter read from here (not in-memory)
+model SyncLog {
+  id           Int       @id @default(autoincrement())
+  syncType     String?   @map("sync_type")      // layer1_all | layer2_deal | manual
+  apiCallsMade Int?      @map("api_calls_made")
+  dealsSynced  Int?      @map("deals_synced")
+  startedAt    DateTime  @default(now()) @map("started_at") @db.Timestamptz(6)
+  completedAt  DateTime? @map("completed_at") @db.Timestamptz(6)
+  error        String?
+
+  @@map("sync_log")
+}
+
+// Configurable settings — stageMap + ownerMap seeded in M2b; thresholds added in M7
+model AppSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@map("app_settings")
+}

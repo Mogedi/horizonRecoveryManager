@@ -430,17 +430,17 @@ docs/research/
 **Goal:** Production-ready, stable, and maintainable.
 
 **Checklist:**
-- [ ] Error boundaries on all major components (dashboard, deal panel, tasks page, settings)
-- [ ] HubSpot API down → show stale data with clear warning banner (HubSpotError → banner, not crash)
-- [ ] Anthropic API down → "Summary unavailable" in panel (AIError → message, not crash)
-- [ ] Loading states on all async operations
-- [ ] Mobile warning: "This dashboard is optimized for desktop browsers"
-- [ ] Empty state messages: no deals in a group, no tasks, no summary yet, no Layer 2 loaded
-- [ ] Cloudflare domain pointing to Vercel (production URL)
-- [ ] All Vercel environment variables confirmed set in production:
+- [x] Error boundaries on all major components — `error.tsx` at dashboard, tasks, settings routes
+- [x] HubSpot API down → amber stale-data banner with last successful sync time (`getLastSyncStatus()` in sync-log.ts, surfaced via `/api/deals`)
+- [x] Anthropic API down → "Summary unavailable" header + raw error detail in DealPanel (AIError → 502 → user-friendly display)
+- [x] Loading states on all async operations (dashboard skeleton, tasks skeleton, settings skeleton, DealPanel loading header, Layer 2 animate-pulse, summary generating pulse)
+- [x] Mobile warning: `md:hidden` full-screen overlay in dashboard layout — "Desktop required"
+- [x] Empty state messages: no deals → "No deals yet. Run Sync Now."; no tasks → "No open tasks. Click + Add Task"; no sync history → "No sync history yet."
+- [ ] **Mo:** Cloudflare domain pointing to Vercel (production URL)
+- [ ] **Mo:** All Vercel environment variables confirmed set in production:
   - `DATABASE_URL`, `DIRECT_URL`, `HUBSPOT_ACCESS_TOKEN`, `DASHBOARD_PASSWORD`, `ANTHROPIC_API_KEY`, `CRON_SECRET`
-- [ ] Manual run-through of all features in production environment
-- [ ] **Verify cron fires in production:** check sync_log after first scheduled run — confirm entries exist with `sync_type = 'layer1'` and non-null `completed_at`
+- [ ] **Mo:** Manual run-through of all features in production environment
+- [ ] **Mo:** Verify cron fires in production — check sync_log after first scheduled run, confirm entries exist with `sync_type = 'layer1'` and non-null `completed_at`
 
 **Done when:** The production URL loads, password gate works, data syncs on schedule, and Mo can use it as his daily driver without watching the terminal.
 

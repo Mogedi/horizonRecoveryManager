@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import DealPanel from '@/components/DealPanel'
 
 type AttentionFlag = {
   type: string
@@ -112,11 +113,13 @@ function DealCard({
   stageMap,
   cardBorderCls,
   dotCls,
+  onOpen,
 }: {
   item: DealWithFlags
   stageMap: Record<string, string>
   cardBorderCls: string
   dotCls: string
+  onOpen: (hubspotId: string) => void
 }) {
   const { deal, flags } = item
   const primaryFlag = flags[0] ?? null
@@ -124,7 +127,10 @@ function DealCard({
   const amount = formatAmount(deal.amount)
 
   return (
-    <div className={`bg-white rounded-lg border ${cardBorderCls} p-4 hover:shadow-sm transition-shadow`}>
+    <button
+      onClick={() => onOpen(deal.hubspotId)}
+      className={`w-full text-left bg-white rounded-lg border ${cardBorderCls} p-4 hover:shadow-sm hover:border-gray-400 transition-all cursor-pointer`}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="font-medium text-gray-900 truncate">{deal.name ?? 'Unnamed deal'}</p>
@@ -145,7 +151,7 @@ function DealCard({
           )}
         </div>
       )}
-    </div>
+    </button>
   )
 }
 
@@ -153,10 +159,12 @@ function FlagGroup({
   groupKey,
   items,
   stageMap,
+  onOpenDeal,
 }: {
   groupKey: string
   items: DealWithFlags[]
   stageMap: Record<string, string>
+  onOpenDeal: (hubspotId: string) => void
 }) {
   const [open, setOpen] = useState(!COLLAPSED_BY_DEFAULT.has(groupKey))
   const config: GroupConfig = FLAG_CONFIG[groupKey] ?? {
@@ -188,6 +196,7 @@ function FlagGroup({
               stageMap={stageMap}
               cardBorderCls={config.cardBorderCls}
               dotCls={config.dotCls}
+              onOpen={onOpenDeal}
             />
           ))}
         </div>
@@ -201,6 +210,7 @@ export default function DashboardPage() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
+  const [selectedDealId, setSelectedDealId] = useState<string | null>(null)
 
   const fetchDeals = useCallback(async () => {
     setLoading(true)
@@ -250,6 +260,7 @@ export default function DashboardPage() {
     .reduce((sum, g) => sum + g.items.length, 0)
 
   return (
+    <>
     <div className="p-8 max-w-2xl mx-auto">
       {/* Header */}
       <div className="flex items-start justify-between mb-6 gap-4">
@@ -323,10 +334,28 @@ export default function DashboardPage() {
       {data && orderedGroups.length > 0 && (
         <div className="space-y-4">
           {orderedGroups.map(({ key, items }) => (
-            <FlagGroup key={key} groupKey={key} items={items} stageMap={data.stageMap} />
+            <FlagGroup
+              key={key}
+              groupKey={key}
+              items={items}
+              stageMap={data.stageMap}
+              onOpenDeal={setSelectedDealId}
+            />
           ))}
         </div>
       )}
     </div>
+
+    {/* Deal detail panel */}
+    {selectedDealId && (
+      <DealPanel
+        hubspotId={selectedDealId}
+        onClose={() => {
+          setSelectedDealId(null)
+          fetchDeals()
+        }}
+      />
+    )}
+    </>
   )
 }

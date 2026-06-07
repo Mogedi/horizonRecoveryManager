@@ -9,6 +9,10 @@ export type NormalizedDeal = {
   stageEnteredAt: Date | null
   lastActivityDate: Date | null
   contactCount: number
+  // null = Layer 2 not yet synced for this deal (fall back to contactCount check)
+  // false = Layer 2 synced, no contact has a valid phone number
+  // true  = Layer 2 synced, at least one contact has a valid phone number
+  hasValidPhone: boolean | null
   syncedAt: Date
 }
 

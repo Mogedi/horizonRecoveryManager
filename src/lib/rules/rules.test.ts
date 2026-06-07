@@ -34,6 +34,7 @@ function makeDeal(overrides: Partial<NormalizedDeal> = {}): NormalizedDeal {
     stageEnteredAt: MONDAY,
     lastActivityDate: MONDAY,
     contactCount: 3,
+    hasValidPhone: null, // Layer 2 not loaded by default
     syncedAt: MONDAY,
     ...overrides,
   }
@@ -170,20 +171,39 @@ describe('checkSigned', () => {
 // ─── checkContacts ────────────────────────────────────────────────────────────
 
 describe('checkContacts', () => {
-  it('returns null when contactCount > 0', () => {
-    const flag = checkContacts(makeDeal({ contactCount: 2 }), makeCtx(MONDAY))
+  // Layer 1 fallback (hasValidPhone = null — Layer 2 not loaded)
+  it('returns null when contactCount > 0 and Layer 2 not loaded', () => {
+    const flag = checkContacts(makeDeal({ contactCount: 2, hasValidPhone: null }), makeCtx(MONDAY))
     expect(flag).toBeNull()
   })
 
-  it('fires when contactCount = 0', () => {
-    const flag = checkContacts(makeDeal({ contactCount: 0 }), makeCtx(MONDAY))
+  it('fires when contactCount = 0 and Layer 2 not loaded', () => {
+    const flag = checkContacts(makeDeal({ contactCount: 0, hasValidPhone: null }), makeCtx(MONDAY))
     expect(flag).not.toBeNull()
     expect(flag?.type).toBe('no_contacts')
   })
 
-  it('fires regardless of stage', () => {
-    const flag = checkContacts(makeDeal({ contactCount: 0, stage: TERMINAL_STAGE }), makeCtx(MONDAY))
+  it('does not fire on terminal stages even with no contacts', () => {
+    const flag = checkContacts(makeDeal({ contactCount: 0, stage: TERMINAL_STAGE, hasValidPhone: null }), makeCtx(MONDAY))
+    expect(flag).toBeNull()
+  })
+
+  // Layer 2 loaded (hasValidPhone = true | false)
+  it('returns null when Layer 2 loaded and a contact has a valid phone', () => {
+    const flag = checkContacts(makeDeal({ contactCount: 2, hasValidPhone: true }), makeCtx(MONDAY))
+    expect(flag).toBeNull()
+  })
+
+  it('fires when Layer 2 loaded and no contact has a valid phone', () => {
+    const flag = checkContacts(makeDeal({ contactCount: 3, hasValidPhone: false }), makeCtx(MONDAY))
     expect(flag).not.toBeNull()
+    expect(flag?.type).toBe('no_contacts')
+    expect(flag?.message).toMatch(/phone/i)
+  })
+
+  it('does not fire on terminal stages even when Layer 2 shows no phones', () => {
+    const flag = checkContacts(makeDeal({ contactCount: 2, stage: TERMINAL_STAGE, hasValidPhone: false }), makeCtx(MONDAY))
+    expect(flag).toBeNull()
   })
 })
 

@@ -1,5 +1,18 @@
 import { prisma } from './client'
-import { TERMINAL_STAGE_IDS } from '@/lib/utils/thresholds'
+
+// Terminal stage IDs — structural, not configurable.
+// These describe which stages are "done" (no rules should fire on them).
+// Stage IDs confirmed in M1 (docs/research/pipeline-stages.json).
+// Not stored in app_settings because changing them would require understanding HubSpot pipeline semantics.
+const TERMINAL_STAGE_IDS = new Set<string>([
+  '3501274836', // More Research Need
+  '3639720641', // F (Mortgage Foreclosures — Georgia)
+  '3478695645', // Closed – Paid
+  '3478695646', // Dead / Not Interested
+  '3513772741', // DNC
+  '3513772742', // Blocked, Missing Info
+  '3741613778', // Exhausted
+])
 
 // Load once per sync invocation and pass to mapper — do not call repeatedly.
 export async function loadStageMap(): Promise<Record<string, string>> {

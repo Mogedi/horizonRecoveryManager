@@ -31,9 +31,6 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
           <Link href="/dashboard/settings" className="flex items-center px-3 py-2 text-sm text-gray-700 rounded-md hover:bg-gray-50">
             Settings
           </Link>
-          <Link href="/dashboard/roadmap" className="flex items-center px-3 py-2 text-sm text-gray-700 rounded-md hover:bg-gray-50">
-            Roadmap
-          </Link>
         </nav>
         <div className="px-4 py-4 border-t border-gray-200">
           <LogoutButton />

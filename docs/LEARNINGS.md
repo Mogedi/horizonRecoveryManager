@@ -182,4 +182,30 @@ Navigating from tasks page to `/dashboard?deal=<id>` opens the deal panel correc
 `callClaude` originally had one system prompt and one max_tokens. Deal summaries (JSON, ~600 tokens) and Daily Briefing (prose, ~1000+ tokens) are different shapes. The fix: `callClaude(prompt, systemPrompt?, maxTokens?)`. Future AI features should explicitly declare their system prompt (JSON vs prose vs structured analysis) and their token budget. Never rely on a one-size-fits-all default.
 
 **Employee activity silently omitting when `authorOwnerId` is null.**
-`deal_activities.author_owner_id` can be null (e.g., automated activities, JustCall tasks with no assigned owner). These rows get bucketed under `'unknown'` in the map. If the ownerMap has no entry for 'unknown', the name stays as the literal string `'unknown'`. In practice this is fine — Mo knows who his team is. But be aware that activity from non-team sources (integrations, bots) shows as "unknown" in the briefing. Not worth filtering without more data on what sources produce null authorOwnerId.`
+`deal_activities.author_owner_id` can be null (e.g., automated activities, JustCall tasks with no assigned owner). These rows get bucketed under `'unknown'` in the map. If the ownerMap has no entry for 'unknown', the name stays as the literal string `'unknown'`. In practice this is fine — Mo knows who his team is. But be aware that activity from non-team sources (integrations, bots) shows as "unknown" in the briefing. Not worth filtering without more data on what sources produce null authorOwnerId.
+
+---
+
+## M7 Retrospective Findings (Post-M7 Audit)
+
+**Single-change-point abstraction paid off on the first use.**
+`buildRuleCtx()` in `src/lib/rules/ctx.ts` was extracted in M6 specifically so M7 would be a one-file change. It worked exactly as intended: making ctx async to load thresholds from `app_settings` required changing `ctx.ts` plus adding `await` at two call sites — nothing else. This validates the pattern. Any time the same construction logic appears in two places, extract it immediately.
+
+**Structural vs. configurable threshold distinction.**
+`TERMINAL_STAGE_IDS` (which stages are "done") stayed hardcoded through M7. Only *timing* thresholds (how many days before a rule fires) went into `app_settings`. The distinction is: structural = describes pipeline shape (rarely changes, requires domain knowledge to change), configurable = describes timing (Mo should be able to tune without a deploy). Never put structural constants in `app_settings` — they'd look editable but changing them would silently break rules.
+
+**Lazy seeding is the right pattern for settings defaults.**
+`seedThresholdDefaults()` is called from `GET /api/settings` (not from startup or migration). `loadThresholds()` falls back to hardcoded defaults for missing keys without writing anything. This means: the app works correctly before Mo ever visits the settings page. No seed script, no startup hook, no chicken-and-egg problem. Apply this pattern to any future configurable defaults.
+
+**Dead exports in a "replaced" file cause navigation confusion.**
+After M7, `thresholds.ts` had 5 exports but only 1 (`TERMINAL_STAGE_IDS`) was still imported anywhere. The other 4 looked authoritative but were ignored. Fix (applied in M8 cleanup): moved `TERMINAL_STAGE_IDS` inline into `settings.ts`, deleted `thresholds.ts`. Rule: when a file's purpose is "replaced," either delete it or ensure every remaining export is clearly marked with why it's still there.
+
+---
+
+## M8 Retrospective Findings (Post-M8 Audit)
+
+**`getLastSyncStatus()` pattern for surfacing sync health.**
+Two sequential DB queries: first finds the most recent completed layer1 sync; if it has an error, a second query finds the last *successful* one. This gives the dashboard both `lastSyncedAt` (last known-good state) and `lastSyncError` (what went wrong most recently). The pattern avoids adding complexity to sync_log — no new columns, no schema change. Use this pattern anywhere "last good + current error" state needs to be surfaced.
+
+**Next.js App Router `error.tsx` catches render-time errors, not fetch errors.**
+`error.tsx` files placed at route segments catch errors thrown *during rendering* (server component crashes, unhandled promise rejections in server components). They do NOT catch errors inside client component `try/catch` blocks or failed `fetch()` calls. The dashboard, tasks, and settings pages are all client components with their own fetch error handling — the `error.tsx` files are a safety net for unexpected render-phase crashes only. Don't rely on them for API error handling.

@@ -442,12 +442,12 @@ CREATE TABLE sync_log (
 All routes are password-protected. `/` redirects to `/login` if unauthenticated.
 
 - `/login` — Password gate, redirects to `/dashboard` on success
-- `/dashboard` — Attention queue home (M3 ✅)
-- `/dashboard/tasks` — Mo's internal task list (M6)
-- `/dashboard/settings` — Configurable thresholds (M7)
+- `/dashboard` — Attention queue home ✅
+- `/dashboard/tasks` — Mo's internal task list ✅
+- `/dashboard/settings` — Configurable thresholds + sync log ✅
 
 **Not building:**
-- `/dashboard/roadmap` — The markdown file IS the roadmap. An in-app editor adds no value.
+- `/dashboard/roadmap` — The markdown file IS the roadmap. An in-app editor adds no value. Nav link removed.
 - `/dashboard/drift` — Schema drift monitoring: interesting idea, not worth the complexity for 1 pipeline.
 
 ### Dashboard Home
@@ -873,10 +873,15 @@ AI summary cache: never auto-regenerate. Show "New activity since last summary" 
 │   │   ├── page.tsx                   # Redirects to /login
 │   │   ├── login/page.tsx
 │   │   ├── dashboard/
-│   │   │   ├── layout.tsx             # Sidebar layout
-│   │   │   ├── page.tsx               # Attention queue (M3 ✅)
-│   │   │   ├── tasks/page.tsx         # Task list (M6)
-│   │   │   └── settings/page.tsx      # Configurable thresholds (M7)
+│   │   │   ├── layout.tsx             # Sidebar layout (desktop-only warning on mobile)
+│   │   │   ├── error.tsx              # Route-level error boundary
+│   │   │   ├── page.tsx               # Attention queue ✅
+│   │   │   ├── tasks/
+│   │   │   │   ├── page.tsx           # Task list ✅
+│   │   │   │   └── error.tsx          # Route-level error boundary
+│   │   │   └── settings/
+│   │   │       ├── page.tsx           # Configurable thresholds + sync log ✅
+│   │   │       └── error.tsx          # Route-level error boundary
 │   │   └── api/
 │   │       ├── auth/login/route.ts
 │   │       ├── auth/logout/route.ts
@@ -929,7 +934,7 @@ AI summary cache: never auto-regenerate. Show "New activity since last summary" 
 │           ├── business-days.ts       # Business days calc — America/New_York, fully unit tested
 │           ├── json.ts                # asJson() — safe JSON cast for Prisma InputJsonValue
 │           ├── rate-limiter.ts        # Token bucket — used only by hubspot/client.ts
-│           └── thresholds.ts          # Hardcoded staleness values (replaced by app_settings in M7)
+│           └── thresholds.ts          # Deleted after M7 — TERMINAL_STAGE_IDS inlined to settings.ts, all other constants replaced by app_settings
 └── vercel.json                        # Cron config
 ```
 
@@ -980,7 +985,8 @@ Vercel Cron configuration (`vercel.json`) — **Pro plan only**:
 ## API Routes (Next.js App Router)
 
 ```
-/api/sync/layer1          POST  -- trigger Layer 1 sync (also called by cron)
+/api/sync/layer1          POST  -- trigger Layer 1 sync (also called by cron; force=true for full refresh)
+/api/sync/layer2/[id]     GET   -- returns static call range message ("5–50+ API calls")
 /api/sync/layer2/[id]     POST  -- trigger Layer 2 sync for one deal
 /api/deals                GET   -- list deals with attention flags applied
 /api/deals/[id]           GET   -- single deal with Layer 2 data if cached

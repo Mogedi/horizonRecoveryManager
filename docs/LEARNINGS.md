@@ -104,7 +104,7 @@ AI needs Layer 2 activity data to generate useful summaries. The sequence rules 
 The AI summary already returns `mo_action_required: true/false` as part of its structured output. Keyword heuristics will be wrong, tuned constantly, and duplicate what Claude already does with full context. In M5, surface `mo_action_required` from the AI summary JSON — no `mo-action.ts` rule file.
 
 **Document Checklist deferred indefinitely.**
-AI inference of document presence from unstructured notes is complex and error-prone. Mo's team already tracks documents in Google Drive. With ~18 active deals, the cost/benefit doesn't justify building it. If Mo asks for it later, implement then. The `document_checklist` table exists in the schema as a placeholder.
+AI inference of document presence from unstructured notes is complex and error-prone. Mo's team already tracks documents in Google Drive. With ~18 active deals, the cost/benefit doesn't justify building it. If Mo asks for it later, implement then. No `document_checklist` table in the schema — removed entirely.
 
 **In-app Product Roadmap page: not worth building.**
 The markdown file (`docs/product-roadmap.md`) is the roadmap. An in-app editor to produce a markdown file you feed back to Claude is pure overhead. Edit the file directly or ask Claude to update it.

@@ -145,7 +145,7 @@ Documents vary by case type. There is no dedicated HubSpot field for case type �
 ### Attorney Engagement
 - Attorney document packet (varies)
 
-Documents are tracked via AI inference from notes and emails + manual confirmation. No dedicated HubSpot field exists yet.
+Documents are tracked in Google Drive, linked via HubSpot's sidebar integration. There is no HubSpot API endpoint to retrieve these linked files. AI-inferred document checklists are deferred — complexity is high and Google Drive already serves this purpose for the current team size (~18 active deals).
 
 ---
 
@@ -187,13 +187,11 @@ The dashboard must distinguish between:
 |---|---|
 | Can't see what needs attention across 150+ deals | Attention queue grouped by issue type |
 | Don't know which cases are stuck vs. just waiting | Stage-specific staleness rules + snooze system |
-| Attorney/client emails get buried | "Mo Action Required" detection from activity text |
-| Missing documents aren't visible | AI-inferred document checklist |
-| Personal tasks scattered across Trello and HubSpot | Internal task list replacing Trello |
-| Can't summarize case status quickly | Per-deal AI summary (2–4 week window) |
-| No morning briefing on what happened yesterday | Daily Briefing button |
-| Can't see which employee is productive | Team activity summary in Daily Briefing |
-| No place to capture product improvement ideas | In-app Product Roadmap area |
+| Attorney/client emails get buried | "Mo Action Required" detection via AI summary |
+| Personal tasks scattered across Trello and HubSpot | Internal task list replacing Trello (M6) |
+| Can't summarize case status quickly | Per-deal AI summary (28-day activity window, M5 ✅) |
+| No morning briefing on what happened yesterday | Daily Briefing button (M6) |
+| Can't see which employee is productive | Team activity summary in Daily Briefing (M6) |
 
 ---
 

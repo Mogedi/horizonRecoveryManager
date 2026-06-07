@@ -2,7 +2,7 @@
 
 ## Purpose
 
-**Horizon Recovery Operations Dashboard** — An owner-attention dashboard that reads from HubSpot and provides operational clarity across 150+ deals. Phase 1 is read-only. Internal state (snooze, tasks, AI summaries, document checklist) lives in our own database.
+**Horizon Recovery Operations Dashboard** — An owner-attention dashboard that reads from HubSpot and provides operational clarity across 150+ deals. Phase 1 is read-only. Internal state (snooze, tasks, AI summaries) lives in our own database.
 
 **Design philosophy:** Build the smallest useful thing. Refactor later. A future hub linking multiple Horizon tools is a P3 consideration — this codebase does not need to anticipate it.
 
@@ -176,7 +176,7 @@ The architecture is designed around three explicit boundaries. Phase 1 only impl
 
 2. **Write boundary** *(future — does not exist yet)* — When Phase 2 write capabilities are added (creating notes, moving stages, sending emails), they go in `src/lib/hubspot/actions.ts` and NOWHERE else. No write calls anywhere in the current codebase. If you see a HubSpot write call outside this file, it is a bug.
 
-3. **Approval boundary** *(partial — M6)* — AI and automation suggestions surface as rows in `internal_tasks` with `source: 'ai_detected'`. Mo accepts or dismisses them. No action is taken without explicit approval.
+3. **Approval boundary** *(partial — M6)* — When an AI summary flags `mo_action_required: true`, Mo is prompted to create a task (pre-filled with `suggested_next_step`). Mo decides to create it or skip. No action is taken without explicit Mo input. All tasks in `internal_tasks` have `source: 'manual'` in v1 — there is no auto-creation.
 
 These three boundaries are sufficient to integrate any future automation layer. Do not add infrastructure beyond this until the automation system's actual shape is known.
 
@@ -235,11 +235,12 @@ Before pulling, show: *"This will use 5–50+ HubSpot API calls depending on dea
 
 Pulls:
 - Notes (full text, author, timestamp)
-- Emails (subject, body snippet, sender, direction, timestamp)
-- Calls (outcome, duration, notes, timestamp)
+- Emails (subject, body, sender, direction, timestamp)
+- Calls (outcome, notes, timestamp)
 - Tasks (title, status, due date, assigned to)
 - Contacts (all linked, full custom properties + all phone field variants merged)
-- Documents/attachments (if API allows)
+
+**Note:** Google Drive documents linked in HubSpot are NOT accessible via any HubSpot API endpoint (confirmed M1). Files appear in HubSpot's sidebar via the Google Drive integration but cannot be retrieved programmatically.
 
 **No auto-pull.** Even for high-value stages (Engaged/Interested, Agreement Sent, Signed/In Progress), Layer 2 is always on-demand.
 
@@ -280,16 +281,16 @@ CREATE TABLE deals (
 
 ```sql
 CREATE TABLE deal_activities (
-  id             SERIAL PRIMARY KEY,
-  deal_hubspot_id TEXT REFERENCES deals(hubspot_id),
-  type           TEXT, -- note | email | call | task
-  body           TEXT,
-  sender         TEXT,
-  direction      TEXT, -- inbound | outbound
-  timestamp      TIMESTAMPTZ,
-  metadata       JSONB,
-  raw_payload    JSONB,          -- full HubSpot engagement response
-  synced_at      TIMESTAMPTZ DEFAULT NOW()
+  id               SERIAL PRIMARY KEY,
+  deal_hubspot_id  TEXT REFERENCES deals(hubspot_id),
+  type             TEXT, -- note | email | call | task
+  body             TEXT,
+  author_owner_id  TEXT, -- hubspot_owner_id on engagement (use for employee activity stats)
+  direction        TEXT, -- inbound | outbound
+  timestamp        TIMESTAMPTZ,
+  metadata         JSONB,
+  raw_payload      JSONB,
+  synced_at        TIMESTAMPTZ DEFAULT NOW()
 );
 ```
 
@@ -343,7 +344,7 @@ Active snooze = most recent row where `snooze_until >= today AND woke_at IS NULL
 ```sql
 CREATE TABLE ai_summaries (
   id               SERIAL PRIMARY KEY,
-  deal_hubspot_id  TEXT REFERENCES deals(hubspot_id),
+  deal_hubspot_id  TEXT UNIQUE REFERENCES deals(hubspot_id), -- one row per deal (upsert pattern)
   summary_json     JSONB NOT NULL,
   generated_at     TIMESTAMPTZ DEFAULT NOW()
 );
@@ -359,7 +360,7 @@ Summary JSON shape (Claude returns this as a JSON object — see prompt template
   "blockers": ["...", "..."],
   "who_needs_something": "...",
   "suggested_next_step": "...",
-  "mo_action_required": true,
+  "mo_action_required": true or false,
   "documents_mentioned_missing": ["death_certificate", "probate_records"]
 }
 ```
@@ -373,13 +374,13 @@ CREATE TYPE task_category AS ENUM (
 
 CREATE TABLE internal_tasks (
   id              SERIAL PRIMARY KEY,
-  deal_hubspot_id TEXT REFERENCES deals(hubspot_id), -- nullable
+  deal_hubspot_id TEXT REFERENCES deals(hubspot_id), -- nullable: general tasks have no linked deal
   title           TEXT NOT NULL,
   notes           TEXT,
   status          TEXT DEFAULT 'open', -- open | done
   due_date        DATE,
   category        task_category DEFAULT 'other',
-  source          TEXT, -- manual | ai_detected
+  source          TEXT DEFAULT 'manual', -- always 'manual' in v1; ai_detected not used
   created_at      TIMESTAMPTZ DEFAULT NOW(),
   completed_at    TIMESTAMPTZ
 );
@@ -468,7 +469,7 @@ X deals need attention · 150 total · Synced 5 minutes ago
 
 **Note on Snooze Expired:** When a snooze expires, the deal naturally reappears in its appropriate flag group (Stage Stale, Agreement Sent, etc.). There is no separate "Snooze Expired" group — expired snoozes dissolve automatically. The deal's actual state determines where it lands.
 
-**Note on Mo Action Required:** This attention group requires AI summary data (M5). It is not a Layer 1 rule. After M5 ships, deals with `ai_summaries.summary_json.mo_action_required = true` can be surfaced as a group.
+**Mo Action Required (M5 ✅):** Deals where `ai_summaries.summary_json.mo_action_required = true` are surfaced as a top-priority group. This is NOT a Layer 1 rule — it requires a generated AI summary. Snooze always wins: a snoozed deal stays in the Snoozed group even if its summary has `mo_action_required: true`.
 
 **Deal card (within each group):**
 ```
@@ -486,24 +487,20 @@ BREVARD - 2671 San Filippo Dr SE - JOHN THOMPSON ($33K)
 Stage: Follow-Up Needed  •  Owner: Marwa Yasmeen
 County: Brevard  •  Parcel: 29 3732-GU-1181-4  •  Tax Sale: 02/19/2026
 
-[Generate AI Summary]          [Snooze this case]
+[Snooze this case]
 
 ─────────────────────────────────────────────────────────
-DOCUMENT CHECKLIST
-✅ Property Profile        ✅ Tax Sale Deed         ⚠ Recovery Agreement
-❓ Government ID           ❓ Death Certificate      ❌ Probate Records
+[Load Full Detail]  ← triggers Layer 2 pull with API call count confirmation
 ─────────────────────────────────────────────────────────
-AI SUMMARY  (generated 2 hours ago)  [↻ Regenerate]
-• Current Status: Waiting for Carlton Wright to return call
-• Last Meaningful Activity: Voicemail left 5/21 — also reached Alexis Wright (niece)
+AI SUMMARY  (generated 2 hours ago)  [↻ Regenerate]    ← visible after Layer 2 loaded (M5 ✅)
+⚠ Mo Action Required
+
+• Status: Waiting for Carlton Wright to return call
+• Last Activity: Voicemail left 5/21 — also reached Alexis Wright (niece)
 • Blockers: Niece said she'd forward info to heirs; no response since
 • Who Needs Something: Client family needs to provide heirship documentation
 • Suggested Next Step: Follow up with Alexis Wright, reference 5/21 conversation
 [⚠ New activity since summary — consider regenerating]
-
-Suggested questions:
-[What documents are missing?]  [Who was last contacted?]  [Does Mo need to act?]
-[Ask anything...                                                              →]
 ─────────────────────────────────────────────────────────
 CONTACTS (2)
 • Earnest Wright Jr. — Owner — ☠ Deceased — Phones: (229) 560-4088, (229) 630-6147
@@ -529,7 +526,7 @@ Sections:
 
 Add task form: title, due date, category, deal link (optional), notes.
 
-AI-detected tasks shown with "AI suggested — accept?" prompt.
+When a deal summary shows `mo_action_required: true`, a "Create task" prompt appears below the summary pre-filled with `suggested_next_step`. Mo clicks to create or dismisses it. All tasks are manual source in v1 — no auto-creation.
 
 ### Settings Page
 
@@ -633,7 +630,7 @@ Rationale: keyword heuristics will be wrong, will need constant tuning, and dupl
 - Note: this changes the semantics of `contacts.ts` (not just the implementation) — update tests when upgrading.
 
 **Missing Setup Documents — DEFERRED (not building):**
-AI inference of document presence from unstructured notes is complex and error-prone. Your team already tracks documents in Google Drive. With only ~18 active deals, the value does not justify the complexity. If Mo explicitly asks for this, implement it then. The `document_checklist` table exists in the schema as a placeholder but no UI or rule will be built against it.
+AI inference of document presence from unstructured notes is complex and error-prone. Mo's team already tracks documents in Google Drive, and with ~18 active deals the value does not justify the complexity. Deferred indefinitely. If Mo explicitly asks for this, implement it then. No `document_checklist` table exists in the schema.
 
 ---
 
@@ -655,7 +652,7 @@ Return ONLY a valid JSON object with exactly these keys. No other text, no markd
   "blockers": ["Array of strings — what is preventing progress"],
   "who_needs_something": "Is the client, attorney, employee, or owner (Mo) waiting on someone? Who specifically?",
   "suggested_next_step": "The single most important action to take, and who should take it",
-  "mo_action_required": true,
+  "mo_action_required": true or false,
   "documents_mentioned_missing": ["Array of document types mentioned as missing or not yet received"]
 }
 
@@ -743,7 +740,8 @@ expect(deal.name).toBe('BREVARD - 123 Main St - ...')
 | `business-days.ts` | Correct count across weekends, holidays not needed for v1 | M3 (write first) |
 | Each `rules/*.ts` | Returns correct AttentionFlag for threshold breach; returns empty for healthy deal | M3 (write first) |
 | `layer2.ts` | Upsert inserts new, updates existing, stores raw_payload | M2c |
-| `summary.ts` | Prompt construction contains required fields; parsed JSON matches expected schema | M5 |
+| `prompts.ts` | Prompt contains deal name, stage, contacts, activities, JSON instruction string; activities outside lookback window excluded | M5 ✅ |
+| `summary.ts` | `parseSummaryResponse()` returns valid shape; throws `AIError` on missing field, wrong type, bad JSON | M5 ✅ |
 
 **Error handling contract:**
 - HubSpot 429: retry with exponential backoff (handled in client.ts)
@@ -910,9 +908,11 @@ AI summary cache: never auto-regenerate. Show "New activity since last summary" 
 │       │   # NOTE: no mo-action.ts — Mo Action Required comes from AI summary (M5), not heuristics
 │       │   # NOTE: no documents.ts — Document checklist deferred; not worth building for 18 deals
 │       ├── ai/
-│       │   ├── client.ts              # Anthropic SDK wrapper (M5+)
-│       │   ├── prompts.ts             # Prompt templates — summary and briefing (M5+)
-│       │   └── summary.ts             # Build prompt → call → parse → cache in ai_summaries (M5+)
+│       │   ├── errors.ts              # AIError class — isolated so tests don't import SDK (M5 ✅)
+│       │   ├── client.ts              # Anthropic SDK wrapper — callClaude() (M5 ✅)
+│       │   ├── prompts.ts             # buildSummaryPrompt() — lookback filter + JSON instruction (M5 ✅)
+│       │   ├── summary.ts             # parseSummaryResponse() + SummaryJson type (M5 ✅)
+│       │   └── generate.ts            # runSummaryGeneration() — orchestrates prompt+call+parse+upsert (M5 ✅)
 │       ├── db/
 │       │   ├── client.ts              # Prisma singleton — always import from here
 │       │   ├── deals.ts               # getDealsForQueue() — NormalizedDeal[] + snoozedDealIds Set

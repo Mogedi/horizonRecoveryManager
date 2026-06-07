@@ -352,7 +352,7 @@ docs/research/
 
 **Checklist — Schema (must be first):**
 - [ ] Add `InternalTask` model to `prisma/schema.prisma`:
-  - `id`, `dealHubspotId` (nullable FK → deals), `title`, `notes`, `status` (open/done), `dueDate`, `category` enum (case/business/vendor/legal/networking/other), `source` (manual/ai_detected), `createdAt`, `completedAt`
+  - `id`, `dealHubspotId` (nullable FK → deals), `title`, `notes`, `status` (open/done), `dueDate`, `category` enum (case/business/vendor/legal/networking/other), `source` (always `'manual'` in v1), `createdAt`, `completedAt`
 - [ ] `npm run db:migrate` → migration name: `add-internal-tasks`
 - [ ] `npm run db:generate`
 

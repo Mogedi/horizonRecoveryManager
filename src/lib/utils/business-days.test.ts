@@ -69,4 +69,32 @@ describe('businessDaysElapsed', () => {
     const wed = new Date('2026-05-13T12:00:00Z') // Wednesday May 13
     expect(businessDaysElapsed(mon, wed)).toBe(7)
   })
+
+  // Weekend-only intervals
+  it('Fri→Sat = 0 (Saturday is not a business day)', () => {
+    const fri = new Date('2026-05-01T12:00:00Z')
+    const sat = new Date('2026-05-02T12:00:00Z')
+    expect(businessDaysElapsed(fri, sat)).toBe(0)
+  })
+
+  it('Mon→Sat = 4 (Sat is not a business day, same result as Mon→Fri)', () => {
+    const mon = new Date('2026-05-04T12:00:00Z')
+    const sat = new Date('2026-05-09T12:00:00Z')
+    expect(businessDaysElapsed(mon, sat)).toBe(4)
+  })
+
+  // DST boundary tests — real clocks change, but Eastern noon-UTC should still work correctly
+  it('counts correctly across DST spring-forward (Sun Mar 8, 2026 — 2am→3am)', () => {
+    // Fri Mar 6 → Mon Mar 9 spans the DST change; still 1 business day
+    const fri = new Date('2026-03-06T12:00:00Z')
+    const mon = new Date('2026-03-09T12:00:00Z')
+    expect(businessDaysElapsed(fri, mon)).toBe(1)
+  })
+
+  it('counts correctly across DST fall-back (Sun Nov 1, 2026 — 2am→1am)', () => {
+    // Fri Oct 30 → Mon Nov 2 spans the fall-back; still 1 business day
+    const fri = new Date('2026-10-30T12:00:00Z')
+    const mon = new Date('2026-11-02T12:00:00Z')
+    expect(businessDaysElapsed(fri, mon)).toBe(1)
+  })
 })

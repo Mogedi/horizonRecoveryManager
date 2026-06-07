@@ -4,6 +4,7 @@ import { checkAgreement } from './agreement'
 import { checkSigned } from './signed'
 import { checkContacts } from './contacts'
 import { checkSnooze } from './snooze'
+import { applyRules, evaluateAll } from './index'
 import type { NormalizedDeal, RuleContext } from './types'
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
@@ -228,5 +229,61 @@ describe('checkSnooze', () => {
     const ctx = makeCtx(MONDAY, ['deal-456'])
     const flag = checkSnooze(makeDeal({ hubspotId: 'deal-123' }), ctx)
     expect(flag).toBeNull()
+  })
+})
+
+// ─── applyRules — integration ─────────────────────────────────────────────────
+
+describe('applyRules — integration', () => {
+  it('snoozed deal returns only the snoozed flag — all other rules suppressed', () => {
+    // Deal is stale (7+ biz days) AND snoozed — snooze must win
+    const deal = makeDeal({ stageEnteredAt: MONDAY })
+    const ctx = makeCtx(SEVEN_BIZ_DAYS_LATER, ['deal-123'])
+    const flags = applyRules(deal, ctx)
+    expect(flags).toHaveLength(1)
+    expect(flags[0].type).toBe('snoozed')
+  })
+
+  it('stale deal with contacts gets one flag', () => {
+    const deal = makeDeal({ contactCount: 3 })
+    const flags = applyRules(deal, makeCtx(SEVEN_BIZ_DAYS_LATER))
+    expect(flags).toHaveLength(1)
+    expect(flags[0].type).toBe('stage_stale')
+  })
+
+  it('deal can have multiple flags simultaneously (stale + no contacts)', () => {
+    const deal = makeDeal({ stageEnteredAt: MONDAY, contactCount: 0 })
+    const flags = applyRules(deal, makeCtx(SEVEN_BIZ_DAYS_LATER))
+    const types = flags.map(f => f.type)
+    expect(types).toContain('stage_stale')
+    expect(types).toContain('no_contacts')
+  })
+
+  it('healthy deal returns no flags', () => {
+    // 2 biz days elapsed, threshold 7 — no staleness, has contacts
+    const deal = makeDeal({ stageEnteredAt: MONDAY, contactCount: 3 })
+    const flags = applyRules(deal, makeCtx(TWO_BIZ_DAYS_LATER))
+    expect(flags).toHaveLength(0)
+  })
+})
+
+// ─── evaluateAll ──────────────────────────────────────────────────────────────
+
+describe('evaluateAll', () => {
+  it('returns empty array for empty deal list', () => {
+    expect(evaluateAll([], makeCtx(MONDAY))).toEqual([])
+  })
+
+  it('returns one result per deal with the deal preserved', () => {
+    const deals = [
+      makeDeal({ hubspotId: 'deal-a' }),
+      makeDeal({ hubspotId: 'deal-b' }),
+    ]
+    const results = evaluateAll(deals, makeCtx(TWO_BIZ_DAYS_LATER))
+    expect(results).toHaveLength(2)
+    expect(results[0].deal.hubspotId).toBe('deal-a')
+    expect(results[1].deal.hubspotId).toBe('deal-b')
+    expect(Array.isArray(results[0].flags)).toBe(true)
+    expect(Array.isArray(results[1].flags)).toBe(true)
   })
 })

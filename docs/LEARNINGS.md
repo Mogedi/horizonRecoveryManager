@@ -209,3 +209,9 @@ Two sequential DB queries: first finds the most recent completed layer1 sync; if
 
 **Next.js App Router `error.tsx` catches render-time errors, not fetch errors.**
 `error.tsx` files placed at route segments catch errors thrown *during rendering* (server component crashes, unhandled promise rejections in server components). They do NOT catch errors inside client component `try/catch` blocks or failed `fetch()` calls. The dashboard, tasks, and settings pages are all client components with their own fetch error handling — the `error.tsx` files are a safety net for unexpected render-phase crashes only. Don't rely on them for API error handling.
+
+**`DASHBOARD_PASSWORD` with `$` in it needs `\$` escaping in `.env.local`.**
+Next.js processes `.env.local` through `@next/env` which uses `[\w]+` (includes digits) as its variable name pattern — much broader than standard dotenv-expand. `$0DMjhfQJzT` is treated as a single variable reference `0DMjhfQJzT` and expanded to empty string. Every `$` that begins what could be a variable name must be escaped as `\$`. The `\$` is then resolved to a literal `$` at the end. Example: password `I!38R7$0DMjhfQJzT^$w` is stored as `I!38R7\$0DMjhfQJzT^\$w` in `.env.local`. The `$$` double-dollar approach does NOT work — `@next/env` doesn't treat `$$` as an escape sequence. Verify by running: `node -e "require('@next/env')"` and tracing the `_interpolate` function. For Vercel env vars (set via UI), the UI does NOT run dotenv-expand — no escaping needed there.
+
+**"Follow-Up Needed" has a trailing space in `pipeline-stages.json`.**
+The raw HubSpot API response for stage label `3477730038` is `"Follow-Up Needed "` (trailing space). The seed script correctly calls `.trim()` before storing to `app_settings`, so the DB has clean values. Direct readers of the raw fixture will see the space — don't compare against raw fixture data without trimming. Verified by test in `settings.test.ts`.

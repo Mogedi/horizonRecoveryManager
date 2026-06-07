@@ -9,13 +9,10 @@ export async function POST(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET
   const isFromCron = !!cronSecret && authHeader === `Bearer ${cronSecret}`
 
-  const dashboardToken = req.headers.get('x-dashboard-token')
-  const isFromDashboard = !!dashboardToken && dashboardToken === process.env.DASHBOARD_PASSWORD
-
   const cookieStore = await cookies()
   const isFromSession = cookieStore.get('horizon_auth')?.value === '1'
 
-  if (!isFromCron && !isFromDashboard && !isFromSession) {
+  if (!isFromCron && !isFromSession) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

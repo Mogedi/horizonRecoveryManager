@@ -14,11 +14,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 // POST /api/sync/layer2/[id] — Mo clicked "Load Full Detail" and confirmed the call count
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const cookieStore = await cookies()
-  const isFromSession = cookieStore.get('horizon_auth')?.value === '1'
-  const dashboardToken = req.headers.get('x-dashboard-token')
-  const isFromDashboard = !!dashboardToken && dashboardToken === process.env.DASHBOARD_PASSWORD
-
-  if (!isFromSession && !isFromDashboard) {
+  if (cookieStore.get('horizon_auth')?.value !== '1') {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

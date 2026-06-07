@@ -54,4 +54,17 @@ describe('parseSummaryResponse', () => {
     const result = parseSummaryResponse(JSON.stringify(notUrgent))
     expect(result.mo_action_required).toBe(false)
   })
+
+  it('throws AIError when response is wrapped in markdown code fences', () => {
+    // Claude occasionally wraps JSON in ```json ... ``` — the parser must reject this,
+    // not silently pass the fence string through as the field value.
+    const wrapped = '```json\n' + JSON.stringify(VALID_JSON) + '\n```'
+    expect(() => parseSummaryResponse(wrapped)).toThrow(AIError)
+  })
+
+  it('throws AIError when mo_action_required is a string instead of boolean', () => {
+    // Prompt templating bug could cause Claude to return "true" (string) vs true (boolean)
+    const bad = { ...VALID_JSON, mo_action_required: 'true' }
+    expect(() => parseSummaryResponse(JSON.stringify(bad))).toThrow(AIError)
+  })
 })

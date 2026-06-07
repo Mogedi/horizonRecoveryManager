@@ -133,18 +133,17 @@ Layer 1 batch pull. Single call returns up to 100 deals. Paginate until `paging.
 }
 ```
 
-**Known behavior:**
+**Known behavior (confirmed 2026-06-07):**
 - `dealstage` is an internal UUID — map to name using pipeline-stages.json
 - `hubspot_owner_id` is a numeric string — map to name using owners.json
 - Properties NOT in the `properties` array are NOT returned
 - `paging.next` is absent when all results are fetched
 - `amount` is a string, not a number — parse before storing
-
-**CONFIRM IN M1:**
-- Exact property name for last activity date
-- Exact property name for contact count
-- Whether open task count is available here
-- Names of all custom deal properties (address, county, parcel, tax date)
+- `amount` is the **primary surplus value** — populated on 100% of deals. Matches dollar figure in deal name.
+- `estimated_surplus` is null on 100% of deals (as of 2026-06-07) — include in request but do not display
+- `county` is an enumeration — 25 GA counties + "Other". Deals outside those counties get "Other"
+- `state` field is always null — state is embedded in `properties_address` string
+- Total deal count: exactly 150 (2 pages of 100)
 
 **Smart sync filter (for incremental updates):**
 ```json

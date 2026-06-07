@@ -200,7 +200,8 @@ Fields per deal (internal name → HubSpot property name — confirmed in M1):
 - `stage` → `dealstage` (stage ID — resolve to name via stageMap; never compare raw strings)
 - `pipeline` → `pipeline` (pipeline ID)
 - `owner_id` → `hubspot_owner_id` (**NOTE:** Almost always Marwa who does data entry — not meaningful for routing)
-- `amount` → `amount`; `estimated_surplus` → `estimated_surplus` (custom — use this for display)
+- `amount` → `amount` (**USE THIS for display** — populated 100% of deals; matches deal name dollar figure)
+- `estimated_surplus` → `estimated_surplus` (custom — confirmed null on all 150 deals as of 2026-06-07; store but do not display)
 - `close_date` → `closedate`
 - `last_activity_date` → `notes_last_updated` ✅ confirmed
 - `stage_entered_at` → `hs_v2_date_entered_current_stage` ✅ **USE THIS for staleness rules** (when did deal enter current stage)
@@ -247,8 +248,8 @@ CREATE TABLE deals (
   stage               TEXT,           -- stage ID from HubSpot — resolve via stageMap
   pipeline            TEXT,           -- pipeline ID from HubSpot
   owner_id            TEXT,           -- hubspot_owner_id (mostly Marwa/data entry — not used for routing)
-  amount              DECIMAL,
-  estimated_surplus   DECIMAL,        -- custom field — preferred for display
+  amount              DECIMAL,        -- USE for display — populated 100% of deals
+  estimated_surplus   DECIMAL,        -- custom field — null on all current deals; store for future
   close_date          DATE,
   last_activity_date  TIMESTAMPTZ,    -- notes_last_updated
   stage_entered_at    TIMESTAMPTZ,    -- hs_v2_date_entered_current_stage — USE for staleness rules

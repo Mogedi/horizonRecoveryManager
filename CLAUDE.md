@@ -91,10 +91,15 @@ Check `docs/gameplan.md`. Find the first milestone with unchecked items. Read it
 
 ```
 Pipeline name:     Cases – Surplus Funds (pipeline ID from pipeline-stages.json)
+Total deals:       150 (2 pages of 100 in CRM search)
 Timezone:          America/New_York
 HubSpot plan:      Starter — 100 req/10s, 250,000 req/day
 Rate cap:          30% = 3 req/s max, 75,000 req/day max, warn at 60,000
 Daily warn:        If sync_log daily call count > 60,000, stop auto syncs, allow manual only
+Layer 1 sync:      2 API calls for all 150 deals (2 pages)
+Layer 2 per deal:  7–9 API calls (5 association + 1 batch per non-empty type)
+Worst case/day:    ~1,360 calls if all 150 deals get Layer 2 = 1.8% of daily cap
+Surplus field:     amount (NOT estimated_surplus — confirmed null on 100% of deals)
 AI model:          claude-sonnet-4-6
 AI lookback:       28 days of activity history per summary
 Staleness source:  /src/lib/thresholds.ts (hardcoded for M3, replaced by app_settings in M7)

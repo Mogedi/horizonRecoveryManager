@@ -26,7 +26,9 @@ Track calls per test session. Target: under 50 total for full M1 research run.
 | Sample deal calls (associations — 0 results) | 1 | 2026-06-06 |
 | Sample deal emails (associations + 1 email) | 2 | 2026-06-06 |
 | Sample deal tasks (associations + 5 individual) | 6 | 2026-06-06 |
-| **Total** | **~24** | 2026-06-06 |
+| **Total M1** | **~24** | 2026-06-06 |
+| Multi-stage sample: 6 searches + 2 full Layer 2 pulls + deal count check | 23 | 2026-06-07 |
+| **Grand total** | **~47** | — |
 
 ## Output File Locations
 

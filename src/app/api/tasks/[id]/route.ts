@@ -1,16 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { cookies } from 'next/headers'
+import { isAuthenticated, unauthorizedResponse } from '@/lib/auth/require-session'
 import { completeTask, deleteTask } from '@/lib/db/tasks'
 
-async function checkAuth() {
-  const cookieStore = await cookies()
-  return cookieStore.get('horizon_auth')?.value === '1'
-}
-
 export async function PATCH(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  if (!(await checkAuth())) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  if (!(await isAuthenticated())) return unauthorizedResponse()
 
   const { id } = await params
   const taskId = parseInt(id, 10)
@@ -27,9 +20,7 @@ export async function PATCH(_req: NextRequest, { params }: { params: Promise<{ i
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  if (!(await checkAuth())) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  if (!(await isAuthenticated())) return unauthorizedResponse()
 
   const { id } = await params
   const taskId = parseInt(id, 10)

@@ -1,15 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { cookies } from 'next/headers'
+import { isAuthenticated, unauthorizedResponse } from '@/lib/auth/require-session'
 import { createSnooze, removeActiveSnooze, isValidSnoozeCategory } from '@/lib/db/snoozes'
 import { SnoozeCategory } from '@prisma/client'
 
-async function isAuthed(): Promise<boolean> {
-  const cookieStore = await cookies()
-  return cookieStore.get('horizon_auth')?.value === '1'
-}
-
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  if (!await isAuthed()) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!(await isAuthenticated())) return unauthorizedResponse()
 
   const { id } = await params
   let body: { category?: unknown; snoozeUntil?: unknown; freeformNote?: unknown }
@@ -32,7 +27,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (isNaN(snoozeDate.getTime())) {
     return NextResponse.json({ error: 'Invalid date' }, { status: 400 })
   }
-  // Must be in the future
   if (snoozeDate <= new Date()) {
     return NextResponse.json({ error: 'Snooze date must be in the future' }, { status: 400 })
   }
@@ -48,7 +42,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  if (!await isAuthed()) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!(await isAuthenticated())) return unauthorizedResponse()
   const { id } = await params
   await removeActiveSnooze(id)
   return NextResponse.json({ ok: true })

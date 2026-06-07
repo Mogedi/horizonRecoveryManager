@@ -1,26 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { cookies } from 'next/headers'
+import { isAuthenticated, unauthorizedResponse } from '@/lib/auth/require-session'
 import { getOpenTasks, getRecentCompletedTasks, createTask } from '@/lib/db/tasks'
 import { TaskCategory } from '@prisma/client'
 
-async function checkAuth() {
-  const cookieStore = await cookies()
-  return cookieStore.get('horizon_auth')?.value === '1'
-}
-
 export async function GET() {
-  if (!(await checkAuth())) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  if (!(await isAuthenticated())) return unauthorizedResponse()
 
   const [open, completed] = await Promise.all([getOpenTasks(), getRecentCompletedTasks(30)])
   return NextResponse.json({ open, completed })
 }
 
 export async function POST(req: NextRequest) {
-  if (!(await checkAuth())) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  if (!(await isAuthenticated())) return unauthorizedResponse()
 
   let body: unknown
   try {

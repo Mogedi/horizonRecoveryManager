@@ -1,17 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { cookies } from 'next/headers'
+import { isAuthenticated, unauthorizedResponse } from '@/lib/auth/require-session'
 import { getAllEditableSettings, saveSettings } from '@/lib/db/settings'
 import { getRecentSyncs } from '@/lib/db/sync-log'
 
-async function checkAuth() {
-  const cookieStore = await cookies()
-  return cookieStore.get('horizon_auth')?.value === '1'
-}
-
 export async function GET() {
-  if (!(await checkAuth())) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  if (!(await isAuthenticated())) return unauthorizedResponse()
 
   const [settings, recentSyncs] = await Promise.all([
     getAllEditableSettings(),
@@ -22,9 +15,7 @@ export async function GET() {
 }
 
 export async function PATCH(req: NextRequest) {
-  if (!(await checkAuth())) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  if (!(await isAuthenticated())) return unauthorizedResponse()
 
   let body: unknown
   try {

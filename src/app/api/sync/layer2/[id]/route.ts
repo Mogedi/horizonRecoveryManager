@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { cookies } from 'next/headers'
+import { isAuthenticated, unauthorizedResponse } from '@/lib/auth/require-session'
 import { runLayer2Sync } from '@/lib/sync/layer2'
 
 // GET /api/sync/layer2/[id] — returns call range shown in confirmation dialog before Mo pulls
@@ -13,10 +13,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
 // POST /api/sync/layer2/[id] — Mo clicked "Load Full Detail" and confirmed the call count
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const cookieStore = await cookies()
-  if (cookieStore.get('horizon_auth')?.value !== '1') {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  if (!(await isAuthenticated())) return unauthorizedResponse()
 
   const { id } = await params
 

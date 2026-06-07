@@ -88,11 +88,26 @@ Normalized columns exist only for the ~12 fields that drive rules or sort order.
 **~18 active deals means the attention queue is small.**
 With ~82% terminal deals, the queue shows 18-30 deals at most. Don't over-engineer grouping, pagination, or sorting for 150 items. Simple works.
 
-**Snooze is critical to the queue being usable.**
-Without snooze, the queue shows cases legitimately waiting 60-120 days for county/attorney response. These aren't actionable. Snooze must ship with M3, not M4.
+**Snooze data model ships in M3; snooze UI ships in M4.**
+The DB table, the active-snooze preload, and the `snoozed` rule all exist in M3. The button/modal for creating snoozes is in M4 (requires the deal detail panel). This split is intentional — M3 infrastructure supports M4 UI.
+
+**Expired snoozes don't need a separate attention group.**
+When a snooze expires, the deal reappears in its normal flag group (Stage Stale, Agreement Sent, etc.). A "Snooze Expired" group adds confusion without adding clarity — Mo still needs to evaluate the deal's actual state. Let expired snoozes dissolve naturally.
 
 **Layer 2 detail panel (M4) is where the real daily workflow happens.**
-The M3 attention queue tells Mo what to look at. The M4 panel tells her what's actually going on. Both are necessary for the tool to replace Trello + HubSpot scanning. Don't skip M4 for AI features.
+The M3 attention queue tells Mo what to look at. The M4 panel tells him what's actually going on. Both are necessary for the tool to replace Trello + HubSpot scanning. Don't skip M4 for AI features.
 
 **AI summary (M5) is valuable but has a correct prerequisite order.**
 AI needs Layer 2 activity data to generate useful summaries. The sequence rules → detail → AI is not arbitrary — breaking it produces bad summaries (no context). Keep the order.
+
+**Do not build Mo Action Required as a keyword heuristic rule.**
+The AI summary already returns `mo_action_required: true/false` as part of its structured output. Keyword heuristics will be wrong, tuned constantly, and duplicate what Claude already does with full context. In M5, surface `mo_action_required` from the AI summary JSON — no `mo-action.ts` rule file.
+
+**Document Checklist deferred indefinitely.**
+AI inference of document presence from unstructured notes is complex and error-prone. Mo's team already tracks documents in Google Drive. With ~18 active deals, the cost/benefit doesn't justify building it. If Mo asks for it later, implement then. The `document_checklist` table exists in the schema as a placeholder.
+
+**In-app Product Roadmap page: not worth building.**
+The markdown file (`docs/product-roadmap.md`) is the roadmap. An in-app editor to produce a markdown file you feed back to Claude is pure overhead. Edit the file directly or ask Claude to update it.
+
+**Daily Briefing belongs in M6, not M5.**
+Per-deal AI summaries are complex enough to be their own milestone. Daily Briefing requires Layer 2 data, cached summaries, and employee activity stats. Shipping both in one milestone increases risk of shipping neither well. Split them.

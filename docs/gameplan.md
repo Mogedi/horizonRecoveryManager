@@ -303,32 +303,32 @@ docs/research/
 ## Milestone 4: Deal Detail Panel
 
 > **AGENT PRECONDITIONS:** M3 complete, attention queue rendering correctly with real data.
-> **AGENT:** Panel opens immediately with Layer 1 data. Layer 2 pull is behind "Load Full Detail" button with call count warning. Test snooze creates correct DB row and removes deal from queue in next render.
+> **AGENT:** Panel opens immediately with Layer 1 data. Layer 2 pull is behind "Load Full Detail" button with static call count range. Test snooze creates correct DB row and removes deal from queue in next render.
 > **COMMIT:** `[M4] deal panel — Layer 1 display` → `[M4] Layer 2 pull — on demand` → `[M4] snooze — save + remove from queue`
 
-**Goal:** Click a deal, see everything relevant, snooze it, add a task.
+**Goal:** Click a deal, see everything relevant, snooze it.
 
 **Checklist:**
 - [ ] Slide-in panel component (no page navigation, overlay from right)
 - [ ] Panel header: deal name, stage, owner, amount, address, county, parcel ID, tax sale date
 - [ ] "Open in HubSpot" link (deal URL from `deals.hubspot_url`)
-- [ ] Panel opens with Layer 1 data immediately — no loading required
-- [ ] "Load Full Detail" button — triggers Layer 2 pull for this deal
-- [ ] API call count warning shown before Layer 2 pull: *"~7–10 HubSpot API calls. Continue?"* (confirmed from M1-EXT research)
+- [ ] Panel opens with Layer 1 data immediately — no loading state
+- [ ] GET `/api/sync/layer2/[id]` — returns `{ callRangeMessage, lastSyncedAt }` (no fake estimate — already built)
+- [ ] "Load Full Detail" button — shows `callRangeMessage`, then POSTs to `/api/sync/layer2/[id]`
 - [ ] Activity timeline: calls, notes, emails, tasks in reverse chronological order
-- [ ] Timeline items show: type, author, timestamp, content
-- [ ] Linked contacts section: name, relationship, deceased flag, phone numbers, DNC status
-- [ ] Document checklist section (manual check-off for Phase 1)
-- [ ] Snooze button → modal with: category dropdown, date picker, freeform note field
+- [ ] Timeline items: type, author, timestamp, content
+- [ ] Linked contacts: name, relationship, deceased flag, phone numbers, DNC status
+- [ ] Snooze button → modal: category dropdown, date picker, optional note field
 - [ ] Snooze saved to `deal_snoozes` table
-- [ ] Snooze removes deal from attention queue immediately
-- [ ] Snooze expired → deal appears in Snooze Expired group on wake date
-- [ ] "Remove snooze" button in panel for active snoozes
+- [ ] Snooze removes deal from queue on next render (deal reappears in normal flag group when snooze expires — no separate "Snooze Expired" group)
+- [ ] "Remove snooze" button for active snoozes
 - [ ] Snooze history visible in panel (past snoozes, collapsed)
-- [ ] **Add Layer 2-dependent rules now that deal_activities + deal_contacts exist:**
-  - [ ] `/src/lib/rules/contacts.ts` — upgrade: check phone_numbers from deal_contacts
-  - [ ] `/src/lib/rules/mo-action.ts` — PLACEHOLDER keywords, validate with real data first — write test after seeing real notes
-- [ ] **Acceptance:** Mo clicks any deal → Layer 1 panel instant. "Load Full Detail" → timeline + contacts appear. Snooze → deal gone from queue. Refresh → deal gone.
+- [ ] **Layer 2-dependent rules upgrade:**
+  - [ ] `/src/lib/rules/contacts.ts` — upgrade to check `phone_numbers` from deal_contacts (semantics change — update existing tests, not just implementation)
+  - [ ] **Do NOT create `mo-action.ts`** — Mo Action Required is read from AI summary JSON in M5, not keyword heuristics
+- [ ] `GET /api/deals/[id]` — single deal with Layer 2 data if cached
+- [ ] `POST /api/deals/[id]/snooze` + `DELETE /api/deals/[id]/snooze`
+- [ ] **Acceptance:** Mo clicks any deal → Layer 1 panel opens instantly. "Load Full Detail" shows call range → Mo confirms → timeline + contacts appear. Snooze → deal gone from queue. Refresh → deal still gone.
 - [ ] git commit: `[M4] deal panel + snooze + Layer 2 rules`
 - [ ] git tag: `sprint-4-done`
 
@@ -336,17 +336,17 @@ docs/research/
 
 ---
 
-## Milestone 5: AI Integration
+## Milestone 5: AI Summary
 
 > **AGENT PRECONDITIONS:** M4 complete. `ANTHROPIC_API_KEY` set in `.env.local`. Layer 2 working for at least one real deal (activities + contacts in DB).
-> **AGENT:** Build prompts.ts first, verify prompt output manually before wiring to Claude API. Summary button is ALWAYS manual — no auto-trigger. Test that `is_stale` flag is set correctly when new activity exists.
-> **COMMIT:** `[M5] AI client + prompts` → `[M5] per-deal summary — generate + cache` → `[M5] daily briefing`
+> **AGENT:** Build prompts.ts first, verify prompt output manually before wiring to Claude API. Summary button is ALWAYS manual — no auto-trigger. Test `is_stale` flag logic. Do NOT add Daily Briefing here — that ships in M6.
+> **COMMIT:** `[M5] AI client + prompts` → `[M5] per-deal summary — generate + cache` → `[M5] mo-action flag wired to /api/deals`
 
-**Goal:** Per-deal AI summaries and Daily Briefing both working.
+**Goal:** Per-deal AI summaries working. Mo can get full deal context from Claude in one click.
 
 **Checklist:**
 - [ ] `npm install @anthropic-ai/sdk`
-- [ ] `/lib/ai/summary.ts` — builds prompt from Layer 2 data, calls Claude API, parses response
+- [ ] `/lib/ai/summary.ts` — builds prompt from Layer 2 data, calls Claude API, parses 7-field response
 - [ ] AI summary stored in `ai_summaries` table (JSON)
 - [ ] "Generate AI Summary" button in deal panel — always manual, no auto-trigger
 - [ ] Summary renders in panel with correct bullet sections:
@@ -355,73 +355,89 @@ docs/research/
   - Blockers
   - Who Needs Something
   - Suggested Next Step
-  - Mo Action Required flag
+  - Mo Action Required (yes/no)
   - Documents Likely Missing
 - [ ] "Generated [X minutes ago]" timestamp shown
 - [ ] "New activity since summary" badge shown when `deal.last_activity_date > summary.generated_at`
 - [ ] "↻ Regenerate" button triggers fresh summary
-- [ ] Suggested follow-up questions (3–5 presets) shown below summary
-- [ ] Free-text follow-up input → sends to Claude with deal context → response displayed
-- [ ] "Mo Action Required" flag from AI summary creates suggested internal task (with accept/dismiss prompt)
-- [ ] "Daily Briefing" button on dashboard home
-- [ ] `/api/briefing` route — generates briefing using Layer 1 + cached Layer 2 for high-value stages
-- [ ] Briefing renders in a modal or dedicated panel
-- [ ] Briefing cached per day (one per day unless manually regenerated)
-
-- [ ] Add employee activity section to briefing ONLY if `deal_activities` has sufficient data — query by `author_owner_id`, count notes/calls in last 7 days per owner
-- [ ] **Acceptance:** Mo clicks "Generate AI Summary" on one deal → 7-section bullet response appears in under 15 seconds. Clicking again before new activity → "stale" badge visible, not auto-regenerated.
-- [ ] git commit: `[M5] AI summary + daily briefing`
+- [ ] **Mo Action Required group in `/api/deals`:** after M5 ships, deals where `ai_summaries.summary_json.mo_action_required = true` appear in a "Mo Action Required" group (urgent). Add to `/api/deals` response once `ai_summaries` table has data.
+- [ ] "Mo Action Required" → create suggested `internal_tasks` row with `source: 'ai_detected'` (accept/dismiss in M6 when tasks page ships)
+- [ ] Suggested follow-up questions (3–5 presets below summary) — low priority, add if straightforward
+- [ ] **Acceptance:** Mo clicks "Generate AI Summary" on one Signed/In Progress deal → 7-section response in under 15 seconds. Badge visible on next sync if new HubSpot activity exists. Regenerate button works.
+- [ ] git commit: `[M5] per-deal AI summary`
 - [ ] git tag: `sprint-5-done`
 
-**Done when:** Mo can click "Generate AI Summary" on any Signed/In Progress deal and get a useful, actionable summary in bullet form.
+**Not in M5:** Daily Briefing (M6), document checklist inference (deferred indefinitely), Mo Action Required keyword heuristics (not building — AI handles it).
+
+**Done when:** Mo can click "Generate AI Summary" on any Signed/In Progress deal and get a useful, actionable summary.
 
 ---
 
-## Milestone 6: Internal Task List
+## Milestone 6: Tasks + Daily Briefing
 
-> **AGENT PRECONDITIONS:** M5 complete.
-> **AGENT:** Tasks table added via `npx prisma migrate dev`. Migrate before building UI. Test task CRUD with real DB.
-> **COMMIT:** `[M6] tasks table migration` → `[M6] tasks API + UI`
+> **AGENT PRECONDITIONS:** M5 complete. `ai_summaries` table has real data from at least 3 deals.
+> **AGENT:** Tasks table migration before any UI work. Daily Briefing prompt built and verified manually before wiring to Claude. Test task CRUD with real DB.
+> **COMMIT:** `[M6] tasks table migration` → `[M6] tasks API + UI` → `[M6] daily briefing`
 
-**Goal:** Mo's Trello replacement, linked to deals and general.
+**Goal:** Mo's Trello replacement, plus a morning briefing that summarizes what happened and what needs attention.
 
-**Checklist:**
+**Checklist — Tasks:**
 - [ ] Tasks page renders all open tasks sorted by due date
 - [ ] Tasks grouped by category (case / business / vendor / legal / networking)
 - [ ] Case-linked tasks show deal name with link to deal panel
 - [ ] Add task form: title, notes, due date, category, deal link (optional search)
 - [ ] Mark task complete (moves to "Completed" section, last 30 days)
 - [ ] Delete task
-- [ ] AI-suggested tasks (from Mo Action Required detection) shown with "Accept / Dismiss"
+- [ ] AI-suggested tasks from M5 (`source: 'ai_detected'`) shown with "Accept / Dismiss"
 - [ ] Task count badge in sidebar navigation
-- [ ] Dashboard home shows "X open tasks" in summary cards
 
-**Done when:** Mo can manage his daily case and business tasks without opening Trello.
+**Checklist — Daily Briefing:**
+- [ ] "Daily Briefing" button on dashboard (replaces placeholder)
+- [ ] `/api/briefing` route — generates briefing using Layer 1 + cached Layer 2 summaries
+- [ ] Briefing prompt sections: what happened, what needs attention, open tasks
+- [ ] Employee activity section ONLY if `deal_activities` has sufficient data (≥7 days) — query `author_owner_id`, count notes/calls per owner in last 7 days
+- [ ] Briefing renders in modal or expanded panel
+- [ ] Briefing is always freshly generated (no caching) — cheap enough at current volume
+- [ ] **Acceptance:** Mo clicks "Daily Briefing" → concise summary of flagged deals + open tasks in under 20 seconds. Employee activity section appears only if data exists.
+- [ ] git commit: `[M6] tasks + daily briefing`
+- [ ] git tag: `sprint-6-done`
+
+**Done when:** Mo can manage his daily case and business tasks without Trello, and get a morning briefing in one click.
 
 ---
 
-## Milestone 7: Settings & Product Roadmap
+## Milestone 7: Settings
 
-> **AGENT PRECONDITIONS:** M6 complete. `app_settings` and `product_roadmap` tables added via migration.
+> **AGENT PRECONDITIONS:** M6 complete. `app_settings` table exists (seeded in M2b).
 > **AGENT:** When settings are saved, attention queue rules must read from `app_settings` instead of `thresholds.ts`. Replace thresholds.ts lookups with DB lookups. Verify staleness rules still work after the switch.
-> **COMMIT:** `[M7] app_settings migration + seeded defaults` → `[M7] settings page — thresholds editable` → `[M7] roadmap page + export`
+> **COMMIT:** `[M7] app_settings seed defaults` → `[M7] settings API` → `[M7] settings UI — thresholds editable`
 
-**Goal:** Configurable thresholds, in-app roadmap capture.
+**Goal:** Configurable staleness thresholds without requiring a code deploy.
 
 **Checklist:**
-- [ ] `app_settings` and `product_roadmap` table migrations applied, defaults seeded
-- [ ] Settings page renders all `app_settings` values
-- [ ] Stage staleness thresholds: one editable row per stage
-- [ ] AI summary lookback window (days)
-- [ ] Sync log: last 10 syncs, call counts, errors
-- [ ] Settings save to `app_settings` table → immediately affects attention queue (replaces thresholds.ts lookups)
-- [ ] Note: sync schedule is NOT in settings — it lives in vercel.json (static, requires redeploy to change)
-- [ ] Product Roadmap page renders items grouped by version (v2, v3, v4+)
-- [ ] Each roadmap item: title, description, status badge
-- [ ] Add / edit / delete roadmap items
-- [ ] "Export as Markdown" downloads a `.md` file of all roadmap items (for feeding back to Claude)
+- [ ] Seed `app_settings` with all threshold defaults (if not already done in M2b):
+  - `stage_stale_ready_for_outreach = 5`
+  - `stage_stale_attempted_contact = 7`
+  - `stage_stale_contact_made = 5`
+  - `stage_stale_follow_up_needed = 5`
+  - `stage_stale_engaged_interested = 3`
+  - `stage_stale_letter_outreach = 14`
+  - `agreement_sent_no_followup_days = 2`
+  - `signed_no_activity_days = 5`
+  - `ai_summary_lookback_days = 28`
+- [ ] `GET /api/settings` — returns all editable settings
+- [ ] `PATCH /api/settings` — saves one or more settings
+- [ ] Settings page renders all values as editable number inputs (one row per threshold)
+- [ ] Settings save → immediately affects attention queue (replaces hardcoded `thresholds.ts` lookups)
+- [ ] Sync log visible in settings: last 10 syncs, call counts, errors
+- [ ] Note: sync schedule is NOT in settings — lives in `vercel.json`, requires redeploy to change
+- [ ] **Acceptance:** Mo changes "Attempted Contact" from 7 to 10 days → attention queue immediately reflects the new threshold.
+- [ ] git commit: `[M7] configurable thresholds — settings page`
+- [ ] git tag: `sprint-7-done`
 
-**Done when:** Mo can change a staleness threshold, see it reflected in the attention queue immediately, and export the roadmap to feed back to an AI.
+**Not in M7:** In-app Product Roadmap page (the markdown file IS the roadmap — no in-app editor needed).
+
+**Done when:** Mo can change any staleness threshold from the dashboard and see it take effect immediately without a code deploy.
 
 ---
 
@@ -431,13 +447,12 @@ docs/research/
 
 **Checklist:**
 - [ ] Error boundaries on all major components
-- [ ] HubSpot API down → show stale data with clear warning banner
+- [ ] HubSpot API down → show stale data with clear warning banner (HubSpotError → banner, not crash)
 - [ ] Loading states on all async operations
 - [ ] Mobile warning: "This dashboard is optimized for desktop browsers"
 - [ ] Empty state messages (no deals in a group, no tasks, no summary yet)
-- [ ] HubSpot Private App setup guide written for Mo (`docs/hubspot-setup.md`)
 - [ ] Cloudflare domain pointing to Vercel (production URL)
-- [ ] Vercel environment variables all set in production
+- [ ] All Vercel environment variables confirmed set in production (`DATABASE_URL`, `DIRECT_URL`, `HUBSPOT_ACCESS_TOKEN`, `DASHBOARD_PASSWORD`, `ANTHROPIC_API_KEY`, `CRON_SECRET`)
 - [ ] Manual run-through of all features in production environment
 - [ ] Sync log visible in settings (last 10 syncs, call counts, errors)
 
@@ -557,13 +572,22 @@ M0 (Private App Setup)
   └── M1 (API Research + Schema Discovery) ← Mo reviews raw data here
         └── M2a (Project Skeleton)
               └── M2b (DB Schema — finalized from M1 findings)
-                    └── M2c (Sync Engine)
-                          └── M3 (Attention Queue) ← First demo
-                                ├── M4 (Deal Panel + Layer 2 on-demand)
-                                │     └── M5 (AI Integration — manual only)
-                                │           └── M6 (Tasks)
-                                └── M7 (Settings + Roadmap)
-                                      └── M8 (Polish + Deploy)
+                    └── M2c (Sync Engine) ✅
+                          └── M3 (Attention Queue) ✅ ← First demo
+                                └── M4 (Deal Panel + Snooze + Layer 2)
+                                      └── M5 (AI Summary — per-deal, manual only)
+                                            └── M6 (Tasks + Daily Briefing)
+                                                  └── M7 (Settings — configurable thresholds)
+                                                        └── M8 (Polish + Deploy)
 ```
 
-**Critical path:** M1 (API research + Mo review) must complete before DB schema is finalized. Do not design tables from assumptions. Everything else is sequential. M7 can be done in parallel with M5–M6.
+**Critical path:** M1 (API research + Mo review) must complete before DB schema is finalized. Everything else is sequential. M7 can be done in parallel with M5–M6 if needed.
+
+**Things we decided NOT to build:**
+- `mo-action.ts` keyword heuristics rule — AI summary's `mo_action_required` field handles this
+- In-app Product Roadmap page — the markdown file is the roadmap
+- `product_roadmap` DB table — follows from above
+- Document checklist UI and AI inference — too complex, Google Drive already exists
+- "Snooze Expired" attention group — expired snoozes naturally reappear in their normal flag group
+- Summary cards row (🔴/🟡 counts in header) — requires data from M5+ to be meaningful
+- Schema drift monitor — too speculative for current needs

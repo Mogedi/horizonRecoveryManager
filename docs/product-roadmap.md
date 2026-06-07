@@ -13,46 +13,43 @@ HubSpot remains the source of truth. This tool adds an attention intelligence la
 
 ---
 
-## Milestone 3 Target — The Weekend Demo
+## Milestone 3 — Shipped ✅
 
-The smallest build that proves the dashboard is materially better than using HubSpot alone.
+**What shipped:** Attention queue with real-time flag evaluation. Collapsible groups (Agreement No Follow-Up, Stage Stale, Signed No Activity, No Contacts, Snoozed, Healthy). Refresh / Sync Now / Force Refresh buttons. Last synced timestamp. 59 tests passing.
 
-**Pages:** `/login`, `/dashboard` (attention queue), deal detail panel (slide-in)
+**What M3 does NOT include:** Deal detail panel, Layer 2, snooze UI, AI summaries. Those are M4–M5.
 
-**Database tables:** `deals`, `deal_activities`, `deal_contacts`, `deal_snoozes`, `sync_log`
+## Milestone 4 Target — The First Usable Tool
 
-**Sync jobs:** Layer 1 (all deals, scheduled + manual), Layer 2 (per deal, on-demand)
+The first version Mo can actually use daily.
 
-**API routes:** `/api/auth/login`, `/api/sync/layer1`, `/api/sync/layer2/[id]`, `/api/deals`, `/api/deals/[id]`, `/api/deals/[id]/snooze`, `/api/deals/[id]/summary`
+**New in M4:** Deal detail panel (slide-in), Layer 2 on-demand pull, snooze UI.
 
-**User actions:**
-1. Log in with shared password
-2. See all deals grouped by attention reason — no filtering required
-3. Click "Refresh" to trigger Layer 1 sync manually
-4. Click any deal → see contacts + full activity timeline
-5. Pull Layer 2 for one deal (on demand)
-6. Generate AI summary from Layer 2 data
-7. Snooze a deal with category + date → deal disappears from queue
+**User actions added:**
+1. Click any deal → Layer 1 detail panel opens instantly (name, stage, amount, address, county, parcel, tax sale date)
+2. "Open in HubSpot" link from panel
+3. "Load Full Detail" → timeline (calls, notes, emails, tasks) + contacts appear
+4. Snooze a deal: category + date + optional note → deal disappears from queue
 
-**Success criteria:** Mo opens the dashboard and within 60 seconds knows what needs his attention. He can view a deal's full history without clicking through HubSpot tabs. He can snooze a case that's in normal attorney wait time. That's it.
-
-**Deferred from Milestone 3:** Settings UI (hardcode thresholds), internal tasks, document checklist, in-app roadmap, Daily Briefing, `ai_summaries` / `internal_tasks` / `document_checklist` / `product_roadmap` / `app_settings` tables.
+**Success criteria:** Mo can open any deal and see its full history without leaving the dashboard. He can snooze cases in normal attorney wait time so they stop polluting the queue.
 
 ---
 
 ## P0 — Must Build (Core Dashboard)
 
-| Feature | Status | Notes |
-|---|---|---|
-| HubSpot Layer 1 sync (all deals, scheduled) | Planned | 4x daily + manual refresh |
-| Attention queue by issue type | Planned | Grouped, color-coded, collapsible |
-| Deal detail panel with activity timeline | Planned | Slide-in, no page navigation |
-| Layer 2 on-demand pull (per deal) | Planned | Activities + contacts |
-| Per-deal AI summary (bullet format) | Planned | 7 structured fields via Claude API |
-| Snooze with structured categories | Planned | Removes deal from queue until wake date |
-| Internal task list (Trello replacement) | Planned | Case-linked + general tasks |
-| Password authentication | Planned | Shared password — Login → Dashboard |
-| Vercel deployment | Planned | |
+| Feature | Milestone | Status | Notes |
+|---|---|---|---|
+| HubSpot Layer 1 sync (all deals, scheduled) | M2c | ✅ Done | 4x daily + manual refresh |
+| Attention queue by issue type | M3 | ✅ Done | Grouped, color-coded, collapsible |
+| Password authentication | M2a | ✅ Done | Shared password |
+| Deal detail panel with activity timeline | M4 | Planned | Slide-in, Layer 1 instant + Layer 2 on-demand |
+| Layer 2 on-demand pull (per deal) | M4 | Planned | Activities + contacts |
+| Snooze with structured categories | M4 | Planned | Removes deal from queue until wake date |
+| Per-deal AI summary (bullet format) | M5 | Planned | 7 structured fields via Claude API |
+| Internal task list (Trello replacement) | M6 | Planned | Case-linked + general tasks |
+| Daily Briefing | M6 | Planned | AI-generated morning summary |
+| Configurable staleness thresholds | M7 | Planned | Settings page — no code deploy needed |
+| Vercel deployment | M8 | Planned | Custom domain via Cloudflare |
 
 ---
 
@@ -62,14 +59,10 @@ Build after P0 is stable and Mo is using it daily.
 
 | Feature | Status | Notes |
 |---|---|---|
-| Daily Briefing button | Planned | AI-generated morning summary |
-| Mo Action Required detection | Planned | Keyword heuristics on activity text |
-| Waiting on Attorney tracking | Planned | Snooze category + visibility |
-| Accountability tracking | Idea | Employee activity visible in Daily Briefing |
-| Business improvement tracker | Idea | Capture and track operational improvement ideas |
-| Stage staleness thresholds (configurable) | Planned | Settings page — not in Milestone 3 |
-| Document checklist (manual + AI-inferred) | Planned | Per-deal document status |
-| In-app Product Roadmap page | Planned | Editable + exportable as Markdown |
+| Mo Action Required surfacing | Planned | Read from AI summary JSON — no keyword heuristics |
+| Waiting on Attorney visibility | Planned | Snooze category already exists; display in UI |
+| Accountability tracking | Idea | Employee activity counts in Daily Briefing (needs deal_activities data) |
+| HubSpot write-back (notes, stage moves) | Idea | Phase 2 capability — `src/lib/hubspot/actions.ts` |
 
 ---
 
@@ -79,10 +72,11 @@ Meaningful extensions, defer until P0 + P1 are proven.
 
 | Feature | Status | Notes |
 |---|---|---|
-| Google Drive integration | Idea | Pull file list from linked Drive folder per deal |
-| HubSpot write-back | Idea | Add notes, move stages, create tasks from dashboard |
+| Document checklist | Idea | AI-inferred from notes/emails — complex, Google Drive already exists for this |
+| Google Drive integration | Idea | Pull file list from linked Drive folder per deal (API not available via standard HubSpot integration) |
 | Attorney workflow enhancements | Idea | Filing status, county deadlines, attorney contact DB |
 | Email notification delivery | Idea | Snooze expired / Mo Action Required via email |
+| In-app Product Roadmap page | Idea | An in-app editor for this file — the markdown file is sufficient |
 
 ---
 
@@ -117,5 +111,5 @@ Observations and ideas captured during day-to-day use. Review periodically.
 
 ---
 
-*Last updated: 2026-06-06*
+*Last updated: 2026-06-07*
 *To update: Edit this file or use the in-app Roadmap page, then export and feed back to Claude.*

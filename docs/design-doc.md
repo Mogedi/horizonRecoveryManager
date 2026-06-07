@@ -89,12 +89,12 @@ All DB access imports `prisma` from this singleton. Never instantiate `PrismaCli
 
 ### stageMap and ownerMap Loading
 
-No persistent startup in serverless. Strategy: seed `stageMap` and `ownerMap` into the `app_settings` table as JSON after M1 research is complete. On each sync run, load from DB once and pass to mapper. Cache in the invocation scope (module-level variable), not globally.
+Seeded into `app_settings` after M1 research is complete (`loadStageMap()` / `loadOwnerMap()` in `src/lib/db/settings.ts`). Loaded fresh on each sync run and each `/api/deals` request — one DB query each, no in-memory caching needed (serverless functions have no persistent memory across invocations).
 
 ```typescript
-// Loaded once per sync invocation, passed to mapper
-const stageMap = await loadStageMap()   // queries app_settings where key = 'stage_map'
-const ownerMap = await loadOwnerMap()   // queries app_settings where key = 'owner_map'
+// In /api/deals and sync runs — loaded once, passed down
+const stageMap = await loadStageMap()   // app_settings where key = 'stage_map'
+const ownerMap = await loadOwnerMap()   // app_settings where key = 'owner_map'
 ```
 
 ---
@@ -231,7 +231,7 @@ This is sufficient to render the full attention queue without any Layer 2 data, 
 
 Only triggered when Mo explicitly clicks **"Load Full Detail"** in the deal detail panel. The panel always shows Layer 1 data first. Mo decides whether to pull Layer 2 for a given deal.
 
-Before pulling, show: *"This will use 5–50+ HubSpot API calls depending on deal activity. Continue?"* Do NOT try to estimate the exact number — the estimate requires making the association calls anyway, and the first real call count will be shown after the first sync. After the first Layer 2 sync for a deal, show the actual call count from sync_log.
+Before pulling, show: *"This will use 5–50+ HubSpot API calls depending on deal activity. Continue?"* Do NOT estimate the exact number — the estimate itself requires making the association calls. After the first Layer 2 sync for a deal, the actual call count is available in sync_log and should be displayed instead.
 
 Pulls:
 - Notes (full text, author, timestamp)
@@ -433,20 +433,21 @@ CREATE TABLE app_settings (
 
 Default settings to seed:
 ```
-stage_stale_new_case              = 0        (no staleness rule — document check instead)
-stage_stale_ready_for_outreach    = 5        (business days)
+stage_stale_ready_for_outreach    = 5        (business days, from stage_entered_at)
 stage_stale_attempted_contact     = 7
 stage_stale_contact_made          = 5
 stage_stale_follow_up_needed      = 5
 stage_stale_engaged_interested    = 3
-stage_stale_agreement_sent        = 2
-stage_stale_signed_in_progress    = 5
 stage_stale_letter_outreach       = 14
-sync_schedule_hours               = 13,15,17,19    (UTC — equals 9,11,13,15 Eastern)
+agreement_sent_no_followup_days   = 2        (business days, from last_activity_date — NOT stage_entered_at)
+signed_no_activity_days           = 5        (business days, from last_activity_date — NOT stage_entered_at)
 ai_summary_lookback_days          = 28
 ```
 
-Note: `layer2_auto_pull_stages` removed — Layer 2 is never auto-pulled. All Layer 2 is on-demand only.
+**Omissions are intentional:**
+- `stage_stale_new_case` — no staleness rule for New Case; document check rule applies instead (future)
+- `stage_stale_agreement_sent` / `stage_stale_signed_in_progress` — these stages have their own rules using `last_activity_date` (not `stage_entered_at`). Adding them to stage_stale_* would create duplicate flags with different semantics. Their thresholds live under separate keys.
+- Sync schedule: not in app_settings — lives in `vercel.json` (static, requires redeploy to change)
 
 ### `sync_log` — API usage tracking
 
@@ -476,41 +477,40 @@ CREATE TABLE sync_log (
 All routes are password-protected. `/` redirects to `/login` if unauthenticated.
 
 - `/login` — Password gate, redirects to `/dashboard` on success
-- `/dashboard` — Attention queue home
-- `/dashboard/tasks` — Mo's internal task list
-- `/dashboard/settings` — Configurable thresholds
-- `/dashboard/roadmap` — In-app product roadmap
-- `/dashboard/drift` — Schema drift monitor (future — see README.md)
+- `/dashboard` — Attention queue home (M3 ✅)
+- `/dashboard/tasks` — Mo's internal task list (M6)
+- `/dashboard/settings` — Configurable thresholds (M7)
+
+**Not building:**
+- `/dashboard/roadmap` — The markdown file IS the roadmap. An in-app editor adds no value.
+- `/dashboard/drift` — Schema drift monitoring: interesting idea, not worth the complexity for 1 pipeline.
 
 ### Dashboard Home
 
-**Top bar:**
+**Header:**
 ```
-[Last synced: 5 minutes ago]  [↻ Refresh]  [✦ Daily Briefing]
-```
-
-**Summary cards row:**
-```
-[🔴 5 Need Attention]  [🟡 3 Snooze Expired]  [📋 2 Mo Action Required]  [📄 4 Docs Missing]
+Attention Queue
+X deals need attention · 150 total · Synced 5 minutes ago
+[Refresh]  [Sync Now]  [Force Refresh]
 ```
 
-**Attention groups (each collapsible):**
-- 🔴 Mo Action Required
-- 🔴 Snooze Expired
-- 🔴 Agreement Sent — No Follow-Up
-- 🟡 Signed/In Progress — No Recent Activity
-- 🟡 Missing Contact Info
-- 🟡 Missing Setup Documents (New Cases)
-- 🟡 Stale — [Stage Name]
-- 🔵 Letter Outreach — Keep Moving
-- ⬜ Healthy Deals *(collapsed by default — all deals with no active issues)*
+**Attention groups (each collapsible — urgent first, healthy/snoozed collapsed at bottom):**
+- 🔴 Agreement Sent — No Follow-Up *(urgent)*
+- 🟡 Stage Stale *(warning)*
+- 🟡 Signed — No Activity *(warning)*
+- 🟡 No Contacts *(warning)*
+- ⬜ Snoozed *(collapsed by default — deals with active snooze)*
+- ⬜ Healthy *(collapsed by default — all deals with no active issues)*
+
+**Note on Snooze Expired:** When a snooze expires, the deal naturally reappears in its appropriate flag group (Stage Stale, Agreement Sent, etc.). There is no separate "Snooze Expired" group — expired snoozes dissolve automatically. The deal's actual state determines where it lands.
+
+**Note on Mo Action Required:** This attention group requires AI summary data (M5). It is not a Layer 1 rule. After M5 ships, deals with `ai_summaries.summary_json.mo_action_required = true` can be surfaced as a group.
 
 **Deal card (within each group):**
 ```
-[Stage badge]  BREVARD - 2671 San Filippo Dr SE - JOHN THOMPSON ($33K)
-Owner: Marwa Yasmeen  •  Last activity: 12 days ago
-⚠ Reason: No activity for 12 days (threshold: 7 days)
-[View details]  [Snooze]
+BREVARD - 2671 San Filippo Dr SE - JOHN THOMPSON        $33K
+Follow-Up Needed · Activity 12 days ago
+● No activity for 12 days (threshold: 7 days)          3d overdue
 ```
 
 ### Deal Detail Panel (slide-in from right)
@@ -619,11 +619,12 @@ type NormalizedDeal = {
 // RuleContext: loaded once per /api/deals request, passed to every rule.
 // Snoozes are a Set for O(1) lookup — never query DB per deal.
 type RuleContext = {
-  today: Date                           // injected — freezable in tests
+  today: Date                              // injected — freezable in tests
   timezone: 'America/New_York'
-  stageMap: Record<string, string>      // stage ID → name
-  staleThresholds: Record<string, number>  // stage ID → business days (from thresholds.ts in M3, app_settings in M7)
-  snoozedDealIds: Set<string>           // pre-loaded once in db/deals.ts
+  stageMap: Record<string, string>         // stage ID → name
+  staleThresholds: Record<string, number>  // stage ID → business days (thresholds.ts in M3, app_settings in M7)
+  terminalStageIds: Set<string>            // stages where no staleness rules fire
+  snoozedDealIds: Set<string>              // pre-loaded once in db/deals.ts — O(1) per deal
 }
 ```
 
@@ -658,21 +659,19 @@ These run on every deal using only data from the `deals` table. No Layer 2 requi
 
 These run only when Layer 2 data exists for a deal. Added after M4.
 
-**Mo Action Required — PLACEHOLDER (M4):**
-Keyword heuristics not yet validated against real note data. Implement after M1 sample notes reviewed.
-Likely triggers (validate with real data):
-- `deal_activities.body` contains phrases implying Mo needs to act
-- Inbound email (`deal_activities.direction = 'inbound'`) with no subsequent outbound response in 48 hours
+**Mo Action Required (M5 — not a rule file, not heuristics):**
+Mo Action Required is NOT implemented as a keyword heuristic rule. Instead, the AI summary (M5) returns `mo_action_required: true/false` as part of its structured output. After M5 ships, the `/api/deals` route can check `ai_summaries.summary_json.mo_action_required` and surface those deals as a group. No `mo-action.ts` rule file will be created.
+
+Rationale: keyword heuristics will be wrong, will need constant tuning, and duplicate what the AI already does. The AI has full context; a keyword scanner doesn't.
 
 **Missing Contact Info (Layer 2 upgrade, M4):**
 - All `deal_contacts` for this deal have empty `phone_numbers`
 - OR all `deal_contacts` have `do_not_contact = true`
 - OR all contacts `is_deceased = true` AND no other contacts
+- Note: this changes the semantics of `contacts.ts` (not just the implementation) — update tests when upgrading.
 
-**Missing Setup Documents (M5):**
-- `stageMap[deal.stage]` = "New Case"
-- `document_checklist` table shows `property_profile` or `tax_sale_deed` as `missing` or `unknown`
-- Requires `document_checklist` table (added in M5/M6)
+**Missing Setup Documents — DEFERRED (not building):**
+AI inference of document presence from unstructured notes is complex and error-prone. Your team already tracks documents in Google Drive. With only ~18 active deals, the value does not justify the complexity. If Mo explicitly asks for this, implement it then. The `document_checklist` table exists in the schema as a placeholder but no UI or rule will be built against it.
 
 ---
 
@@ -917,26 +916,22 @@ AI summary cache: never auto-regenerate. Show "New activity since last summary" 
 │   │   ├── login/page.tsx
 │   │   ├── dashboard/
 │   │   │   ├── layout.tsx             # Sidebar layout
-│   │   │   ├── page.tsx               # Attention queue
-│   │   │   ├── tasks/page.tsx
-│   │   │   ├── settings/page.tsx
-│   │   │   ├── roadmap/page.tsx
-│   │   │   └── drift/page.tsx             # Schema drift monitor (future — not in v1)
+│   │   │   ├── page.tsx               # Attention queue (M3 ✅)
+│   │   │   ├── tasks/page.tsx         # Task list (M6)
+│   │   │   └── settings/page.tsx      # Configurable thresholds (M7)
 │   │   └── api/
 │   │       ├── auth/login/route.ts
 │   │       ├── auth/logout/route.ts
-│   │       ├── sync/layer1/route.ts
-│   │       ├── sync/layer2/[id]/route.ts
-│   │       ├── deals/route.ts
-│   │       ├── deals/[id]/route.ts
-│   │       ├── deals/[id]/snooze/route.ts
-│   │       ├── deals/[id]/summary/route.ts
-│   │       ├── tasks/route.ts
-│   │       ├── tasks/[id]/route.ts
-│   │       ├── settings/route.ts
-│   │       ├── roadmap/route.ts
-│   │       ├── briefing/route.ts
-│   │       └── drift/route.ts          # Schema drift monitor (future — not in v1)
+│   │       ├── sync/layer1/route.ts   # (M2c ✅)
+│   │       ├── sync/layer2/[id]/route.ts  # (M2c ✅)
+│   │       ├── deals/route.ts         # (M3 ✅)
+│   │       ├── deals/[id]/route.ts    # Single deal + Layer 2 data (M4)
+│   │       ├── deals/[id]/snooze/route.ts  # (M4)
+│   │       ├── deals/[id]/summary/route.ts # (M5)
+│   │       ├── tasks/route.ts         # (M6)
+│   │       ├── tasks/[id]/route.ts    # (M6)
+│   │       ├── settings/route.ts      # (M7)
+│   │       └── briefing/route.ts      # Daily Briefing (M6)
 │   └── lib/
 │       ├── hubspot/
 │       │   ├── client.ts              # Rate-limited HTTP client (3 req/s cap, exponential backoff)
@@ -947,41 +942,50 @@ AI summary cache: never auto-regenerate. Show "New activity since last summary" 
 │       │   ├── layer1.ts              # Batch deal sync (smart + full refresh modes)
 │       │   └── layer2.ts              # Per-deal sync (on demand only)
 │       ├── rules/                     # Each rule = one file = one exported function
-│       │   ├── index.ts               # Runs all rules, returns AttentionFlag[]
-│       │   ├── staleness.ts           # Stage staleness (reads thresholds.ts)
-│       │   ├── contacts.ts            # Missing contact info
-│       │   ├── documents.ts           # Missing setup docs (New Case stage only)
-│       │   ├── agreement.ts           # Agreement stage, no follow-up
-│       │   ├── signed.ts              # Signed/In Progress, no recent activity
-│       │   └── snooze.ts              # Snooze expired
+│       │   ├── index.ts               # applyRules + evaluateAll — snooze first, then all others
+│       │   ├── types.ts               # NormalizedDeal, RuleContext, AttentionFlag, Rule types
+│       │   ├── staleness.ts           # Stage Stale (stage_entered_at, skips terminals)
+│       │   ├── contacts.ts            # No Contacts (Layer 1: contactCount=0; Layer 2 upgrade in M4)
+│       │   ├── agreement.ts           # Agreement Sent — No Follow-Up (last_activity_date)
+│       │   ├── signed.ts              # Signed/In Progress — No Activity (last_activity_date)
+│       │   └── snooze.ts              # Active snooze — suppresses all other flags
+│       │   # NOTE: no mo-action.ts — Mo Action Required comes from AI summary (M5), not heuristics
+│       │   # NOTE: no documents.ts — Document checklist deferred; not worth building for 18 deals
 │       ├── ai/
-│       │   ├── client.ts              # Anthropic SDK wrapper
-│       │   ├── prompts.ts             # Prompt templates (summary, briefing)
-│       │   ├── summary.ts             # Build prompt → call → parse → cache in ai_summaries
-│       │   └── briefing.ts            # Daily briefing generation
+│       │   ├── client.ts              # Anthropic SDK wrapper (M5+)
+│       │   ├── prompts.ts             # Prompt templates — summary and briefing (M5+)
+│       │   └── summary.ts             # Build prompt → call → parse → cache in ai_summaries (M5+)
 │       ├── db/
-│       │   ├── deals.ts               # Deal queries
-│       │   ├── activities.ts          # Activity queries
-│       │   ├── contacts.ts            # Contact queries
-│       │   ├── snoozes.ts             # Snooze queries
-│       │   ├── summaries.ts           # AI summary queries
-│       │   ├── tasks.ts               # Internal task queries
+│       │   ├── client.ts              # Prisma singleton — always import from here
+│       │   ├── deals.ts               # getDealsForQueue() — NormalizedDeal[] + snoozedDealIds Set
+│       │   ├── settings.ts            # loadStageMap(), loadOwnerMap() from app_settings
+│       │   ├── activities.ts          # Activity queries (M4+)
+│       │   ├── contacts.ts            # Contact queries (M4+)
+│       │   ├── snoozes.ts             # Snooze create/remove queries (M4+)
+│       │   ├── summaries.ts           # AI summary queries (M5+)
+│       │   ├── tasks.ts               # Internal task queries (M6+)
 │       │   └── sync-log.ts            # Sync log queries + daily call count tracker
 │       └── utils/
-│           ├── business-days.ts       # Business days calc — must be fully unit tested
+│           ├── business-days.ts       # Business days calc — America/New_York, fully unit tested
+│           ├── json.ts                # asJson() — safe JSON cast for Prisma InputJsonValue
 │           ├── rate-limiter.ts        # Token bucket — used only by hubspot/client.ts
 │           └── thresholds.ts          # Hardcoded staleness values (replaced by app_settings in M7)
 └── vercel.json                        # Cron config
 ```
 
-**Modular rule:** Each `/src/lib/rules/*.ts` file exports one function. No rule imports from another rule. Adding a rule = new file + register in `index.ts`. Removing = delete + unregister. The index.ts type is:
+**Modular rule:** Each `/src/lib/rules/*.ts` file exports one function. No rule imports from another rule. Adding a rule = new file + register in `index.ts`. Removing = delete + unregister. The actual types (from `src/lib/rules/types.ts`):
+
 ```typescript
-type AttentionFlag = {
-  ruleId: string
-  label: string
-  severity: 'red' | 'yellow' | 'blue'
+export type AttentionFlagType = 'stage_stale' | 'agreement_no_followup' | 'signed_no_activity' | 'no_contacts' | 'snoozed'
+export type AttentionFlag = {
+  type: AttentionFlagType
+  severity: 'urgent' | 'warning' | 'info'
+  message: string
+  daysOverdue?: number
 }
-// index.ts: (deal: Deal, snoozes: Snooze[]) => AttentionFlag[]
+export type Rule = (deal: NormalizedDeal, ctx: RuleContext) => AttentionFlag | null
+// index.ts: applyRules(deal, ctx): AttentionFlag[] — snooze runs first, suppresses all other flags
+// index.ts: evaluateAll(deals, ctx): DealWithFlags[]
 ```
 
 ---
@@ -994,7 +998,7 @@ type AttentionFlag = {
 
 **Full Refresh:** Forces re-pull of all deals regardless of modified date. Use after major HubSpot changes or when data looks wrong.
 
-Before any Layer 2 pull, surface an estimated call count and require confirmation from Mo: *"This will use approximately X HubSpot API calls. Continue?"*
+Before any Layer 2 pull, show the static range and require confirmation from Mo: *"This will use 5–50+ HubSpot API calls depending on deal activity. Continue?"* After the first Layer 2 sync for a deal, show the actual count from sync_log.
 
 **Vercel plan required for 4x daily sync: Pro ($20/mo).**
 Hobby plan: once per day max, ±59 min precision. Pro plan: once per minute, per-minute precision.

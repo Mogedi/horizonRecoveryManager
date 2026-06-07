@@ -50,30 +50,42 @@ DATABASE_URL=postgresql://user:pass@host/db?pgbouncer=true&connect_timeout=15  #
 DIRECT_URL=postgresql://user:pass@host/db                                        # direct — Prisma migrate only
 ```
 
-In `prisma/schema.prisma`:
+**Prisma 7 breaking change (confirmed in M2a):** `url`/`directUrl` are removed from `schema.prisma`. Use `prisma.config.ts` for CLI config and `@prisma/adapter-pg` for the app client.
+
+`prisma/schema.prisma` datasource (no url/directUrl):
 ```prisma
 datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL")   // pooled
-  directUrl = env("DIRECT_URL")     // direct for migrations
+  provider = "postgresql"
+  // URLs configured in prisma.config.ts (CLI) and PrismaPg adapter (app)
 }
 ```
 
-Singleton pattern (still required to prevent connection exhaustion on warm invocations):
+`prisma.config.ts` (CLI uses DIRECT_URL):
 ```typescript
-// src/lib/db/client.ts
+import { defineConfig } from 'prisma/config'
+export default defineConfig({
+  schema: 'prisma/schema.prisma',
+  datasource: { url: process.env.DIRECT_URL ?? '' },
+})
+```
+
+`src/lib/db/client.ts` (app uses DATABASE_URL pooled via adapter):
+```typescript
 import { PrismaClient } from '@prisma/client'
+import { PrismaPg } from '@prisma/adapter-pg'
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient }
 
-export const prisma =
-  globalForPrisma.prisma ??
-  new PrismaClient({ log: process.env.NODE_ENV === 'development' ? ['error'] : [] })
+function createPrismaClient() {
+  const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL! })
+  return new PrismaClient({ adapter, log: process.env.NODE_ENV === 'development' ? ['error'] : [] })
+}
 
+export const prisma = globalForPrisma.prisma ?? createPrismaClient()
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma
 ```
 
-All DB access imports `prisma` from this singleton. Never instantiate `PrismaClient` directly. Get both connection strings from Neon dashboard (pooled + direct).
+All DB access imports `prisma` from this singleton. Never instantiate `PrismaClient` directly. CLI commands use npm scripts that load `.env.local` via `dotenv-cli`.
 
 ### stageMap and ownerMap Loading
 
@@ -100,16 +112,15 @@ interface Deal {
   stage: string            // stage ID — resolve to name via stageMap
   pipeline: string         // pipeline ID
   ownerId: string | null   // hubspot_owner_id — mostly Marwa/data entry, not used for routing
-  estimatedSurplus: number | null  // PRIMARY display value — Mo's custom field
-  amount: number | null            // HubSpot standard field — stored but not displayed
+  amount: number | null            // PRIMARY display value — confirmed populated 100% of deals
+  estimatedSurplus: number | null  // Custom field — confirmed null on all 150 deals (2026-06-07); store but do not display
   closeDate: Date | null
-  lastActivityDate: Date | null    // notes_last_updated
-  stageEnteredAt: Date | null      // hs_v2_date_entered_current_stage — staleness basis
+  lastActivityDate: Date | null    // notes_last_updated — use for "no recent activity" rules
+  stageEnteredAt: Date | null      // hs_v2_date_entered_current_stage — use for "stuck in stage" rules
   lastModified: Date | null        // hs_lastmodifieddate — delta sync filter
   contactCount: number             // num_associated_contacts
-  openTaskCount: number | null     // may require Layer 2 — TBD
   propertyAddress: string | null   // properties_address
-  county: string | null
+  county: string | null            // enumeration: 25 GA counties + "Other"
   parcelId: string | null          // parcel_id__deal
   taxSaleDate: Date | null
   hubspotUrl: string
@@ -220,7 +231,7 @@ This is sufficient to render the full attention queue without any Layer 2 data, 
 
 Only triggered when Mo explicitly clicks **"Load Full Detail"** in the deal detail panel. The panel always shows Layer 1 data first. Mo decides whether to pull Layer 2 for a given deal.
 
-Before pulling, show a warning: *"This will use approximately 30–50 HubSpot API calls. Continue?"*
+Before pulling, show a warning: *"This will use approximately 7–10 HubSpot API calls. Continue?"*
 
 Pulls:
 - Notes (full text, author, timestamp)
@@ -251,12 +262,10 @@ CREATE TABLE deals (
   amount              DECIMAL,        -- USE for display — populated 100% of deals
   estimated_surplus   DECIMAL,        -- custom field — null on all current deals; store for future
   close_date          DATE,
-  last_activity_date  TIMESTAMPTZ,    -- notes_last_updated
-  stage_entered_at    TIMESTAMPTZ,    -- hs_v2_date_entered_current_stage — USE for staleness rules
+  last_activity_date  TIMESTAMPTZ,    -- notes_last_updated — "no recent activity" rules
+  stage_entered_at    TIMESTAMPTZ,    -- hs_v2_date_entered_current_stage — "stuck in stage" rules
   last_modified       TIMESTAMPTZ,    -- hs_lastmodifieddate — use for delta sync
   contact_count       INT DEFAULT 0,  -- num_associated_contacts
-  task_count          INT DEFAULT 0,  -- may require Layer 2 — TBD
-  open_task_count     INT DEFAULT 0,  -- may require Layer 2 — TBD
   property_address    TEXT,           -- properties_address
   county              TEXT,
   parcel_id           TEXT,           -- parcel_id__deal
@@ -604,10 +613,12 @@ These run on every deal using only data from the `deals` table. No Layer 2 requi
 **Missing Contact Info (Layer 1 version):**
 - `contact_count = 0` only — no phone check in M3 (phone data requires Layer 2)
 
-**Stage Stale:**
-- `last_activity_date` beyond configured threshold for that stage (in business days)
+**Stage Stale — uses `stage_entered_at`, NOT `last_activity_date`:**
+- `stage_entered_at` beyond configured threshold for that stage (in business days)
 - Thresholds from `thresholds.ts` (M3) or `app_settings` (M7+)
 - Applied to: Ready for Outreach, Attempted Contact, Contact Made, Follow-Up Needed, Engaged/Interested, Letter Outreach
+- **Why `stage_entered_at`:** A deal could have a note added yesterday while stuck in "Attempted Contact" for 30 days. `last_activity_date` would miss it. `stage_entered_at` catches it. The Agreement Sent and Signed rules above already use `last_activity_date` for activity recency — Stage Stale is about pipeline progression.
+- **Explicit exclusions:** Never fire on Dead/Not Interested, DNC, Blocked Missing Info, Exhausted, Closed-Paid, F (Mortgage Foreclosures), More Research Need. Check `stageMap[deal.stage]` against terminal set before evaluating threshold.
 
 ### Layer 2-Dependent Rules (M4+ — require deal_activities and deal_contacts)
 
@@ -866,7 +877,7 @@ AI summary cache: never auto-regenerate. Show "New activity since last summary" 
 ├── prisma/
 │   └── schema.prisma                  # Do not write until field-mapping.md is filled in
 ├── src/
-│   ├── middleware.ts                  # Auth cookie check — all /dashboard/* routes
+│   ├── proxy.ts                       # Auth cookie check — all /dashboard/* routes (Next.js 16: renamed from middleware.ts)
 │   ├── app/
 │   │   ├── page.tsx                   # Redirects to /login
 │   │   ├── login/page.tsx

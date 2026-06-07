@@ -102,7 +102,7 @@ Worst case/day:    ~1,360 calls if all 150 deals get Layer 2 = 1.8% of daily cap
 Surplus field:     amount (NOT estimated_surplus — confirmed null on 100% of deals)
 AI model:          claude-sonnet-4-6
 AI lookback:       28 days of activity history per summary
-Staleness source:  /src/lib/thresholds.ts (hardcoded for M3, replaced by app_settings in M7)
+Staleness source:  /src/lib/utils/thresholds.ts (hardcoded for M3, replaced by app_settings in M7)
 ```
 
 ---
@@ -133,6 +133,14 @@ npm run db:generate   # = prisma generate
 ## stageMap and ownerMap
 
 These are loaded from `app_settings` (seeded after M1). Load once per sync invocation and pass to mapper. Never hardcode stage names. Never compare `deal.stage` against a raw string — always use `stageMap[deal.stage]`.
+
+## Staleness Rules — Two Separate Signals
+
+`stage_entered_at` (→ `hs_v2_date_entered_current_stage`) = how long deal has been in current stage → use for **Stage Stale** rule ("stuck in Attempted Contact for 14 days").
+
+`last_activity_date` (→ `notes_last_updated`) = when anything last happened → use for **No Recent Activity** rules (Agreement Sent, Signed/In Progress).
+
+Never use `last_activity_date` for Stage Stale — a deal can have a note yesterday but be stuck in stage for 30 days. Never fire staleness rules on terminal stages (Dead, DNC, Blocked, Exhausted, Closed-Paid, F, More Research Need).
 
 ## Test Framework — Vitest
 

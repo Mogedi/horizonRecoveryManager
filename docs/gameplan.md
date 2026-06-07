@@ -195,10 +195,10 @@ docs/research/
 > - Mo must provide `DATABASE_URL` and `DIRECT_URL` from Neon ⬜ (Mo action required before M2b)
 > - GitHub repo must exist and Vercel project connected ⬜ (Mo action required before M2a deploy step)
 >
-> **OPEN M1 QUESTIONS (do not block M2a/M2b — document in mapper TODO):**
-> - `estimated_surplus` is the primary display field. Store both `estimated_surplus` and `amount` in DB, display `estimated_surplus`. ✅ resolved
+> **M1 RESOLVED:**
+> - `amount` is the primary display field — confirmed populated 100% of deals. `estimated_surplus` is null on all 150 deals. Store both, display `amount`. ✅ resolved (M1-EXT)
 > - Email `hs_email_direction` values — do not implement directional logic until confirmed.
-> - Task counts in Layer 1 — assume not available; skip `task_count`/`open_task_count` columns for now.
+> - Task counts in Layer 1 — not available; `task_count`/`open_task_count` columns dropped.
 
 **Goal:** Working Next.js app skeleton, schema finalized from M1 findings, reliable data pipeline.
 
@@ -276,7 +276,7 @@ docs/research/
 
 **Checklist — Layer 1 Rules Only (no Layer 2 data available yet):**
 - [ ] `/src/lib/utils/business-days.ts` — write tests first, implement after tests are red
-- [ ] `/src/lib/rules/staleness.ts` — write test first (test with mock deal + threshold)
+- [ ] `/src/lib/rules/staleness.ts` — write test first (test with mock deal + threshold). Uses `stage_entered_at` NOT `last_activity_date` — measures "stuck in stage", not "no activity". Explicitly skip terminal stages (Dead, DNC, Blocked, Exhausted, Closed-Paid, F, More Research Need).
 - [ ] `/src/lib/rules/agreement.ts` — write test first
 - [ ] `/src/lib/rules/signed.ts` — write test first
 - [ ] `/src/lib/rules/contacts.ts` — Layer 1 version only: flag if `contact_count = 0`
@@ -316,7 +316,7 @@ docs/research/
 - [ ] "Open in HubSpot" link (deal URL from `deals.hubspot_url`)
 - [ ] Panel opens with Layer 1 data immediately — no loading required
 - [ ] "Load Full Detail" button — triggers Layer 2 pull for this deal
-- [ ] API call count warning shown before Layer 2 pull: *"~30–50 HubSpot API calls. Continue?"*
+- [ ] API call count warning shown before Layer 2 pull: *"~7–10 HubSpot API calls. Continue?"* (confirmed from M1-EXT research)
 - [ ] Activity timeline: calls, notes, emails, tasks in reverse chronological order
 - [ ] Timeline items show: type, author, timestamp, content
 - [ ] Linked contacts section: name, relationship, deceased flag, phone numbers, DNC status

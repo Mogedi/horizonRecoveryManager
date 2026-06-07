@@ -6,4 +6,4 @@ export async function register() {
 
 // Forwards unhandled server-component errors to Sentry automatically.
 // No-op when SENTRY_DSN is not set.
-export { onRequestError } from '@sentry/nextjs'
+export { captureRequestError as onRequestError } from '@sentry/nextjs'

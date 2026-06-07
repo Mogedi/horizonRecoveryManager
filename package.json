@@ -22,6 +22,7 @@
     "@anthropic-ai/sdk": "^0.102.0",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
+    "@sentry/nextjs": "^10.56.0",
     "jose": "^6.2.3",
     "next": "16.2.7",
     "pg": "^8.21.0",

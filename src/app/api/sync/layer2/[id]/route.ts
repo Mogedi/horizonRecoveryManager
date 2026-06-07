@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { isAuthenticated, unauthorizedResponse } from '@/lib/auth/require-session'
 import { runLayer2Sync } from '@/lib/sync/layer2'
+import { log } from '@/lib/logger'
 
 // GET /api/sync/layer2/[id] — returns call range shown in confirmation dialog before Mo pulls
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -19,11 +20,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   try {
     const result = await runLayer2Sync(id)
-    console.log(`[layer2] deal ${id}: ${result.activitiesStored} activities, ${result.contactsStored} contacts, ${result.apiCallsMade} API calls`)
+    log.info('layer2 sync complete', { dealId: id, ...result })
     return NextResponse.json(result)
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
-    console.error(`[layer2] deal ${id} failed:`, message)
+    log.error('layer2 sync failed', { dealId: id, error: message })
     return NextResponse.json({ error: message }, { status: 500 })
   }
 }

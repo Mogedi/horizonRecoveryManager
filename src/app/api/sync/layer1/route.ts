@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { isAuthenticated, isCronRequest, unauthorizedResponse } from '@/lib/auth/require-session'
 import { runLayer1Sync } from '@/lib/sync/layer1'
+import { log } from '@/lib/logger'
 
 // Called by Vercel Cron (see vercel.json) and by the manual sync button in the dashboard.
 export async function POST(req: NextRequest) {
@@ -9,14 +10,15 @@ export async function POST(req: NextRequest) {
   }
 
   const force = req.nextUrl.searchParams.get('force') === 'true'
+  const trigger = isCronRequest(req) ? 'cron' : 'manual'
 
   try {
     const result = await runLayer1Sync(force)
-    console.log(`[layer1] ${result.mode} sync: ${result.dealsSynced} deals, ${result.apiCallsMade} API calls`)
+    log.info('layer1 sync complete', { trigger, force, ...result })
     return NextResponse.json(result)
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
-    console.error('[layer1] sync failed:', message)
+    log.error('layer1 sync failed', { trigger, force, error: message })
     return NextResponse.json({ error: message }, { status: 500 })
   }
 }

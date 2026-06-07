@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'crypto'
 import { createSessionToken, SESSION_COOKIE, SESSION_DURATION_MS } from '@/lib/auth/session'
+import { log } from '@/lib/logger'
 
 function constantTimePasswordCheck(candidate: string, expected: string): boolean {
   // Hash both to a fixed length so timingSafeEqual doesn't leak the expected password's length.
@@ -18,10 +19,12 @@ export async function POST(request: NextRequest) {
   const expected = process.env.DASHBOARD_PASSWORD
 
   if (!expected || !constantTimePasswordCheck(String(password ?? ''), expected)) {
+    log.warn('auth failed — wrong password')
     return NextResponse.json({ error: 'Invalid password' }, { status: 401 })
   }
 
   const token = await createSessionToken()
+  log.info('auth success — session created')
   const expiresAt = new Date(Date.now() + SESSION_DURATION_MS)
 
   const response = NextResponse.json({ ok: true })

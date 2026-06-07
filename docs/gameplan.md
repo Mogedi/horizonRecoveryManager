@@ -397,7 +397,7 @@ docs/research/
 **What changes in M7:** All rules currently read from `thresholds.ts` constants passed as `RuleContext` fields. In M7, `buildRuleCtx()` (in `src/lib/rules/ctx.ts`) loads the same values from `app_settings` instead of hardcoded constants. Rules don't change at all — only `ctx.ts` changes. Both `/api/deals` and `briefing.ts` automatically pick up the new values since they both call `buildRuleCtx()`.
 
 **Checklist:**
-- [ ] Seed `app_settings` with all threshold defaults (if not already done in M2b):
+- [x] Seed `app_settings` with all threshold defaults (if not already done in M2b):
   - `stage_stale_ready_for_outreach = 5`
   - `stage_stale_attempted_contact = 7`
   - `stage_stale_contact_made = 5`
@@ -407,17 +407,17 @@ docs/research/
   - `agreement_sent_no_followup_days = 2`
   - `signed_no_activity_days = 5`
   - `ai_summary_lookback_days = 28`
-- [ ] Update `src/lib/rules/ctx.ts` (`buildRuleCtx`): make async, load thresholds from `app_settings` via `loadThresholds()` instead of `thresholds.ts` constants. Update all callers to `await buildRuleCtx(...)` (two callers: `/api/deals` route and `briefing.ts`).
-- [ ] Update `generate.ts`: replace `AI_SUMMARY_LOOKBACK_DAYS` import with value loaded from `app_settings`
-- [ ] `GET /api/settings` — returns all editable settings as `{ key, value, label }` objects
-- [ ] `PATCH /api/settings` — saves one or more settings (validate: must be positive integer)
-- [ ] Settings page (`/dashboard/settings`) renders all threshold values as editable number inputs
-- [ ] Settings save → immediately affects attention queue and AI summary lookback on next request
-- [ ] Sync log visible in settings: last 10 syncs, call counts, errors, timestamps
-- [ ] Note: sync schedule is NOT in settings — lives in `vercel.json`, requires redeploy to change
-- [ ] **Acceptance:** Mo changes "Attempted Contact" from 7 to 10 days → attention queue immediately reflects the new threshold without a code deploy.
-- [ ] git commit: `[M7] configurable thresholds — settings page`
-- [ ] git tag: `sprint-7-done`
+- [x] Update `src/lib/rules/ctx.ts` (`buildRuleCtx`): make async, load thresholds from `app_settings` via `loadThresholds()` instead of `thresholds.ts` constants. Update all callers to `await buildRuleCtx(...)` (two callers: `/api/deals` route and `briefing.ts`).
+- [x] Update `generate.ts`: replace `AI_SUMMARY_LOOKBACK_DAYS` import with value loaded from `app_settings`
+- [x] `GET /api/settings` — returns all editable settings as `{ key, value, label }` objects
+- [x] `PATCH /api/settings` — saves one or more settings (validate: must be positive integer)
+- [x] Settings page (`/dashboard/settings`) renders all threshold values as editable number inputs
+- [x] Settings save → immediately affects attention queue and AI summary lookback on next request
+- [x] Sync log visible in settings: last 10 syncs, call counts, errors, timestamps
+- [x] Note: sync schedule is NOT in settings — lives in `vercel.json`, requires redeploy to change
+- [x] **Acceptance:** Mo changes "Attempted Contact" from 7 to 10 days → attention queue immediately reflects the new threshold without a code deploy.
+- [x] git commit: `[M7] configurable thresholds — settings page`
+- [x] git tag: `sprint-7-done`
 
 **Not in M7:** In-app Product Roadmap page (the markdown file IS the roadmap — no in-app editor needed).
 

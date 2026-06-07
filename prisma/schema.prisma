@@ -17,6 +17,20 @@ enum SnoozeCategory {
   other
 }
 
+enum TaskCategory {
+  case
+  business
+  vendor
+  legal
+  networking
+  other
+}
+
+enum TaskStatus {
+  open
+  done
+}
+
 // Layer 1 cache — all deals in the pipeline
 model Deal {
   id               Int       @id @default(autoincrement())
@@ -44,6 +58,7 @@ model Deal {
   contacts   DealContact[]
   snoozes    DealSnooze[]
   aiSummary  AiSummary?
+  tasks      InternalTask[]
 
   @@map("deals")
 }
@@ -124,6 +139,24 @@ model AiSummary {
   deal Deal @relation(fields: [dealHubspotId], references: [hubspotId])
 
   @@map("ai_summaries")
+}
+
+// Internal tasks — replaces Trello; case-linked or general business tasks
+model InternalTask {
+  id            Int          @id @default(autoincrement())
+  dealHubspotId String?      @map("deal_hubspot_id") // null = general task (not case-linked)
+  title         String
+  notes         String?
+  status        TaskStatus   @default(open)
+  dueDate       DateTime?    @map("due_date") @db.Date
+  category      TaskCategory
+  source        String       @default("manual") @map("source") // always 'manual' in v1
+  createdAt     DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  completedAt   DateTime?    @map("completed_at") @db.Timestamptz(6)
+
+  deal Deal? @relation(fields: [dealHubspotId], references: [hubspotId])
+
+  @@map("internal_tasks")
 }
 
 // Configurable settings — stageMap + ownerMap seeded in M2b; thresholds added in M7

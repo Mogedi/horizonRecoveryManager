@@ -53,8 +53,11 @@ The function returned `5 + contactBatch + 5` — the last 5 was a guess. Real La
 **`_stageMap` parameter in `mapDeal` was misleading.**
 The mapper accepted stageMap but never used it. Stage IDs are stored as-is; names are resolved at display time. Passing stageMap to mapDeal implied it transforms stage — it doesn't. Parameter removed.
 
-**Cron auth in layer1/route.ts is incomplete.**
-Checking `x-vercel-cron-signature !== null` is not the same as verifying it. Vercel expects HMAC verification against `CRON_SECRET`. Blast radius for this app is just burned API quota (read-only). Accepted risk for now; fix before adding write capabilities.
+**Vercel Cron sends `Authorization: Bearer <CRON_SECRET>` — not `x-vercel-cron-signature`.**
+The previous code checked `x-vercel-cron-signature` presence (wrong header) and treated any non-null value as authorized (not verified). Correct check: `request.headers.get('authorization') === \`Bearer ${process.env.CRON_SECRET}\``. Set `CRON_SECRET` as a Vercel environment variable with a random 16+ char string. Fixed in M3 when adding cookie-based auth for the dashboard Sync Now button.
+
+**Dashboard sync button must use cookie auth, not password header.**
+The browser cannot safely read `DASHBOARD_PASSWORD` from env vars. Solution: the proxy already validates the `horizon_auth=1` cookie for all `/api/*` requests. Route handlers can additionally check `cookies().get('horizon_auth')?.value === '1'` via `next/headers`. Cron uses Bearer token; browser uses cookie; direct API calls can still use `x-dashboard-token` header.
 
 **Layer 2 has no concurrency protection.**
 Double-click "Load Full Detail" within 1 second creates two concurrent delete+reinsert transactions. One will corrupt the other's work. Acceptable risk for single-user tool. Fix if multiple users are ever added.

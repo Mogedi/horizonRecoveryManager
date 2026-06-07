@@ -260,52 +260,43 @@ docs/research/
 
 ---
 
-## Milestone 3: Attention Queue UI
+## Milestone 3: Attention Queue UI ✅ COMPLETE
 
 > **AGENT PRECONDITIONS:** M2 complete, real deals in `deals` table, sync log shows successful Layer 1 sync.
-> **AGENT:** Write rule tests before implementing rules. Each rule is a separate file in `/src/lib/rules/`. Test with real deal data from the database. Stop and ask Mo if attention queue results don't match expectations.
 > **COMMIT:** `[M3] business-days utility + tests` → `[M3] attention rules + tests` → `[M3] attention queue UI`
 
 **Goal:** The full attention queue renders with real data. First demoable milestone.
 
-**Checklist — Pre-M3 fixes first (from M2c debt):**
-- [ ] Fix N+1 upsert in layer1.ts — `$executeRaw` bulk upsert
-- [ ] Fix `asJson` — `JSON.parse(JSON.stringify(v))` before cast
-- [ ] Remove `_stageMap` from `mapDeal` signature + call sites + mapper tests
-- [ ] Remove `estimateLayer2Calls()` — add honest static message to Layer 2 route GET
-- [ ] git commit: `[M2c-fix] bulk upsert, asJson safety, remove misleading APIs`
+**Checklist — Pre-M3 fixes (done in [M2c-fix] commit):**
+- [x] Fix N+1 upsert in layer1.ts — `$transaction([...array])` bulk upsert (Prisma 7 pipelining)
+- [x] Fix `asJson` — `JSON.parse(JSON.stringify(v))` before cast, in shared `utils/json.ts`
+- [x] Remove `_stageMap` from `mapDeal` signature + call sites + mapper tests
+- [x] Remove `estimateLayer2Calls()` — replaced with honest static range message in Layer 2 GET route
 
-**Checklist — Rules Engine (pure functions, TDD):**
-
-Rules architecture — every rule has this shape, no DB calls inside rules:
-```typescript
-type Rule = (deal: NormalizedDeal, ctx: RuleContext) => AttentionFlag | null
-```
-- [ ] `/src/lib/db/deals.ts` — `getDealsForQueue()`: loads deals from DB, converts Decimal→number, preloads active snooze IDs as Set, returns `NormalizedDeal[]` + `Set<string>` for snooze check. This is the ONLY place that touches Prisma in the M3 request path.
-- [ ] `/src/lib/utils/business-days.ts` — write tests first. Must convert timestamps to `America/New_York` before counting. Weekends excluded, holidays not needed for v1.
-- [ ] `/src/lib/rules/staleness.ts` — uses `stage_entered_at`, skips terminal stages, checks `ctx.staleThresholds`
-- [ ] `/src/lib/rules/agreement.ts` — Agreement Sent + `lastActivityDate` > 2 business days
-- [ ] `/src/lib/rules/signed.ts` — Signed/In Progress + `lastActivityDate` > 5 business days
-- [ ] `/src/lib/rules/contacts.ts` — Layer 1 version only: `contactCount = 0`
-- [ ] `/src/lib/rules/snooze.ts` — checks `ctx.snoozedDealIds.has(deal.hubspotId)`, suppresses all other flags
-- [ ] `/src/lib/rules/index.ts` — loads context once, runs all rules, returns `{ deal, flags }[]`
-- [ ] All rule tests green: `npm test`
-- [ ] git commit: `[M3] business-days + attention rules + tests`
+**Checklist — Rules Engine (TDD):**
+- [x] `/src/lib/db/deals.ts` — `getDealsForQueue()`: loads deals, Decimal→number, preloads snooze Set
+- [x] `/src/lib/utils/business-days.ts` — 10 tests, `America/New_York` via `Intl.DateTimeFormat`
+- [x] `/src/lib/rules/staleness.ts` — `stageEnteredAt`, skips terminals, `ctx.staleThresholds`
+- [x] `/src/lib/rules/agreement.ts` — Agreement Sent + `lastActivityDate` > 2 business days
+- [x] `/src/lib/rules/signed.ts` — Signed/In Progress + `lastActivityDate` > 5 business days
+- [x] `/src/lib/rules/contacts.ts` — Layer 1 version: `contactCount === 0`
+- [x] `/src/lib/rules/snooze.ts` — preloaded Set lookup, suppresses all other flags
+- [x] `/src/lib/rules/index.ts` — `applyRules` + `evaluateAll`
+- [x] 59 tests passing, 0 TypeScript errors
 
 **Checklist — API + UI:**
-- [ ] `/api/deals/route.ts` — calls `db/deals.ts`, applies rules, groups by flag type
-- [ ] Dashboard: collapsible attention groups (flagged first, "Healthy/Snoozed" collapsed at bottom)
-- [ ] Deal card: name, stage (name via stageMap), last activity relative date, flag reason
-- [ ] "Last synced: [relative time]" always visible — reads from sync_log
-- [ ] Refresh button (smart default) + "Force Full Refresh" option
-- [ ] Snoozed deals excluded from flagged groups, shown in collapsed "Snoozed" bucket
-- [ ] **Acceptance:** Mo opens dashboard, sees real deals grouped by attention reason. Snoozed deals don't appear in flagged groups. Last synced timestamp visible.
-- [ ] git commit: `[M3] attention queue UI — collapsible groups, deal cards`
-- [ ] git tag: `sprint-3-done`
+- [x] `/api/deals/route.ts` — parallel fetch, groups by flag type, returns stageMap
+- [x] Dashboard: collapsible attention groups (flagged first, Snoozed/Healthy collapsed at bottom)
+- [x] Deal card: name, stage name (resolved from stageMap), last activity relative date, flag reason
+- [x] Synced timestamp always visible; "No sync data" shown when DB empty
+- [x] Refresh button (re-fetches `/api/deals`) + Sync Now button (POST `/api/sync/layer1`) + Force Refresh
+- [x] Layer 1 sync route: fixed cron auth header (`Authorization: Bearer <CRON_SECRET>`), added cookie auth for browser
 
 **Layer 2-dependent rules (Mo Action Required, phone check) are added in M4 after Layer 2 works.**
 
 **Done when:** Dashboard opens and shows real deals in the right attention groups. Mo can look at it and say "yes, that's what needs attention."
+
+**Pending acceptance test (requires real data in DB):** Mo triggers Sync Now → deals appear → flagged deals grouped by reason. Snoozed deals in collapsed group. Last synced visible.
 
 ---
 

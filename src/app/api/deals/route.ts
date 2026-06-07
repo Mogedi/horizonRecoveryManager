@@ -14,7 +14,7 @@ export async function GET() {
     getMoActionDealIds(),
   ])
 
-  const ctx = buildRuleCtx(stageMap, snoozedDealIds)
+  const ctx = await buildRuleCtx(stageMap, snoozedDealIds)
   const results = evaluateAll(deals, ctx)
 
   // Group by primary flag type. A deal with multiple flags appears under its first (highest-priority) flag.

@@ -6,8 +6,7 @@ import { upsertSummary } from '@/lib/db/summaries'
 import { getActivitiesForDeal } from '@/lib/db/activities'
 import { getContactsForDeal } from '@/lib/db/contacts'
 import { prisma } from '@/lib/db/client'
-import { loadStageMap } from '@/lib/db/settings'
-import { AI_SUMMARY_LOOKBACK_DAYS } from '@/lib/utils/thresholds'
+import { loadStageMap, loadThresholds } from '@/lib/db/settings'
 import type { SummaryJson } from './summary'
 
 export async function runSummaryGeneration(hubspotId: string): Promise<{
@@ -29,10 +28,11 @@ export async function runSummaryGeneration(hubspotId: string): Promise<{
   })
   if (!deal) throw new AIError(`Deal not found: ${hubspotId}`)
 
-  const [contacts, activities, stageMap] = await Promise.all([
+  const [contacts, activities, stageMap, thresholds] = await Promise.all([
     getContactsForDeal(hubspotId),
     getActivitiesForDeal(hubspotId),
     loadStageMap(),
+    loadThresholds(),
   ])
 
   const normalizedDeal = {
@@ -52,7 +52,7 @@ export async function runSummaryGeneration(hubspotId: string): Promise<{
     contacts,
     activities,
     stageMap,
-    AI_SUMMARY_LOOKBACK_DAYS
+    thresholds.aiSummaryLookbackDays
   )
 
   const rawText = await callClaude(prompt)

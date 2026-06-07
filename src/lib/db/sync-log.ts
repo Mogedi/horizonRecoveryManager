@@ -54,6 +54,24 @@ export async function failSyncLog(id: number, error: string): Promise<void> {
   })
 }
 
+export type SyncLogRow = {
+  id: number
+  syncType: string | null
+  apiCallsMade: number | null
+  dealsSynced: number | null
+  startedAt: Date
+  completedAt: Date | null
+  error: string | null
+}
+
+export async function getRecentSyncs(limit = 10): Promise<SyncLogRow[]> {
+  return prisma.syncLog.findMany({
+    orderBy: { startedAt: 'desc' },
+    take: limit,
+    select: { id: true, syncType: true, apiCallsMade: true, dealsSynced: true, startedAt: true, completedAt: true, error: true },
+  })
+}
+
 // Returns the most recent completed sync timestamp, or null if never synced.
 export async function getLastSyncedAt(): Promise<Date | null> {
   const row = await prisma.syncLog.findFirst({

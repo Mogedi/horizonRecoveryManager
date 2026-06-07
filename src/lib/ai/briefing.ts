@@ -61,7 +61,7 @@ export async function runBriefingGeneration(): Promise<string> {
     getMoActionDealIds(),
   ])
 
-  const ctx = buildRuleCtx(stageMap, snoozedDealIds)
+  const ctx = await buildRuleCtx(stageMap, snoozedDealIds)
   const results = evaluateAll(deals, ctx)
   const flagged = results.filter(r => r.flags.length > 0 && r.flags[0].type !== 'snoozed')
 

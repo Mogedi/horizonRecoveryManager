@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback, useRef, Suspense } from 'react'
-import { useSearchParams } from 'next/navigation'
+import { useSearchParams, useRouter } from 'next/navigation'
 import DealPanel from '@/components/DealPanel'
 
 type AttentionFlag = {
@@ -260,6 +260,7 @@ function BriefingModal({ onClose }: { onClose: () => void }) {
 
 function DashboardContent() {
   const searchParams = useSearchParams()
+  const router = useRouter()
   const [data, setData] = useState<DealsResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -306,14 +307,15 @@ function DashboardContent() {
     fetchDeals()
   }, [fetchDeals])
 
-  // Open deal panel when navigated from tasks page with ?deal=<hubspotId>
+  // Open deal panel when navigated from tasks page with ?deal=<hubspotId>; clear URL after
   useEffect(() => {
     if (!data || dealParamHandled.current) return
     const dealId = searchParams.get('deal')
     if (!dealId) return
     dealParamHandled.current = true
     setSelectedDealId(dealId)
-  }, [data, searchParams])
+    router.replace('/dashboard')
+  }, [data, searchParams, router])
 
   const orderedGroups = DISPLAY_ORDER.filter(key => data?.groups[key]?.length).map(key => ({
     key,

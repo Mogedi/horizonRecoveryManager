@@ -679,32 +679,32 @@ Activity history (last {lookbackDays} days, most recent first):
 
 ### Daily Briefing Prompt
 
+Generated in `src/lib/ai/briefing.ts` (`runBriefingGeneration()`). Output is prose, not JSON. Uses `callClaude(prompt, BRIEFING_SYSTEM, 2048)` — separate system prompt and higher token limit than deal summaries.
+
+**System prompt (prose mode):** "You are a business analyst for Horizon Recovery LLC. Write a concise, action-oriented morning briefing in plain text. Be specific — name deals, name tasks, call out overdue items. No markdown headers."
+
+**Prompt structure built dynamically:**
 ```
-You are generating a Monday morning briefing for Mo, the owner of Horizon Recovery.
+DAILY BRIEFING — {weekday}, {month} {day}, {year}
 
-Mo needs to know:
-1. What happened since the last briefing?
-2. What cases need his personal attention today?
-3. What employee-level issues should he be aware of?
-4. What business improvements or observations are worth noting?
+ATTENTION QUEUE ({N} deals):
+- {deal name} [{stage}] ⚠ Mo Action Required: {flag message}
+- ...
 
-Write in plain, direct language. Use short bullets. Be practical, not diplomatic.
+OPEN TASKS ({N}):
+- [case] {title} — {deal name} (due {date})
+- ...
 
----
-Total active deals: {count} across {stages}
+EMPLOYEE ACTIVITY (last 7 days):        ← silently omitted if no deal_activities exist
+- {owner name}: {N} notes, {N} calls
 
-Deals needing attention (Layer 1 summary):
-{list of flagged deals with reason}
-
-High-value stage deals with recent activity (Layer 2 available):
-{summaries of Engaged/Interested, Agreement Sent, Signed/In Progress deals}
-
-Open Mo tasks:
-{list of internal tasks assigned to Mo}
-
-Note: Employee activity stats (notes/calls per person) require querying deal_activities by owner.
-Add this section in M6 once deal_activities is populated. Silently omit if fewer than 7 days of data exist — do not include placeholder text.
+Write a concise morning briefing for Mo (2–3 short paragraphs).
+Start with the most urgent items. Then cover open tasks.
+If employee activity is included, close with a brief comment on team activity.
+Be specific and actionable. No generic advice.
 ```
+
+Rule context for briefing uses `buildRuleCtx()` — same as `/api/deals`, so thresholds stay consistent. Both update automatically when M7 moves thresholds to `app_settings`.
 
 ### Cache Invalidation Strategy
 
@@ -898,7 +898,8 @@ AI summary cache: never auto-regenerate. Show "New activity since last summary" 
 │       │   ├── layer1.ts              # Batch deal sync (smart + full refresh modes)
 │       │   └── layer2.ts              # Per-deal sync (on demand only)
 │       ├── rules/                     # Each rule = one file = one exported function
-│       │   ├── index.ts               # applyRules + evaluateAll — snooze first, then all others
+│       │   ├── index.ts               # applyRules + evaluateAll — snooze first, then all others; re-exports buildRuleCtx
+│       │   ├── ctx.ts                 # buildRuleCtx() — single place where RuleContext is built from thresholds (M7: becomes async, reads app_settings)
 │       │   ├── types.ts               # NormalizedDeal, RuleContext, AttentionFlag, Rule types
 │       │   ├── staleness.ts           # Stage Stale (stage_entered_at, skips terminals)
 │       │   ├── contacts.ts            # No Contacts (Layer 1: contactCount=0; Layer 2 upgrade in M4)
@@ -909,7 +910,7 @@ AI summary cache: never auto-regenerate. Show "New activity since last summary" 
 │       │   # NOTE: no documents.ts — Document checklist deferred; not worth building for 18 deals
 │       ├── ai/
 │       │   ├── errors.ts              # AIError class — isolated so tests don't import SDK (M5 ✅)
-│       │   ├── client.ts              # Anthropic SDK wrapper — callClaude(prompt, systemPrompt?) (M5 ✅)
+│       │   ├── client.ts              # callClaude(prompt, systemPrompt?, maxTokens?) — 1024 default, 2048 for briefing (M5 ✅)
 │       │   ├── prompts.ts             # buildSummaryPrompt() — lookback filter + JSON instruction (M5 ✅)
 │       │   ├── summary.ts             # parseSummaryResponse() + SummaryJson type (M5 ✅)
 │       │   ├── generate.ts            # runSummaryGeneration() — orchestrates prompt+call+parse+upsert (M5 ✅)
@@ -988,6 +989,7 @@ Vercel Cron configuration (`vercel.json`) — **Pro plan only**:
 /api/deals/[id]/summary   POST  -- generate/regenerate AI summary
 /api/briefing             POST  -- generate Daily Briefing
 /api/tasks                GET, POST
+/api/tasks/count          GET  -- open task count (used by sidebar badge)
 /api/tasks/[id]           PATCH, DELETE
 /api/settings             GET, PATCH
 /api/auth/login           POST

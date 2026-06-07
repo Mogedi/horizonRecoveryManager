@@ -10,12 +10,16 @@ const DEFAULT_SYSTEM =
   'You analyze HubSpot CRM activity for deals to help the owner prioritize their attention. ' +
   'Always respond with valid JSON as instructed — no markdown, no preamble.'
 
-export async function callClaude(prompt: string, systemPrompt?: string): Promise<string> {
+export async function callClaude(
+  prompt: string,
+  systemPrompt?: string,
+  maxTokens = 1024
+): Promise<string> {
   let response
   try {
     response = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 1024,
+      max_tokens: maxTokens,
       system: systemPrompt ?? DEFAULT_SYSTEM,
       messages: [{ role: 'user', content: prompt }],
     })

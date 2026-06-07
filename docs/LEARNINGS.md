@@ -158,3 +158,28 @@ M5 shipped with M6 planned to show "Accept / Dismiss" buttons for tasks auto-cre
 
 **Prisma upsert `generatedAt` uses `new Date()` at call time, not DB server time.**
 The `upsertSummary` function sets `generatedAt: new Date()` (JavaScript). If the app server and DB server clocks drift by >1 second, staleness comparisons against `lastActivityDate` (which is UTC from HubSpot) could be off. In practice, Neon and Vercel are both AWS us-east-1 and clock drift is negligible. Not worth fixing, but if stale badges appear on fresh summaries, check this first.
+
+---
+
+## M6 Retrospective Findings (Post-M6 Audit)
+
+**`callClaude` `max_tokens: 1024` is too low for Daily Briefing prose.**
+1024 tokens is fine for JSON summaries (~400-600 tokens typical). Daily Briefing prose covering 10+ deals + tasks + employee activity can exceed 1024 tokens. When `stop_reason === 'max_tokens'`, `callClaude` throws `AIError` and the whole briefing fails. Added an optional `maxTokens` parameter (default: 1024). Briefing calls with 2048. Apply this rule to any future AI call that returns longer prose: estimate the output length and set `maxTokens` explicitly.
+
+**Repeated rule context construction is a M7 trap.**
+Both `/api/deals` route and `briefing.ts` built the same `RuleContext` object with the same 8 imports from `thresholds.ts`. When M7 moves thresholds to `app_settings`, both files would need updating independently — easy to miss one. Fixed by extracting `buildRuleCtx()` into `src/lib/rules/ctx.ts`. In M7, only `ctx.ts` changes. This is the correct pattern: one place per concern.
+
+**`useSearchParams` in Next.js App Router requires a Suspense boundary.**
+A page component using `useSearchParams()` causes the page to be treated as dynamically rendered. Without `<Suspense>`, Next.js throws a build error ("useSearchParams should be wrapped in a suspense boundary"). Fix: create an inner component with the logic, export a shell component that wraps it in `<Suspense fallback={null}>`. Pattern: `DashboardContent` (has the hook) wrapped by `DashboardPage` (exports with Suspense).
+
+**URL query params for cross-page navigation must be cleared after use.**
+Navigating from tasks page to `/dashboard?deal=<id>` opens the deal panel correctly. But if Mo navigates away and back, the component remounts, the `dealParamHandled` ref resets, and the panel reopens. Fix: after handling the `?deal=` param, call `router.replace('/dashboard')` to remove it from the URL. This is the correct pattern for any "trigger once" navigation intent encoded in URL params.
+
+**Dead exports from DB modules create confusion.**
+`getOpenTaskCount()` was created in `tasks.ts` but `TaskCountBadge` fetched the full `/api/tasks` response just to count. An unused export signals either missing usage or wrong abstraction. When a lightweight count is needed: create a `/api/tasks/count` route and update the badge. An API surface for the badge should be the smallest call, not a byproduct of a larger fetch.
+
+**Different AI use cases need different prompts AND different token limits.**
+`callClaude` originally had one system prompt and one max_tokens. Deal summaries (JSON, ~600 tokens) and Daily Briefing (prose, ~1000+ tokens) are different shapes. The fix: `callClaude(prompt, systemPrompt?, maxTokens?)`. Future AI features should explicitly declare their system prompt (JSON vs prose vs structured analysis) and their token budget. Never rely on a one-size-fits-all default.
+
+**Employee activity silently omitting when `authorOwnerId` is null.**
+`deal_activities.author_owner_id` can be null (e.g., automated activities, JustCall tasks with no assigned owner). These rows get bucketed under `'unknown'` in the map. If the ownerMap has no entry for 'unknown', the name stays as the literal string `'unknown'`. In practice this is fine — Mo knows who his team is. But be aware that activity from non-team sources (integrations, bots) shows as "unknown" in the briefing. Not worth filtering without more data on what sources produce null authorOwnerId.`

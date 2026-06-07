@@ -7,6 +7,7 @@ import type { NormalizedDeal, RuleContext, AttentionFlag } from './types'
 
 export type { NormalizedDeal, RuleContext, AttentionFlag }
 export type { AttentionFlagType } from './types'
+export { buildRuleCtx } from './ctx'
 
 export type DealWithFlags = {
   deal: NormalizedDeal

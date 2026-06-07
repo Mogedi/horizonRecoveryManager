@@ -6,10 +6,10 @@ export default function TaskCountBadge() {
   const [count, setCount] = useState<number | null>(null)
 
   useEffect(() => {
-    fetch('/api/tasks')
+    fetch('/api/tasks/count')
       .then(r => r.ok ? r.json() : null)
       .then(data => {
-        if (data?.open) setCount(data.open.length)
+        if (typeof data?.count === 'number') setCount(data.count)
       })
       .catch(() => {})
   }, [])

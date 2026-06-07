@@ -2,14 +2,8 @@ import { prisma } from '@/lib/db/client'
 import { getOpenTasks } from '@/lib/db/tasks'
 import { loadStageMap, loadOwnerMap } from '@/lib/db/settings'
 import { getDealsForQueue } from '@/lib/db/deals'
-import { evaluateAll } from '@/lib/rules'
+import { evaluateAll, buildRuleCtx } from '@/lib/rules'
 import { getMoActionDealIds } from '@/lib/db/summaries'
-import {
-  STAGE_STALE_THRESHOLDS_DAYS,
-  TERMINAL_STAGE_IDS,
-  AGREEMENT_SENT_NO_FOLLOWUP_DAYS,
-  SIGNED_IN_PROGRESS_NO_ACTIVITY_DAYS,
-} from '@/lib/utils/thresholds'
 import { callClaude } from './client'
 import { AIError } from './errors'
 
@@ -67,17 +61,7 @@ export async function runBriefingGeneration(): Promise<string> {
     getMoActionDealIds(),
   ])
 
-  const ctx = {
-    today,
-    timezone: 'America/New_York' as const,
-    stageMap,
-    staleThresholds: STAGE_STALE_THRESHOLDS_DAYS,
-    agreementNoFollowupDays: AGREEMENT_SENT_NO_FOLLOWUP_DAYS,
-    signedNoActivityDays: SIGNED_IN_PROGRESS_NO_ACTIVITY_DAYS,
-    terminalStageIds: TERMINAL_STAGE_IDS,
-    snoozedDealIds,
-  }
-
+  const ctx = buildRuleCtx(stageMap, snoozedDealIds)
   const results = evaluateAll(deals, ctx)
   const flagged = results.filter(r => r.flags.length > 0 && r.flags[0].type !== 'snoozed')
 
@@ -132,7 +116,7 @@ export async function runBriefingGeneration(): Promise<string> {
 
   let text: string
   try {
-    text = await callClaude(prompt, BRIEFING_SYSTEM)
+    text = await callClaude(prompt, BRIEFING_SYSTEM, 2048)
   } catch (err) {
     if (err instanceof AIError) throw err
     throw new AIError(`Briefing generation failed: ${err instanceof Error ? err.message : String(err)}`)

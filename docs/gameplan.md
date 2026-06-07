@@ -394,7 +394,7 @@ docs/research/
 
 **Goal:** Configurable staleness thresholds without requiring a code deploy.
 
-**What changes in M7:** All rules currently read from `thresholds.ts` constants passed as `RuleContext` fields. In M7, the `/api/deals` route loads the same values from `app_settings` instead of hardcoded constants. Rules don't change at all — only the context construction changes.
+**What changes in M7:** All rules currently read from `thresholds.ts` constants passed as `RuleContext` fields. In M7, `buildRuleCtx()` (in `src/lib/rules/ctx.ts`) loads the same values from `app_settings` instead of hardcoded constants. Rules don't change at all — only `ctx.ts` changes. Both `/api/deals` and `briefing.ts` automatically pick up the new values since they both call `buildRuleCtx()`.
 
 **Checklist:**
 - [ ] Seed `app_settings` with all threshold defaults (if not already done in M2b):
@@ -407,7 +407,7 @@ docs/research/
   - `agreement_sent_no_followup_days = 2`
   - `signed_no_activity_days = 5`
   - `ai_summary_lookback_days = 28`
-- [ ] Update `/api/deals` route: replace hardcoded constants with `loadThresholds()` from `app_settings`
+- [ ] Update `src/lib/rules/ctx.ts` (`buildRuleCtx`): make async, load thresholds from `app_settings` via `loadThresholds()` instead of `thresholds.ts` constants. Update all callers to `await buildRuleCtx(...)` (two callers: `/api/deals` route and `briefing.ts`).
 - [ ] Update `generate.ts`: replace `AI_SUMMARY_LOOKBACK_DAYS` import with value loaded from `app_settings`
 - [ ] `GET /api/settings` — returns all editable settings as `{ key, value, label }` objects
 - [ ] `PATCH /api/settings` — saves one or more settings (validate: must be positive integer)

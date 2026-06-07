@@ -3,6 +3,7 @@ import { getDealsForQueue } from '@/lib/db/deals'
 import { evaluateAll } from '@/lib/rules'
 import { loadStageMap } from '@/lib/db/settings'
 import { getLastSyncedAt } from '@/lib/db/sync-log'
+import { getMoActionDealIds } from '@/lib/db/summaries'
 import {
   STAGE_STALE_THRESHOLDS_DAYS,
   TERMINAL_STAGE_IDS,
@@ -12,10 +13,11 @@ import {
 import type { DealWithFlags } from '@/lib/rules'
 
 export async function GET() {
-  const [{ deals, snoozedDealIds }, stageMap, lastSyncedAt] = await Promise.all([
+  const [{ deals, snoozedDealIds }, stageMap, lastSyncedAt, moActionIds] = await Promise.all([
     getDealsForQueue(),
     loadStageMap(),
     getLastSyncedAt(),
+    getMoActionDealIds(),
   ])
 
   const ctx = {
@@ -32,10 +34,16 @@ export async function GET() {
   const results = evaluateAll(deals, ctx)
 
   // Group by primary flag type. A deal with multiple flags appears under its first (highest-priority) flag.
+  // mo_action_required is injected from ai_summaries — it overrides other groupings for those deals.
   // Healthy = no flags. Snoozed = in snoozed bucket.
   const groups: Record<string, DealWithFlags[]> = {}
   for (const result of results) {
-    const key = result.flags.length > 0 ? result.flags[0].type : 'healthy'
+    let key: string
+    if (moActionIds.has(result.deal.hubspotId)) {
+      key = 'mo_action_required'
+    } else {
+      key = result.flags.length > 0 ? result.flags[0].type : 'healthy'
+    }
     if (!groups[key]) groups[key] = []
     groups[key].push(result)
   }

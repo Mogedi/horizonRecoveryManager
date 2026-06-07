@@ -4,11 +4,12 @@ import { loadStageMap, loadOwnerMap } from '@/lib/db/settings'
 import { getActivitiesForDeal, getLayer2SyncedAt } from '@/lib/db/activities'
 import { getContactsForDeal } from '@/lib/db/contacts'
 import { getActiveSnooze, getSnoozeHistory } from '@/lib/db/snoozes'
+import { getLatestSummary } from '@/lib/db/summaries'
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
 
-  const [deal, activities, contacts, snooze, snoozeHistory, stageMap, ownerMap] = await Promise.all([
+  const [deal, activities, contacts, snooze, snoozeHistory, stageMap, ownerMap, summary] = await Promise.all([
     prisma.deal.findUnique({
       where: { hubspotId: id },
       select: {
@@ -34,6 +35,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     getSnoozeHistory(id),
     loadStageMap(),
     loadOwnerMap(),
+    getLatestSummary(id),
   ])
 
   if (!deal) return NextResponse.json({ error: 'Not found' }, { status: 404 })
@@ -98,5 +100,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       wokeAt: s.wokeAt,
     })),
     layer2SyncedAt,
+    summaryData: summary
+      ? { json: summary.summaryJson, generatedAt: summary.generatedAt }
+      : null,
   })
 }

@@ -40,6 +40,12 @@ type GroupConfig = {
 }
 
 const FLAG_CONFIG: Record<string, GroupConfig> = {
+  mo_action_required: {
+    label: 'Mo Action Required',
+    headerCls: 'bg-red-50 border-red-200 text-red-900',
+    dotCls: 'bg-red-600',
+    cardBorderCls: 'border-red-300',
+  },
   agreement_no_followup: {
     label: 'Agreement — No Follow-Up',
     headerCls: 'bg-red-50 border-red-200 text-red-800',
@@ -79,6 +85,7 @@ const FLAG_CONFIG: Record<string, GroupConfig> = {
 }
 
 const DISPLAY_ORDER = [
+  'mo_action_required',
   'agreement_no_followup',
   'stage_stale',
   'signed_no_activity',

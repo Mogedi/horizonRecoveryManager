@@ -53,6 +53,16 @@ type DealDetail = {
   syncedAt: string
 }
 
+type SummaryJson = {
+  current_status: string
+  last_meaningful_activity: string
+  blockers: string[]
+  who_needs_something: string | null
+  suggested_next_step: string
+  mo_action_required: boolean
+  documents_mentioned_missing: string[]
+}
+
 type PanelData = {
   deal: DealDetail
   activities: Activity[]
@@ -60,6 +70,7 @@ type PanelData = {
   snooze: Snooze | null
   snoozeHistory: SnoozeHistoryItem[]
   layer2SyncedAt: string | null
+  summaryData: { json: SummaryJson; generatedAt: string } | null
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -177,6 +188,97 @@ function ContactItem({ contact }: { contact: Contact }) {
       {contact.phoneNumbers.length === 0 && contact.emailList.length === 0 && (
         <p className="text-xs text-gray-400 mt-0.5">No contact info</p>
       )}
+    </div>
+  )
+}
+
+// ─── AI Summary Block ─────────────────────────────────────────────────────────
+
+function AiSummaryBlock({
+  summary,
+  generatedAt,
+  lastActivityDate,
+  onRegenerate,
+  regenerating,
+}: {
+  summary: SummaryJson
+  generatedAt: string
+  lastActivityDate: string | null
+  onRegenerate: () => void
+  regenerating: boolean
+}) {
+  const generatedDate = new Date(generatedAt)
+  const isStale = lastActivityDate && new Date(lastActivityDate) > generatedDate
+
+  const diffMs = Date.now() - generatedDate.getTime()
+  const diffMins = Math.floor(diffMs / 60_000)
+  const timeAgo =
+    diffMins < 1 ? 'just now' :
+    diffMins < 60 ? `${diffMins}m ago` :
+    `${Math.floor(diffMins / 60)}h ago`
+
+  return (
+    <div className="mb-4 rounded-lg border border-gray-200 overflow-hidden">
+      {summary.mo_action_required && (
+        <div className="px-4 py-2 bg-red-50 border-b border-red-100 text-xs font-semibold text-red-700">
+          Mo Action Required
+        </div>
+      )}
+
+      <div className="px-4 py-3 space-y-3 text-sm text-gray-700">
+        <div>
+          <span className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-0.5">Status</span>
+          <p>{summary.current_status}</p>
+        </div>
+        <div>
+          <span className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-0.5">Last Activity</span>
+          <p>{summary.last_meaningful_activity}</p>
+        </div>
+        {summary.blockers.length > 0 && (
+          <div>
+            <span className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-0.5">Blockers</span>
+            <ul className="list-disc list-inside space-y-0.5">
+              {summary.blockers.map((b, i) => <li key={i}>{b}</li>)}
+            </ul>
+          </div>
+        )}
+        {summary.who_needs_something && (
+          <div>
+            <span className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-0.5">Who Needs Something</span>
+            <p>{summary.who_needs_something}</p>
+          </div>
+        )}
+        <div>
+          <span className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-0.5">Suggested Next Step</span>
+          <p className="font-medium">{summary.suggested_next_step}</p>
+        </div>
+        {summary.documents_mentioned_missing.length > 0 && (
+          <div>
+            <span className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-0.5">Documents Missing</span>
+            <ul className="list-disc list-inside space-y-0.5">
+              {summary.documents_mentioned_missing.map((d, i) => <li key={i}>{d}</li>)}
+            </ul>
+          </div>
+        )}
+      </div>
+
+      <div className="px-4 py-2 border-t border-gray-100 flex items-center justify-between">
+        <div className="flex items-center gap-2 text-xs text-gray-400">
+          <span>Generated {timeAgo}</span>
+          {isStale && (
+            <span className="px-1.5 py-0.5 bg-yellow-50 border border-yellow-200 text-yellow-700 rounded text-xs">
+              New activity since summary
+            </span>
+          )}
+        </div>
+        <button
+          onClick={onRegenerate}
+          disabled={regenerating}
+          className="text-xs text-gray-400 hover:text-gray-700 disabled:opacity-40"
+        >
+          {regenerating ? '…' : '↻ Regenerate'}
+        </button>
+      </div>
     </div>
   )
 }
@@ -307,6 +409,9 @@ export default function DealPanel({
   const [snoozeRemoving, setSnoozeRemoving] = useState(false)
   const [showSnoozeHistory, setShowSnoozeHistory] = useState(false)
 
+  const [summaryState, setSummaryState] = useState<'idle' | 'loading' | 'done' | 'error'>('idle')
+  const [summaryError, setSummaryError] = useState<string | null>(null)
+
   const fetchDeal = useCallback(async () => {
     setError(null)
     try {
@@ -315,6 +420,7 @@ export default function DealPanel({
       const json = await res.json()
       setData(json)
       if (json.layer2SyncedAt) setLayer2State('done')
+      if (json.summaryData) setSummaryState('done')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load deal')
     } finally {
@@ -358,7 +464,24 @@ export default function DealPanel({
     }
   }
 
-  const { deal, activities, contacts, snooze, snoozeHistory } = data ?? {}
+  const generateSummary = async () => {
+    setSummaryState('loading')
+    setSummaryError(null)
+    try {
+      const res = await fetch(`/api/deals/${hubspotId}/summary`, { method: 'POST' })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body?.error ?? `Failed: ${res.status}`)
+      }
+      await fetchDeal()
+      setSummaryState('done')
+    } catch (e) {
+      setSummaryError(e instanceof Error ? e.message : 'Summary generation failed')
+      setSummaryState('error')
+    }
+  }
+
+  const { deal, activities, contacts, snooze, snoozeHistory, summaryData } = data ?? {}
 
   return (
     <>
@@ -486,6 +609,49 @@ export default function DealPanel({
                 <div className="mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
                   {layer2Error}
                 </div>
+              )}
+
+              {/* AI Summary */}
+              {layer2State === 'done' && (
+                <>
+                  <SectionHeader title="AI Summary" />
+                  {summaryState === 'idle' && (
+                    <button
+                      onClick={generateSummary}
+                      className="w-full py-2 text-sm text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 mb-4"
+                    >
+                      Generate AI Summary
+                    </button>
+                  )}
+                  {summaryState === 'loading' && (
+                    <div className="mb-4 px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-500 animate-pulse">
+                      Generating summary — this may take up to 20 seconds…
+                    </div>
+                  )}
+                  {summaryState === 'error' && summaryError && (
+                    <div className="mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                      {summaryError}
+                      <button onClick={generateSummary} className="ml-2 underline">Retry</button>
+                    </div>
+                  )}
+                  {summaryState === 'done' && summaryData && (
+                    <AiSummaryBlock
+                      summary={summaryData.json}
+                      generatedAt={summaryData.generatedAt}
+                      lastActivityDate={deal.lastActivityDate}
+                      onRegenerate={generateSummary}
+                      regenerating={false}
+                    />
+                  )}
+                  {summaryState === 'done' && !summaryData && (
+                    <button
+                      onClick={generateSummary}
+                      className="w-full py-2 text-sm text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 mb-4"
+                    >
+                      Generate AI Summary
+                    </button>
+                  )}
+                </>
               )}
 
               {/* Contacts */}

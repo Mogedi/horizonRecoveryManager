@@ -307,70 +307,95 @@ docs/research/
 ## Milestone 5: AI Summary
 
 > **AGENT PRECONDITIONS:** M4 complete. `ANTHROPIC_API_KEY` set in `.env.local`. Layer 2 working for at least one real deal (activities + contacts in DB).
-> **AGENT:** Build prompts.ts first, verify prompt output manually before wiring to Claude API. Summary button is ALWAYS manual — no auto-trigger. Test `is_stale` flag logic. Do NOT add Daily Briefing here — that ships in M6.
-> **COMMIT:** `[M5] AI client + prompts` → `[M5] per-deal summary — generate + cache` → `[M5] mo-action flag wired to /api/deals`
+> **AGENT:** Schema migration first. Build `prompts.ts` next — print the constructed prompt and inspect it manually before wiring the Claude API. Use JSON structured output (not markdown sections) — the prompt must ask for a JSON object with exact keys. Write parsing tests before wiring the API. Summary button is ALWAYS manual — no auto-trigger. Do NOT add Daily Briefing here (M6). Do NOT create `internal_tasks` rows here (M6).
+> **COMMIT:** `[M5] ai_summaries schema migration` → `[M5] AI client + prompts + tests` → `[M5] per-deal summary — generate + cache` → `[M5] mo-action group wired to /api/deals`
 
 **Goal:** Per-deal AI summaries working. Mo can get full deal context from Claude in one click.
 
-**Checklist:**
+**Checklist — Schema (must be first):**
+- [ ] Add `AiSummary` model to `prisma/schema.prisma`:
+  - `id`, `dealHubspotId` (FK → deals), `summaryJson JSONB`, `generatedAt TIMESTAMPTZ`
+  - **No `is_stale` column** — compute staleness at read time: `deal.lastActivityDate > summary.generatedAt`
+  - **No `activity_count_at_gen`** — unused
+- [ ] `npm run db:migrate` → migration name: `add-ai-summaries`
+- [ ] `npm run db:generate`
+
+**Checklist — AI Library (TDD):**
 - [ ] `npm install @anthropic-ai/sdk`
-- [ ] `/lib/ai/summary.ts` — builds prompt from Layer 2 data, calls Claude API, parses 7-field response
-- [ ] AI summary stored in `ai_summaries` table (JSON)
-- [ ] "Generate AI Summary" button in deal panel — always manual, no auto-trigger
-- [ ] Summary renders in panel with correct bullet sections:
-  - Current Status
-  - Last Meaningful Activity
-  - Blockers
-  - Who Needs Something
-  - Suggested Next Step
-  - Mo Action Required (yes/no)
-  - Documents Likely Missing
-- [ ] "Generated [X minutes ago]" timestamp shown
-- [ ] "New activity since summary" badge shown when `deal.last_activity_date > summary.generated_at`
-- [ ] "↻ Regenerate" button triggers fresh summary
-- [ ] **Mo Action Required group in `/api/deals`:** after M5 ships, deals where `ai_summaries.summary_json.mo_action_required = true` appear in a "Mo Action Required" group (urgent). Add to `/api/deals` response once `ai_summaries` table has data.
-- [ ] "Mo Action Required" → create suggested `internal_tasks` row with `source: 'ai_detected'` (accept/dismiss in M6 when tasks page ships)
-- [ ] Suggested follow-up questions (3–5 presets below summary) — low priority, add if straightforward
-- [ ] **Acceptance:** Mo clicks "Generate AI Summary" on one Signed/In Progress deal → 7-section response in under 15 seconds. Badge visible on next sync if new HubSpot activity exists. Regenerate button works.
+- [ ] `/src/lib/ai/client.ts` — thin Anthropic SDK wrapper, throws `AIError` on failure
+- [ ] `/src/lib/ai/prompts.ts` — `buildSummaryPrompt(deal, contacts, activities, lookbackDays)`:
+  - Filters activities to `lookbackDays` window (default from `AI_SUMMARY_LOOKBACK_DAYS` in `thresholds.ts`)
+  - Prompt instructs Claude to return **a JSON object** with exact keys:
+    `current_status`, `last_meaningful_activity`, `blockers` (array), `who_needs_something`, `suggested_next_step`, `mo_action_required` (boolean), `documents_mentioned_missing` (array)
+  - **Write the test first:** `prompts.test.ts` — verify prompt contains deal name, stage, contacts, activity bodies, and the JSON instruction string before calling Claude
+- [ ] `/src/lib/ai/summary.ts` — orchestrates: build prompt → call Claude → parse JSON response → upsert into `ai_summaries`
+  - Parse: `JSON.parse(response)` — throw `AIError` if malformed
+  - Upsert: delete old summary for deal + insert new one (no versioning in v1)
+  - **Write parsing tests first** (mock Claude response, verify field extraction) before wiring real API
+
+**Checklist — API + UI:**
+- [ ] `/src/lib/db/summaries.ts` — `getLatestSummary(hubspotId)`, `upsertSummary(hubspotId, json)`
+- [ ] `POST /api/deals/[id]/summary` — cookie-authed, calls `runSummaryGeneration(id)`, returns summary
+- [ ] Add `summaryData` to `GET /api/deals/[id]` response (latest summary if exists)
+- [ ] "Generate AI Summary" button in DealPanel — visible when Layer 2 is loaded (contacts + activities needed)
+- [ ] Summary renders in panel: 7 sections as labeled bullet groups
+- [ ] "Generated X minutes ago" timestamp below summary
+- [ ] **Stale badge:** show "New activity since summary — consider regenerating" when `deal.lastActivityDate > summary.generatedAt`
+- [ ] "↻ Regenerate" button — always manual, re-calls `/api/deals/[id]/summary`
+- [ ] **Mo Action Required group in `/api/deals`:** load all `ai_summaries` with `mo_action_required = true` as a Set; add to groups as `'mo_action_required'` (urgent, shown first). **No `internal_tasks` row creation here** — that is M6.
+- [ ] Add `'mo_action_required'` to `FLAG_CONFIG` and `DISPLAY_ORDER` in `dashboard/page.tsx`
+- [ ] **Acceptance:** Mo clicks "Generate AI Summary" on a Signed/In Progress deal with Layer 2 loaded → receives 7-section JSON summary in under 20 seconds. Stale badge appears after a Layer 1 sync that updates `lastActivityDate`. Mo Action Required group appears in dashboard if any summary has `mo_action_required: true`.
 - [ ] git commit: `[M5] per-deal AI summary`
 - [ ] git tag: `sprint-5-done`
 
-**Not in M5:** Daily Briefing (M6), document checklist inference (deferred indefinitely), Mo Action Required keyword heuristics (not building — AI handles it).
+**Not in M5:** Daily Briefing (M6), internal_tasks creation (M6), suggested follow-up questions (P2), document checklist (deferred indefinitely), Mo Action Required keyword heuristics (not building — AI handles it).
 
-**Done when:** Mo can click "Generate AI Summary" on any Signed/In Progress deal and get a useful, actionable summary.
+**Done when:** Mo can click "Generate AI Summary" on any deal with Layer 2 loaded and get a useful, actionable summary in under 20 seconds.
 
 ---
 
 ## Milestone 6: Tasks + Daily Briefing
 
 > **AGENT PRECONDITIONS:** M5 complete. `ai_summaries` table has real data from at least 3 deals.
-> **AGENT:** Tasks table migration before any UI work. Daily Briefing prompt built and verified manually before wiring to Claude. Test task CRUD with real DB.
-> **COMMIT:** `[M6] tasks table migration` → `[M6] tasks API + UI` → `[M6] daily briefing`
+> **AGENT:** Schema migration first (internal_tasks table). Tasks is the primary deliverable — complete all task functionality before starting Daily Briefing. If tasks runs long, Daily Briefing slips cleanly; tasks alone makes M6 a success. Test task CRUD with real DB. Daily Briefing prompt must be manually inspected before wiring to Claude.
+> **COMMIT:** `[M6] internal_tasks schema migration` → `[M6] tasks API + UI` → `[M6] daily briefing`
 
-**Goal:** Mo's Trello replacement, plus a morning briefing that summarizes what happened and what needs attention.
+**Goal:** Tasks replaces Trello. Daily Briefing gives Mo a morning summary in one click.
 
-**Checklist — Tasks:**
-- [ ] Tasks page renders all open tasks sorted by due date
+**Checklist — Schema (must be first):**
+- [ ] Add `InternalTask` model to `prisma/schema.prisma`:
+  - `id`, `dealHubspotId` (nullable FK → deals), `title`, `notes`, `status` (open/done), `dueDate`, `category` enum (case/business/vendor/legal/networking/other), `source` (manual/ai_detected), `createdAt`, `completedAt`
+- [ ] `npm run db:migrate` → migration name: `add-internal-tasks`
+- [ ] `npm run db:generate`
+
+**Checklist — Tasks (primary deliverable):**
+- [ ] `/src/lib/db/tasks.ts` — `getOpenTasks()`, `createTask()`, `completeTask()`, `deleteTask()`
+- [ ] `GET /api/tasks` — returns open + recent completed tasks
+- [ ] `POST /api/tasks` — creates task (manual source)
+- [ ] `PATCH /api/tasks/[id]` — mark complete
+- [ ] `DELETE /api/tasks/[id]` — delete
+- [ ] Tasks page (`/dashboard/tasks`) renders all open tasks sorted by due date
 - [ ] Tasks grouped by category (case / business / vendor / legal / networking)
-- [ ] Case-linked tasks show deal name with link to deal panel
-- [ ] Add task form: title, notes, due date, category, deal link (optional search)
+- [ ] Case-linked tasks show deal name with clickable link to open the deal panel
+- [ ] Add task form: title, notes, due date, category, optional deal link
 - [ ] Mark task complete (moves to "Completed" section, last 30 days)
 - [ ] Delete task
-- [ ] AI-suggested tasks from M5 (`source: 'ai_detected'`) shown with "Accept / Dismiss"
-- [ ] Task count badge in sidebar navigation
+- [ ] AI-detected tasks from M5 (`source: 'ai_detected'`) shown with "Accept" and "Dismiss" buttons — Accept converts to manual source; Dismiss deletes
+- [ ] Task count badge on "Tasks" link in sidebar navigation
+- [ ] **Mo Action Required → create internal_tasks**: when Mo clicks "Generate AI Summary" and `mo_action_required: true`, prompt Mo to create a task or skip (do not auto-create without input)
 
-**Checklist — Daily Briefing:**
-- [ ] "Daily Briefing" button on dashboard (replaces placeholder)
-- [ ] `/api/briefing` route — generates briefing using Layer 1 + cached Layer 2 summaries
-- [ ] Briefing prompt sections: what happened, what needs attention, open tasks
-- [ ] Employee activity section ONLY if `deal_activities` has sufficient data (≥7 days) — query `author_owner_id`, count notes/calls per owner in last 7 days
-- [ ] Briefing renders in modal or expanded panel
-- [ ] Briefing is always freshly generated (no caching) — cheap enough at current volume
-- [ ] **Acceptance:** Mo clicks "Daily Briefing" → concise summary of flagged deals + open tasks in under 20 seconds. Employee activity section appears only if data exists.
+**Checklist — Daily Briefing (secondary, ships after tasks):**
+- [ ] "Daily Briefing" button on dashboard header
+- [ ] `/api/briefing` route — builds context from Layer 1 flags + cached AI summaries + open tasks
+- [ ] Briefing prompt: what happened, what needs attention, suggested priorities for today, open tasks
+- [ ] Employee activity section: count notes/calls per owner in last 7 days from `deal_activities` — **silently omit if fewer than 7 days of data exist** (no placeholder, no error)
+- [ ] Briefing renders in a full-width modal
+- [ ] Briefing is always freshly generated — no caching
+- [ ] **Acceptance:** Mo clicks "Daily Briefing" → receives a concise morning briefing in under 30 seconds covering flagged deals, open tasks, and (if available) employee activity. Employee section silently absent if no Layer 2 data.
 - [ ] git commit: `[M6] tasks + daily briefing`
 - [ ] git tag: `sprint-6-done`
 
-**Done when:** Mo can manage his daily case and business tasks without Trello, and get a morning briefing in one click.
+**Done when:** Mo can manage his daily case and business tasks without Trello. Daily Briefing is a bonus if tasks ships cleanly.
 
 ---
 
@@ -381,6 +406,8 @@ docs/research/
 > **COMMIT:** `[M7] app_settings seed defaults` → `[M7] settings API` → `[M7] settings UI — thresholds editable`
 
 **Goal:** Configurable staleness thresholds without requiring a code deploy.
+
+**What changes in M7:** All rules currently read from `thresholds.ts` constants passed as `RuleContext` fields. In M7, the `/api/deals` route loads the same values from `app_settings` instead of hardcoded constants. Rules don't change at all — only the context construction changes.
 
 **Checklist:**
 - [ ] Seed `app_settings` with all threshold defaults (if not already done in M2b):
@@ -393,13 +420,15 @@ docs/research/
   - `agreement_sent_no_followup_days = 2`
   - `signed_no_activity_days = 5`
   - `ai_summary_lookback_days = 28`
-- [ ] `GET /api/settings` — returns all editable settings
-- [ ] `PATCH /api/settings` — saves one or more settings
-- [ ] Settings page renders all values as editable number inputs (one row per threshold)
-- [ ] Settings save → immediately affects attention queue (replaces hardcoded `thresholds.ts` lookups)
-- [ ] Sync log visible in settings: last 10 syncs, call counts, errors
+- [ ] Update `/api/deals` route: replace hardcoded constants with `loadThresholds()` from `app_settings`
+- [ ] Update `summary.ts`: replace hardcoded `AI_SUMMARY_LOOKBACK_DAYS` with value loaded from `app_settings`
+- [ ] `GET /api/settings` — returns all editable settings as `{ key, value, label }` objects
+- [ ] `PATCH /api/settings` — saves one or more settings (validate: must be positive integer)
+- [ ] Settings page (`/dashboard/settings`) renders all threshold values as editable number inputs
+- [ ] Settings save → immediately affects attention queue and AI summary lookback on next request
+- [ ] Sync log visible in settings: last 10 syncs, call counts, errors, timestamps
 - [ ] Note: sync schedule is NOT in settings — lives in `vercel.json`, requires redeploy to change
-- [ ] **Acceptance:** Mo changes "Attempted Contact" from 7 to 10 days → attention queue immediately reflects the new threshold.
+- [ ] **Acceptance:** Mo changes "Attempted Contact" from 7 to 10 days → attention queue immediately reflects the new threshold without a code deploy.
 - [ ] git commit: `[M7] configurable thresholds — settings page`
 - [ ] git tag: `sprint-7-done`
 
@@ -414,17 +443,19 @@ docs/research/
 **Goal:** Production-ready, stable, and maintainable.
 
 **Checklist:**
-- [ ] Error boundaries on all major components
+- [ ] Error boundaries on all major components (dashboard, deal panel, tasks page, settings)
 - [ ] HubSpot API down → show stale data with clear warning banner (HubSpotError → banner, not crash)
+- [ ] Anthropic API down → "Summary unavailable" in panel (AIError → message, not crash)
 - [ ] Loading states on all async operations
 - [ ] Mobile warning: "This dashboard is optimized for desktop browsers"
-- [ ] Empty state messages (no deals in a group, no tasks, no summary yet)
+- [ ] Empty state messages: no deals in a group, no tasks, no summary yet, no Layer 2 loaded
 - [ ] Cloudflare domain pointing to Vercel (production URL)
-- [ ] All Vercel environment variables confirmed set in production (`DATABASE_URL`, `DIRECT_URL`, `HUBSPOT_ACCESS_TOKEN`, `DASHBOARD_PASSWORD`, `ANTHROPIC_API_KEY`, `CRON_SECRET`)
+- [ ] All Vercel environment variables confirmed set in production:
+  - `DATABASE_URL`, `DIRECT_URL`, `HUBSPOT_ACCESS_TOKEN`, `DASHBOARD_PASSWORD`, `ANTHROPIC_API_KEY`, `CRON_SECRET`
 - [ ] Manual run-through of all features in production environment
-- [ ] Sync log visible in settings (last 10 syncs, call counts, errors)
+- [ ] **Verify cron fires in production:** check sync_log after first scheduled run — confirm entries exist with `sync_type = 'layer1'` and non-null `completed_at`
 
-**Done when:** The production URL loads, password gate works, data syncs, and Mo can use it as his daily driver.
+**Done when:** The production URL loads, password gate works, data syncs on schedule, and Mo can use it as his daily driver without watching the terminal.
 
 ---
 

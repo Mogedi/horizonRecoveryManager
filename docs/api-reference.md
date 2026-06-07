@@ -23,11 +23,11 @@ The mapper (`/src/lib/hubspot/mapper.ts`) translates raw API responses into inte
 | HubSpot Pipelines — Deals | M1: get stage ID → name mapping | 100 req/10s |
 | HubSpot Owners | M1: get owner ID → name mapping | 100 req/10s |
 | HubSpot Associations | Layer 2: get contact/note/call/email/task IDs per deal | 100 req/10s |
-| HubSpot Objects — Notes | Layer 2: fetch note body + metadata | 100 req/10s |
-| HubSpot Objects — Calls | Layer 2: fetch call notes + direction | 100 req/10s |
-| HubSpot Objects — Emails | Layer 2: fetch email body + direction | 100 req/10s |
-| HubSpot Objects — Tasks | Layer 2: fetch task content + status | 100 req/10s |
-| HubSpot Contacts Batch Read | Layer 2: fetch all contacts for a deal in one call | 100 req/10s |
+| HubSpot Objects Batch Read — Notes | Layer 2: batch fetch all notes for a deal | 100 req/10s |
+| HubSpot Objects Batch Read — Calls | Layer 2: batch fetch all calls for a deal | 100 req/10s |
+| HubSpot Objects Batch Read — Emails | Layer 2: batch fetch all emails for a deal | 100 req/10s |
+| HubSpot Objects Batch Read — Tasks | Layer 2: batch fetch all tasks for a deal | 100 req/10s |
+| HubSpot Contacts Batch Read | Layer 2: batch fetch all contacts for a deal | 100 req/10s |
 | Anthropic Messages | Generate deal summaries and daily briefings | per-token pricing |
 | Vercel Cron | Schedule Layer 1 sync 4x/day | N/A |
 
@@ -241,7 +241,7 @@ M1: get owner ID → name mapping. Run once, save to `docs/research/owners.json`
 ---
 
 ### 6. Associations — Get IDs for a Deal
-Layer 2: returns IDs of all objects associated with a deal. Does NOT return object content — content requires separate fetches per ID.
+Layer 2 step 1: returns IDs of all objects associated with a deal. 5 calls per deal (one per type). Does NOT return object content — content requires batch fetches (endpoints 7–11).
 
 **Endpoint:** `GET https://api.hubapi.com/crm/v3/objects/deals/{dealId}/associations/{objectType}`
 
@@ -257,109 +257,65 @@ Layer 2: returns IDs of all objects associated with a deal. Does NOT return obje
 ```
 
 **Known behavior:**
-- Returns IDs only — each object must be fetched separately (or batch-fetched for contacts)
-- Large deals may have many associations — log count before fetching all
+- Returns IDs only — use batch read endpoints (7–11) to fetch content in one call per type
+- Run all 5 association calls with `Promise.all` — they are independent
 
 ---
 
-### 7. Objects — Notes
-**Endpoint:** `GET https://api.hubapi.com/crm/v3/objects/notes/{noteId}`
+### 7–10. Activity Batch Read (Notes / Calls / Emails / Tasks)
+Layer 2 step 2: fetch all activity objects of one type in a single call. One call per non-empty type (max 4 calls total for activities). Do NOT use individual GET endpoints — batch read is the implementation.
 
-**Query params:** `properties=hs_note_body,hs_timestamp,hubspot_owner_id`
+**Endpoint:** `POST https://api.hubapi.com/crm/v3/objects/{objectType}/batch/read`
+
+`objectType`: `notes` | `calls` | `emails` | `tasks`
+
+**Input:**
+```json
+{
+  "inputs": [
+    { "id": "obj_id_1" },
+    { "id": "obj_id_2" }
+  ],
+  "properties": ["property_name_1", "property_name_2"]
+}
+```
+
+**Properties by type:**
+
+| Type | Properties |
+|---|---|
+| notes | `hs_note_body`, `hs_timestamp`, `hubspot_owner_id` |
+| calls | `hs_call_body`, `hs_call_direction`, `hs_call_disposition`, `hs_timestamp`, `hubspot_owner_id` |
+| emails | `hs_email_subject`, `hs_email_text`, `hs_email_direction`, `hs_timestamp`, `hs_email_from_email` |
+| tasks | `hs_task_subject`, `hs_task_status`, `hs_task_body`, `hs_timestamp`, `hubspot_owner_id` |
 
 **Output:**
 ```json
 {
-  "id": "note_id",
-  "properties": {
-    "hs_note_body": "Called Alexis Wright — she said she'd forward info.",
-    "hs_timestamp": "2026-05-21T14:30:00.000Z",
-    "hubspot_owner_id": "67890"
-  }
+  "status": "COMPLETE",
+  "results": [
+    {
+      "id": "obj_id_1",
+      "properties": {
+        "hs_note_body": "Called Alexis Wright — she said she'd forward info.",
+        "hs_timestamp": "2026-05-21T14:30:00.000Z",
+        "hubspot_owner_id": "67890"
+      }
+    }
+  ]
 }
 ```
 
-**CONFIRM IN M1:** Whether `hs_note_body` returns full text or is truncated on Starter plan.
-
----
-
-### 8. Objects — Calls
-**Endpoint:** `GET https://api.hubapi.com/crm/v3/objects/calls/{callId}`
-
-**Query params:** `properties=hs_call_body,hs_call_direction,hs_call_disposition,hs_timestamp,hubspot_owner_id`
-
-**Output:**
-```json
-{
-  "id": "call_id",
-  "properties": {
-    "hs_call_body": "Left voicemail. Call back requested.",
-    "hs_call_direction": "OUTBOUND",
-    "hs_call_disposition": "9d9162e7-6cf3-4944-bf63-4dff82258764",
-    "hs_timestamp": "2026-05-21T14:00:00.000Z",
-    "hubspot_owner_id": "67890"
-  }
-}
-```
-
-**Known behavior:**
+**Known behavior (confirmed in M1/M4):**
+- `hs_note_body` returns full HTML text on Starter plan — always strip HTML before storing
 - `hs_call_direction`: `INBOUND` | `OUTBOUND`
-- `hs_call_disposition` is a UUID that maps to an outcome label (Left voicemail, Connected, No Answer, etc.). Map these during M1 by reading the call property schema options.
-- JustCall syncs call recordings and notes into HubSpot as call objects
-
-**CONFIRM IN M1:** Exact disposition UUID → label mapping.
-
----
-
-### 9. Objects — Emails
-**Endpoint:** `GET https://api.hubapi.com/crm/v3/objects/emails/{emailId}`
-
-**Query params:** `properties=hs_email_subject,hs_email_text,hs_email_direction,hs_timestamp,hs_email_from_email`
-
-**Output:**
-```json
-{
-  "id": "email_id",
-  "properties": {
-    "hs_email_subject": "Re: Your Property Surplus",
-    "hs_email_text": "Thank you for reaching out...",
-    "hs_email_direction": "INCOMING_EMAIL",
-    "hs_timestamp": "2026-05-20T09:00:00.000Z",
-    "hs_email_from_email": "client@gmail.com"
-  }
-}
-```
-
-**Known behavior:**
-- `hs_email_direction`: `INCOMING_EMAIL` | `OUTGOING_EMAIL` (not INBOUND/OUTBOUND)
-- `hs_email_text` may NOT be accessible on Starter plan — **CONFIRM IN M1**
-- If email body is not accessible: fall back to subject-only display, mark as limitation
-
-**CONFIRM IN M1:** Whether email body text is accessible. Whether direction is reliably populated.
-
----
-
-### 10. Objects — Tasks
-**Endpoint:** `GET https://api.hubapi.com/crm/v3/objects/tasks/{taskId}`
-
-**Query params:** `properties=hs_task_subject,hs_task_status,hs_task_body,hs_timestamp,hubspot_owner_id`
-
-**Output:**
-```json
-{
-  "id": "task_id",
-  "properties": {
-    "hs_task_subject": "Follow up with Alexis Wright",
-    "hs_task_status": "NOT_STARTED",
-    "hs_task_body": "Reference 5/21 voicemail. Ask about heirship docs.",
-    "hs_timestamp": "2026-05-22T00:00:00.000Z",
-    "hubspot_owner_id": "67890"
-  }
-}
-```
-
-**Known behavior:**
+- `hs_call_disposition` is a UUID — map to label using call property schema options (confirmed M1)
+- JustCall logs "no answer" call attempts as Task objects (subject: "Follow Up Call"), not Call objects
+- `hs_email_direction`: `INCOMING_EMAIL` | `OUTGOING_EMAIL`
+- `hs_email_text` is accessible on Starter plan (confirmed M1)
 - `hs_task_status`: `NOT_STARTED` | `COMPLETED` | `DEFERRED` | `IN_PROGRESS`
+- Skip the batch call if IDs array is empty — `Promise.resolve({ results: [] })` instead
+- Max 100 objects per batch request
 
 ---
 
@@ -446,7 +402,7 @@ content-type: application/json
   "type": "message",
   "role": "assistant",
   "content": [
-    { "type": "text", "text": "CURRENT STATUS\n..." }
+    { "type": "text", "text": "{...JSON object...}" }
   ],
   "model": "claude-sonnet-4-6",
   "stop_reason": "end_turn",
@@ -457,11 +413,28 @@ content-type: application/json
 }
 ```
 
+**Parsed content shape (M5 — per-deal summary):**
+
+The prompt instructs Claude to return ONLY a JSON object (no markdown, no code fences). Parse with `JSON.parse(content[0].text)`:
+
+```json
+{
+  "current_status": "string — one sentence on where the deal stands",
+  "last_meaningful_activity": "string — what happened and when",
+  "blockers": ["string", "string"],
+  "who_needs_something": "string or null",
+  "suggested_next_step": "string",
+  "mo_action_required": true,
+  "documents_mentioned_missing": ["string"]
+}
+```
+
 **Known behavior:**
-- `content[0].text` contains the response text
+- `content[0].text` is the raw response string — `JSON.parse()` it for structured data
+- Prompt must explicitly say "Return ONLY valid JSON. No markdown. No code fences." or Claude may wrap in backticks
+- `stop_reason: "max_tokens"` means response was cut off — increase `max_tokens` if this happens
 - `usage.input_tokens` + `usage.output_tokens` = total tokens billed
-- No streaming in v1 (add if response latency becomes a problem)
-- `stop_reason: "max_tokens"` means the response was cut off — increase `max_tokens` if this happens
+- No streaming in v1 (add if response latency is a problem)
 
 **Links:**
 - Anthropic API docs: https://docs.anthropic.com/en/api/messages

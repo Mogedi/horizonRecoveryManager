@@ -342,16 +342,16 @@ Active snooze = most recent row where `snooze_until >= today AND woke_at IS NULL
 
 ```sql
 CREATE TABLE ai_summaries (
-  id                   SERIAL PRIMARY KEY,
-  deal_hubspot_id      TEXT REFERENCES deals(hubspot_id),
-  summary_json         JSONB NOT NULL,
-  generated_at         TIMESTAMPTZ DEFAULT NOW(),
-  activity_count_at_gen INT,
-  is_stale             BOOLEAN DEFAULT FALSE
+  id               SERIAL PRIMARY KEY,
+  deal_hubspot_id  TEXT REFERENCES deals(hubspot_id),
+  summary_json     JSONB NOT NULL,
+  generated_at     TIMESTAMPTZ DEFAULT NOW()
 );
 ```
 
-Summary JSON shape:
+**No `is_stale` column:** staleness is computed at read time by comparing `deal.last_activity_date > ai_summaries.generated_at`. No sync coupling needed, always accurate.
+
+Summary JSON shape (Claude returns this as a JSON object — see prompt template):
 ```json
 {
   "current_status": "...",
@@ -641,33 +641,29 @@ AI inference of document presence from unstructured notes is complex and error-p
 
 ### Per-Deal Summary Prompt
 
+The prompt requests **JSON output** — not markdown sections. This makes parsing reliable and testable.
+
 ```
-You are analyzing a surplus funds recovery case for Horizon Recovery.
+You are analyzing a surplus funds recovery case for Horizon Recovery LLC.
+Goal: help the owner understand what is blocking this case and what should happen next.
 
-The goal is to help the owner understand: What is blocking this case, and what should happen next?
+Return ONLY a valid JSON object with exactly these keys. No other text, no markdown, no code fences.
 
-Answer in bullet-point format under these exact headings:
+{
+  "current_status": "One sentence on where this case stands right now",
+  "last_meaningful_activity": "Most recent significant event — not just any log entry",
+  "blockers": ["Array of strings — what is preventing progress"],
+  "who_needs_something": "Is the client, attorney, employee, or owner (Mo) waiting on someone? Who specifically?",
+  "suggested_next_step": "The single most important action to take, and who should take it",
+  "mo_action_required": true,
+  "documents_mentioned_missing": ["Array of document types mentioned as missing or not yet received"]
+}
 
-CURRENT STATUS
-[One sentence on where this case stands right now]
-
-LAST MEANINGFUL ACTIVITY
-[Most recent significant event — not just any HubSpot log entry]
-
-BLOCKERS
-[What is preventing this case from moving forward — be specific]
-
-WHO NEEDS SOMETHING
-[Is the client, attorney, employee, or owner (Mo) waiting on someone? Who specifically?]
-
-SUGGESTED NEXT STEP
-[The single most important action to take, and who should take it]
-
-MO ACTION REQUIRED
-[Yes/No — does the owner personally need to act on something?]
-
-DOCUMENTS LIKELY MISSING
-[List any documents mentioned as missing, not yet received, or not yet sent — if none mentioned, write "None detected"]
+Rules:
+- mo_action_required must be a boolean (true/false), not a string
+- blockers and documents_mentioned_missing must be arrays (empty array [] if nothing to report)
+- If no documents are mentioned as missing, documents_mentioned_missing = []
+- Be specific and direct. Short bullets over long prose.
 
 ---
 Deal: {name}
@@ -676,11 +672,13 @@ County: {county}
 Amount: {amount}
 
 Contacts:
-{contact list with relationship status and deceased flag}
+{contact list — name, type (owner/heir/attorney), deceased flag, DNC flag}
 
-Activity history (last 28 days, most recent first):
-{notes, emails, calls, tasks with timestamps and authors}
+Activity history (last {lookbackDays} days, most recent first):
+{notes, emails, calls, tasks — each with: type, author, date, body}
 ```
+
+**Parsing:** `JSON.parse(response.content[0].text)` — throw `AIError` if the response is not valid JSON or is missing required keys. Tests must cover: valid JSON, missing key, non-boolean `mo_action_required`.
 
 ### Daily Briefing Prompt
 
@@ -708,13 +706,13 @@ Open Mo tasks:
 {list of internal tasks assigned to Mo}
 
 Note: Employee activity stats (notes/calls per person) require querying deal_activities by owner.
-Add this section in M5 once deal_activities is populated. Do not include placeholder text.
+Add this section in M6 once deal_activities is populated. Silently omit if fewer than 7 days of data exist — do not include placeholder text.
 ```
 
 ### Cache Invalidation Strategy
 
-- Cache per deal, stored in `ai_summaries`
-- Mark `is_stale = true` when `deal.last_activity_date > ai_summaries.generated_at`
+- Cache per deal, stored in `ai_summaries` (one row per deal — upsert on regenerate)
+- Staleness computed at read time: `deal.last_activity_date > ai_summaries.generated_at` — no `is_stale` column
 - Show "New activity since last summary" badge — do not auto-regenerate
 - Mo manually clicks "↻ Regenerate" to refresh — no automatic triggers
 - Daily Briefing always generates fresh (uses cached deal summaries where available)
@@ -835,7 +833,7 @@ The database is the cache. No Redis or in-memory cache needed in v1.
 | Layer 1 deal data | `deals` table | `deals.synced_at` |
 | Layer 2 activities | `deal_activities` table | `deal_activities.synced_at` |
 | Layer 2 contacts | `deal_contacts` table | `deal_contacts.synced_at` |
-| AI summaries | `ai_summaries` table | `is_stale = true` when `deal.last_activity_date > summary.generated_at` |
+| AI summaries | `ai_summaries` table | Computed at read time: `deal.last_activity_date > summary.generated_at` (no is_stale column) |
 | Stage → name map | Loaded from `app_settings` table per sync invocation (seeded from pipeline-stages.json after M1) | Re-seed after pipeline changes |
 | Owner → name map | Loaded from `app_settings` table per sync invocation (seeded from owners.json after M1) | Re-seed after team changes |
 

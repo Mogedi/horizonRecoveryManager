@@ -32,3 +32,6 @@ export const TERMINAL_STAGE_IDS = new Set<string>([
 // Thresholds for specific stage rules (use last_activity_date, not stage_entered_at)
 export const AGREEMENT_SENT_NO_FOLLOWUP_DAYS = 2
 export const SIGNED_IN_PROGRESS_NO_ACTIVITY_DAYS = 5
+
+// AI summary lookback window in days. Replaced by app_settings in M7.
+export const AI_SUMMARY_LOOKBACK_DAYS = 28

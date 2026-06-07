@@ -72,6 +72,7 @@ Meaningful extensions, defer until P0 + P1 are proven.
 
 | Feature | Status | Notes |
 |---|---|---|
+| Suggested follow-up questions | Idea | Claude-generated questions based on deal context — useful but not essential for v1 |
 | Document checklist | Idea | AI-inferred from notes/emails — complex, Google Drive already exists for this |
 | Google Drive integration | Idea | Pull file list from linked Drive folder per deal (API not available via standard HubSpot integration) |
 | Attorney workflow enhancements | Idea | Filing status, county deadlines, attorney contact DB |

@@ -237,30 +237,24 @@ docs/research/
 - [ ] git commit: `[M2b] database schema — M3 tables, confirmed field names from M1`
 - [ ] git tag: `sprint-2b-done`
 
-**2c — Sync Engine**
-- [ ] `/src/lib/utils/rate-limiter.ts` — token bucket (3 req/s cap) — **write tests first using Vitest**
-- [ ] `/src/lib/hubspot/client.ts` — uses rate-limiter; exponential backoff on 429; throws typed errors on 5xx; daily call count read from sync_log (not in-memory)
-- [ ] `/src/lib/hubspot/mapper.ts` — raw HubSpot → internal types. **M1-confirmed rules:**
-  - Every property read uses `?? null` — never assume a key exists (schema flexibility rule)
-  - HTML-strip `hs_note_body` before storing (notes return HTML div/p tags)
-  - Phone validation: collect all 11 variants, reject values that are clearly not phone numbers (e.g. date strings like "02/06/2024")
-  - Use `hs_v2_date_entered_current_stage` → `stage_entered_at`; use `notes_last_updated` → `last_activity_date` (both useful, different meaning)
-  - Loads `stageMap` + `ownerMap` from `app_settings` — never hardcode stage names
-  - **Tests use `docs/research/sample-deal.json`, `sample-deal-contacts.json`, etc. as fixtures — never call real HubSpot**
-- [ ] `/src/lib/sync/layer1.ts` — smart sync (hs_lastmodifieddate filter) + full refresh mode; upserts deals with raw_payload; writes sync_log entry
-- [ ] `/src/lib/sync/layer2.ts` — per-deal pull; upserts activities + contacts with raw_payload
-- [ ] `/api/sync/layer1/route.ts` — callable by Vercel Cron + manual refresh button
-- [ ] `/api/sync/layer2/[id]/route.ts` — on-demand, called from deal panel "Load Full Detail"
-- [ ] Vercel Cron in `vercel.json`: `"schedule": "0 13,15,17,19 * * 1-5"` (EDT UTC — see api-reference.md)
-  - **⚠️ Hobby plan only allows once/day.** Use `"0 14 * * 1-5"` on Hobby. Upgrade to Pro ($20/mo) for 4x daily. Pro plan timeout: 300s (not 10s).
-- [ ] "Last synced: [timestamp]" reads from sync_log.completed_at
-- [ ] **All unit tests pass:** `npm test`
-- [ ] git commit: `[M2c] sync engine — rate limiter, client, mapper, layer1, layer2`
-- [ ] Integration test: trigger Layer 1 sync manually → verify deals table populated with real HubSpot data
-- [ ] Integration test: trigger Layer 2 for one deal → verify deal_activities + deal_contacts populated
-- [ ] Acceptance: deals in DB, stageMap resolves correctly, "Last synced: [time]" visible
-- [ ] git commit: `[M2c] integration verified — real data in database`
-- [ ] git tag: `sprint-2c-done`
+**2c — Sync Engine** ✅ COMPLETE (commit 7697a66)
+- [x] `/src/lib/utils/rate-limiter.ts` — TokenBucket, 3 req/s, injectable jitter for tests
+- [x] `/src/lib/hubspot/client.ts` — rate-limited fetch, 429 backoff, HubSpotError
+- [x] `/src/lib/hubspot/mapper.ts` — mapDeal/mapContact/mapActivity, only file with HubSpot property names
+- [x] `/src/lib/db/settings.ts` — loadStageMap/loadOwnerMap from app_settings
+- [x] `/src/lib/db/sync-log.ts` — daily call tracking, getDailyCallCount, assertDailyLimitOk
+- [x] `/src/lib/sync/layer1.ts` — smart sync + full refresh, upserts deals
+- [x] `/src/lib/sync/layer2.ts` — per-deal, delete+reinsert in transaction
+- [x] `/api/sync/layer1/route.ts` + `/api/sync/layer2/[id]/route.ts`
+- [x] `vercel.json` — cron 4x/day weekdays EDT
+- [x] 28 tests passing, 0 TypeScript errors
+
+**Known architectural debt from M2c (fix in pre-M3 pass):**
+- [ ] N+1 upsert in layer1.ts — 150 DB round-trips on full refresh. Fix: bulk upsert via `$executeRaw INSERT ... ON CONFLICT DO UPDATE`
+- [ ] `asJson` bare cast — use `JSON.parse(JSON.stringify(v))` before cast to catch non-serializable values
+- [ ] Remove `_stageMap` param from `mapDeal` — accepted but never used, misleading API
+- [ ] Remove `estimateLayer2Calls()` — returns made-up number; replace with static UI message
+- [ ] Cron auth not verified — `x-vercel-cron-signature` presence checked but not HMAC-verified (low risk, fix in M4)
 
 **Done when:** Real HubSpot data is in the database, syncing on schedule, last-synced timestamp visible in production.
 
@@ -274,25 +268,38 @@ docs/research/
 
 **Goal:** The full attention queue renders with real data. First demoable milestone.
 
-**Checklist — Layer 1 Rules Only (no Layer 2 data available yet):**
-- [ ] `/src/lib/utils/business-days.ts` — write tests first, implement after tests are red
-- [ ] `/src/lib/rules/staleness.ts` — write test first (test with mock deal + threshold). Uses `stage_entered_at` NOT `last_activity_date` — measures "stuck in stage", not "no activity". Explicitly skip terminal stages (Dead, DNC, Blocked, Exhausted, Closed-Paid, F, More Research Need).
-- [ ] `/src/lib/rules/agreement.ts` — write test first
-- [ ] `/src/lib/rules/signed.ts` — write test first
-- [ ] `/src/lib/rules/contacts.ts` — Layer 1 version only: flag if `contact_count = 0`
-- [ ] `/src/lib/rules/snooze.ts` — write test first
-- [ ] `/src/lib/rules/index.ts` — orchestrates all rules, returns AttentionFlag[]
+**Checklist — Pre-M3 fixes first (from M2c debt):**
+- [ ] Fix N+1 upsert in layer1.ts — `$executeRaw` bulk upsert
+- [ ] Fix `asJson` — `JSON.parse(JSON.stringify(v))` before cast
+- [ ] Remove `_stageMap` from `mapDeal` signature + call sites + mapper tests
+- [ ] Remove `estimateLayer2Calls()` — add honest static message to Layer 2 route GET
+- [ ] git commit: `[M2c-fix] bulk upsert, asJson safety, remove misleading APIs`
+
+**Checklist — Rules Engine (pure functions, TDD):**
+
+Rules architecture — every rule has this shape, no DB calls inside rules:
+```typescript
+type Rule = (deal: NormalizedDeal, ctx: RuleContext) => AttentionFlag | null
+```
+- [ ] `/src/lib/db/deals.ts` — `getDealsForQueue()`: loads deals from DB, converts Decimal→number, preloads active snooze IDs as Set, returns `NormalizedDeal[]` + `Set<string>` for snooze check. This is the ONLY place that touches Prisma in the M3 request path.
+- [ ] `/src/lib/utils/business-days.ts` — write tests first. Must convert timestamps to `America/New_York` before counting. Weekends excluded, holidays not needed for v1.
+- [ ] `/src/lib/rules/staleness.ts` — uses `stage_entered_at`, skips terminal stages, checks `ctx.staleThresholds`
+- [ ] `/src/lib/rules/agreement.ts` — Agreement Sent + `lastActivityDate` > 2 business days
+- [ ] `/src/lib/rules/signed.ts` — Signed/In Progress + `lastActivityDate` > 5 business days
+- [ ] `/src/lib/rules/contacts.ts` — Layer 1 version only: `contactCount = 0`
+- [ ] `/src/lib/rules/snooze.ts` — checks `ctx.snoozedDealIds.has(deal.hubspotId)`, suppresses all other flags
+- [ ] `/src/lib/rules/index.ts` — loads context once, runs all rules, returns `{ deal, flags }[]`
 - [ ] All rule tests green: `npm test`
-- [ ] git commit: `[M3] attention rules + tests — Layer 1 only`
-- [ ] `/api/deals/route.ts` — returns deals grouped by attention flags
-- [ ] Dashboard home: collapsible attention groups (flagged first, Healthy Deals collapsed at bottom)
-- [ ] Summary cards: counts per group
-- [ ] Deal card: name, stage, owner, last activity, reason flagged
-- [ ] Snoozed deals excluded from attention groups
-- [ ] "Last synced: [timestamp]" always visible
-- [ ] Refresh button (smart default) + "Full Refresh" option
-- [ ] Color coding: 🔴 red, 🟡 yellow, 🔵 blue, ⬜ gray (snoozed/healthy)
-- [ ] **Acceptance:** Mo opens dashboard, sees real deals grouped by attention reason. Snoozed deals don't appear. Last synced timestamp visible.
+- [ ] git commit: `[M3] business-days + attention rules + tests`
+
+**Checklist — API + UI:**
+- [ ] `/api/deals/route.ts` — calls `db/deals.ts`, applies rules, groups by flag type
+- [ ] Dashboard: collapsible attention groups (flagged first, "Healthy/Snoozed" collapsed at bottom)
+- [ ] Deal card: name, stage (name via stageMap), last activity relative date, flag reason
+- [ ] "Last synced: [relative time]" always visible — reads from sync_log
+- [ ] Refresh button (smart default) + "Force Full Refresh" option
+- [ ] Snoozed deals excluded from flagged groups, shown in collapsed "Snoozed" bucket
+- [ ] **Acceptance:** Mo opens dashboard, sees real deals grouped by attention reason. Snoozed deals don't appear in flagged groups. Last synced timestamp visible.
 - [ ] git commit: `[M3] attention queue UI — collapsible groups, deal cards`
 - [ ] git tag: `sprint-3-done`
 

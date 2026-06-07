@@ -173,7 +173,7 @@ The cron schedule lives in `vercel.json`. It is static and cannot be changed at 
 
 ## Layer 2 Rule
 
-Layer 2 is NEVER pulled automatically. Only triggered by Mo clicking "Load Full Detail" in the UI. Always show estimated call count before pulling.
+Layer 2 is NEVER pulled automatically. Only triggered by Mo clicking "Load Full Detail" in the UI. Show static range "5–50+ API calls depending on deal activity" before pulling. Do NOT compute an estimate (the estimate itself requires making the API calls). After the first Layer 2 sync for a deal, show the actual count from sync_log.
 
 ---
 
@@ -204,9 +204,39 @@ AI summaries are NEVER auto-generated. Manual button only. No scheduled regenera
 
 ---
 
-## Modular Rules
+## Rules Engine Architecture
 
-Each attention rule (`/src/lib/rules/*.ts`) is a single exported function. Adding a rule = new file + register in `rules/index.ts`. Removing = delete file + unregister. No rule file should import from another rule file.
+Each attention rule (`/src/lib/rules/*.ts`) is a pure function with this signature:
+```typescript
+type Rule = (deal: NormalizedDeal, ctx: RuleContext) => AttentionFlag | null
+```
+- No rule file imports from `@prisma/client` or `src/lib/db/`
+- No rule file imports from another rule file
+- Adding a rule = new file + one line in `rules/index.ts`
+- Removing = delete file + remove from index
+
+`RuleContext` carries: `today`, `timezone`, `stageMap`, `staleThresholds`, `snoozedDealIds: Set<string>`
+`NormalizedDeal` has `amount: number` (never Prisma Decimal — converted in `db/deals.ts`)
+`snoozedDealIds` is preloaded once per request as a Set — never query DB per deal
+
+All DB access for the rules pipeline goes through `src/lib/db/deals.ts`. Rules get clean typed data.
+
+## Business Days — Timezone Rule
+
+`business-days.ts` MUST convert timestamps to `America/New_York` before counting business days. `stageEnteredAt` is stored as UTC. A deal entering a stage at 11pm ET Friday = Saturday UTC — business-day counting in UTC gives wrong results. Use `Intl.DateTimeFormat` with `timeZone: 'America/New_York'` or `date-fns-tz`.
+
+## JSON Serialization — Safe Cast Rule
+
+When casting `unknown` values to Prisma's Json type, always clone through JSON first:
+```typescript
+// Wrong — bare cast hides runtime serialization errors:
+return v as Prisma.InputJsonValue
+
+// Right — surfaces non-serializable content immediately:
+return JSON.parse(JSON.stringify(v)) as Prisma.InputJsonValue
+```
+
+## Mapper Contract
 
 The mapper (`/src/lib/hubspot/mapper.ts`) is the only file that knows raw HubSpot property names. If a field name changes, only the mapper changes. Downstream code uses internal types only.
 
@@ -216,3 +246,7 @@ Every property read in the mapper must use `?? null`. Never assume a key exists 
 // Right: props?.phone_1 ?? null
 ```
 If this discipline slips and property names appear outside mapper.ts, the schema drift protection breaks entirely.
+
+## Prisma Decimal — DB Read Rule
+
+`amount` and `estimatedSurplus` are `Decimal` objects when read from DB (not plain numbers). Always call `.toNumber()` before comparisons, or use `db/deals.ts` which handles conversion. Never compare Decimal objects directly to numbers.

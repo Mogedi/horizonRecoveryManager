@@ -223,7 +223,7 @@ Fields per deal (internal name → HubSpot property name — confirmed in M1):
 - `county` → `county` ✅
 - `parcel_id` → `parcel_id__deal` ✅ (double underscore + `_deal` suffix)
 - `tax_sale_date` → `tax_sale_date` ✅
-- `hubspot_url` — constructed as `https://app.hubspot.com/contacts/{portalId}/deal/{hubspot_id}`
+- `hubspot_url` — from `raw.url` field in API response (confirmed M1 — URLs are `https://app-na2.hubspot.com/...`, NOT constructed from portal ID)
 
 This is sufficient to render the full attention queue without any Layer 2 data, once field names are confirmed.
 
@@ -231,7 +231,7 @@ This is sufficient to render the full attention queue without any Layer 2 data, 
 
 Only triggered when Mo explicitly clicks **"Load Full Detail"** in the deal detail panel. The panel always shows Layer 1 data first. Mo decides whether to pull Layer 2 for a given deal.
 
-Before pulling, show a warning: *"This will use approximately 7–10 HubSpot API calls. Continue?"*
+Before pulling, show: *"This will use 5–50+ HubSpot API calls depending on deal activity. Continue?"* Do NOT try to estimate the exact number — the estimate requires making the association calls anyway, and the first real call count will be shown after the first sync. After the first Layer 2 sync for a deal, show the actual call count from sync_log.
 
 Pulls:
 - Notes (full text, author, timestamp)
@@ -589,11 +589,45 @@ AI-detected tasks shown with "AI suggested — accept?" prompt.
 
 Run on every Layer 1 sync. Each deal is evaluated against all rules. Triggered deals appear in attention queue under the appropriate group.
 
-**Stage comparisons:** Never compare against raw stage name strings. Always use normalized stage names via `stageMap` (built from `docs/research/pipeline-stages.json` during M1). Example:
+**Stage comparisons:** Never compare against raw stage name strings. Always use normalized stage names via `stageMap`. Example:
 ```typescript
 // Wrong:  deal.stage === "Agreement Sent"
 // Right:  stageMap[deal.stage] === "Agreement Sent"
 ```
+
+### Rules Architecture — Pure Functions with Injected Context
+
+Every rule has this exact shape. No DB calls inside rules.
+
+```typescript
+type Rule = (deal: NormalizedDeal, ctx: RuleContext) => AttentionFlag | null
+
+// NormalizedDeal: DB read with Decimal→number conversion applied.
+// Rules never import from Prisma or see Decimal objects.
+type NormalizedDeal = {
+  hubspotId: string
+  name: string | null
+  stage: string | null       // stage ID — resolve to name via ctx.stageMap
+  amount: number | null      // number, not Prisma Decimal — converted in db/deals.ts
+  stageEnteredAt: Date | null
+  lastActivityDate: Date | null
+  contactCount: number
+  syncedAt: Date
+  // ... all other deal fields
+}
+
+// RuleContext: loaded once per /api/deals request, passed to every rule.
+// Snoozes are a Set for O(1) lookup — never query DB per deal.
+type RuleContext = {
+  today: Date                           // injected — freezable in tests
+  timezone: 'America/New_York'
+  stageMap: Record<string, string>      // stage ID → name
+  staleThresholds: Record<string, number>  // stage ID → business days (from thresholds.ts in M3, app_settings in M7)
+  snoozedDealIds: Set<string>           // pre-loaded once in db/deals.ts
+}
+```
+
+All DB loading (deals query, snooze pre-load, stageMap) happens in `db/deals.ts` before rules run. The rules directory (`src/lib/rules/`) imports nothing from `@prisma/client` or `db/`. Adding a rule = new file + one line in `index.ts`. Changing thresholds = update context, not code.
 
 ### Layer 1-Only Rules (M3 — run against `deals` table alone)
 
@@ -738,7 +772,7 @@ Add this section in M5 once deal_activities is populated. Do not include placeho
 ```typescript
 // Example: mapper test using M1 fixture
 const rawDeal = JSON.parse(fs.readFileSync('docs/research/sample-deal.json', 'utf8'))
-const deal = mapDeal(rawDeal.results[0], stageMap, ownerMap)
+const deal = mapDeal(rawDeal.results[0])  // stageMap not needed at map time — stage IDs stored as-is
 expect(deal.name).toBe('BREVARD - 123 Main St - ...')
 ```
 

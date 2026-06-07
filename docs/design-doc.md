@@ -909,10 +909,11 @@ AI summary cache: never auto-regenerate. Show "New activity since last summary" 
 │       │   # NOTE: no documents.ts — Document checklist deferred; not worth building for 18 deals
 │       ├── ai/
 │       │   ├── errors.ts              # AIError class — isolated so tests don't import SDK (M5 ✅)
-│       │   ├── client.ts              # Anthropic SDK wrapper — callClaude() (M5 ✅)
+│       │   ├── client.ts              # Anthropic SDK wrapper — callClaude(prompt, systemPrompt?) (M5 ✅)
 │       │   ├── prompts.ts             # buildSummaryPrompt() — lookback filter + JSON instruction (M5 ✅)
 │       │   ├── summary.ts             # parseSummaryResponse() + SummaryJson type (M5 ✅)
-│       │   └── generate.ts            # runSummaryGeneration() — orchestrates prompt+call+parse+upsert (M5 ✅)
+│       │   ├── generate.ts            # runSummaryGeneration() — orchestrates prompt+call+parse+upsert (M5 ✅)
+│       │   └── briefing.ts            # runBriefingGeneration() — flagged deals + tasks + employee activity → prose (M6 ✅)
 │       ├── db/
 │       │   ├── client.ts              # Prisma singleton — always import from here
 │       │   ├── deals.ts               # getDealsForQueue() — NormalizedDeal[] + snoozedDealIds Set

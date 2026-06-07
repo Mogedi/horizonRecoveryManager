@@ -351,36 +351,36 @@ docs/research/
 **Goal:** Tasks replaces Trello. Daily Briefing gives Mo a morning summary in one click.
 
 **Checklist — Schema (must be first):**
-- [ ] Add `InternalTask` model to `prisma/schema.prisma`:
+- [x] Add `InternalTask` model to `prisma/schema.prisma`:
   - `id`, `dealHubspotId` (nullable FK → deals), `title`, `notes`, `status` (open/done), `dueDate`, `category` enum (case/business/vendor/legal/networking/other), `source` (always `'manual'` in v1), `createdAt`, `completedAt`
-- [ ] `npm run db:migrate` → migration name: `add-internal-tasks`
-- [ ] `npm run db:generate`
+- [x] `npm run db:migrate` → migration name: `add-internal-tasks`
+- [x] `npm run db:generate`
 
 **Checklist — Tasks (primary deliverable):**
-- [ ] `/src/lib/db/tasks.ts` — `getOpenTasks()`, `createTask()`, `completeTask()`, `deleteTask()`
-- [ ] `GET /api/tasks` — returns open + recent completed tasks
-- [ ] `POST /api/tasks` — creates task (manual source)
-- [ ] `PATCH /api/tasks/[id]` — mark complete
-- [ ] `DELETE /api/tasks/[id]` — delete
-- [ ] Tasks page (`/dashboard/tasks`) renders all open tasks sorted by due date
-- [ ] Tasks grouped by category (case / business / vendor / legal / networking)
-- [ ] Case-linked tasks show deal name with clickable link to open the deal panel
-- [ ] Add task form: title, notes, due date, category, optional deal link
-- [ ] Mark task complete (moves to "Completed" section, last 30 days)
-- [ ] Delete task
-- [ ] Task count badge on "Tasks" link in sidebar navigation
-- [ ] **Mo Action Required → task prompt**: when Mo clicks "Generate AI Summary" and `mo_action_required: true`, show a "Create task" prompt below the summary — pre-fills `suggested_next_step` as the task title. Mo can accept (creates task with `source: 'manual'`) or dismiss. No auto-create. `source: 'ai_detected'` is NOT used — all tasks are manual source regardless of origin.
+- [x] `/src/lib/db/tasks.ts` — `getOpenTasks()`, `createTask()`, `completeTask()`, `deleteTask()`
+- [x] `GET /api/tasks` — returns open + recent completed tasks
+- [x] `POST /api/tasks` — creates task (manual source)
+- [x] `PATCH /api/tasks/[id]` — mark complete
+- [x] `DELETE /api/tasks/[id]` — delete
+- [x] Tasks page (`/dashboard/tasks`) renders all open tasks sorted by due date
+- [x] Tasks grouped by category (case / business / vendor / legal / networking)
+- [x] Case-linked tasks show deal name with clickable link to open the deal panel
+- [x] Add task form: title, notes, due date, category, optional deal link
+- [x] Mark task complete (moves to "Completed" section, last 30 days)
+- [x] Delete task
+- [x] Task count badge on "Tasks" link in sidebar navigation
+- [x] **Mo Action Required → task prompt**: when Mo clicks "Generate AI Summary" and `mo_action_required: true`, show a "Create task" prompt below the summary — pre-fills `suggested_next_step` as the task title. Mo can accept (creates task with `source: 'manual'`) or dismiss. No auto-create. `source: 'ai_detected'` is NOT used — all tasks are manual source regardless of origin.
 
 **Checklist — Daily Briefing (secondary, ships after tasks):**
-- [ ] "Daily Briefing" button on dashboard header
-- [ ] `/api/briefing` route — builds context from Layer 1 flags + cached AI summaries + open tasks
-- [ ] Briefing prompt: what happened, what needs attention, suggested priorities for today, open tasks
-- [ ] Employee activity section: count notes/calls per owner in last 7 days from `deal_activities` — **silently omit if fewer than 7 days of data exist** (no placeholder, no error)
-- [ ] Briefing renders in a full-width modal
-- [ ] Briefing is always freshly generated — no caching
-- [ ] **Acceptance:** Mo clicks "Daily Briefing" → receives a concise morning briefing in under 30 seconds covering flagged deals, open tasks, and (if available) employee activity. Employee section silently absent if no Layer 2 data.
-- [ ] git commit: `[M6] tasks + daily briefing`
-- [ ] git tag: `sprint-6-done`
+- [x] "Daily Briefing" button on dashboard header
+- [x] `/api/briefing` route — builds context from Layer 1 flags + cached AI summaries + open tasks
+- [x] Briefing prompt: what happened, what needs attention, suggested priorities for today, open tasks
+- [x] Employee activity section: count notes/calls per owner in last 7 days from `deal_activities` — **silently omit if fewer than 7 days of data exist** (no placeholder, no error)
+- [x] Briefing renders in a full-width modal
+- [x] Briefing is always freshly generated — no caching
+- [x] **Acceptance:** Mo clicks "Daily Briefing" → receives a concise morning briefing in under 30 seconds covering flagged deals, open tasks, and (if available) employee activity. Employee section silently absent if no Layer 2 data.
+- [x] git commit: `[M6] tasks + daily briefing`
+- [x] git tag: `sprint-6-done`
 
 **Done when:** Mo can manage his daily case and business tasks without Trello. Daily Briefing is a bonus if tasks ships cleanly.
 

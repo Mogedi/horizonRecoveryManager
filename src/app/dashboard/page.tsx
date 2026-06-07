@@ -215,21 +215,46 @@ function FlagGroup({
 }
 
 function BriefingModal({ onClose }: { onClose: () => void }) {
-  const [state, setState] = useState<'loading' | 'done' | 'error'>('loading')
-  const [briefing, setBriefing] = useState<string | null>(null)
+  const [state, setState] = useState<'loading' | 'streaming' | 'done' | 'error'>('loading')
+  const [briefing, setBriefing] = useState('')
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    fetch('/api/briefing', { method: 'POST' })
-      .then(async r => {
-        if (!r.ok) {
-          const body = await r.json().catch(() => ({}))
-          throw new Error(body?.error ?? `Failed: ${r.status}`)
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 90_000)
+
+    ;(async () => {
+      try {
+        const res = await fetch('/api/briefing', { method: 'POST', signal: controller.signal })
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}))
+          throw new Error(body?.error ?? `Failed: ${res.status}`)
         }
-        return r.json()
-      })
-      .then(data => { setBriefing(data.briefing); setState('done') })
-      .catch(e => { setError(e.message); setState('error') })
+        if (!res.body) throw new Error('No response body')
+
+        const reader = res.body.getReader()
+        const decoder = new TextDecoder()
+        setState('streaming')
+
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          setBriefing(prev => prev + decoder.decode(value, { stream: true }))
+        }
+        setState('done')
+      } catch (e) {
+        if ((e as Error).name === 'AbortError') {
+          setError('Timed out after 90 seconds. Try again.')
+        } else {
+          setError(e instanceof Error ? e.message : 'Failed to generate briefing')
+        }
+        setState('error')
+      } finally {
+        clearTimeout(timeout)
+      }
+    })()
+
+    return () => { controller.abort(); clearTimeout(timeout) }
   }, [])
 
   return (
@@ -243,15 +268,20 @@ function BriefingModal({ onClose }: { onClose: () => void }) {
         <div className="flex-1 overflow-auto px-6 py-5">
           {state === 'loading' && (
             <div className="flex items-center gap-3 text-sm text-gray-500">
-              <div className="w-4 h-4 border-2 border-gray-300 border-t-gray-700 rounded-full animate-spin" />
-              Generating your briefing — this may take 20–30 seconds…
+              <div className="w-4 h-4 border-2 border-gray-300 border-t-gray-700 rounded-full animate-spin shrink-0" />
+              Preparing briefing data…
             </div>
           )}
           {state === 'error' && (
             <p className="text-sm text-red-600">{error}</p>
           )}
-          {state === 'done' && briefing && (
-            <p className="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap">{briefing}</p>
+          {(state === 'streaming' || state === 'done') && (
+            <p className="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap">
+              {briefing}
+              {state === 'streaming' && (
+                <span className="inline-block w-0.5 h-4 bg-gray-400 ml-0.5 animate-pulse align-middle" />
+              )}
+            </p>
           )}
         </div>
       </div>

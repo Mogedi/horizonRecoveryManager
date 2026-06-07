@@ -1,11 +1,13 @@
+import Anthropic from '@anthropic-ai/sdk'
 import { prisma } from '@/lib/db/client'
 import { getOpenTasks } from '@/lib/db/tasks'
 import { loadStageMap, loadOwnerMap } from '@/lib/db/settings'
 import { getDealsForQueue } from '@/lib/db/deals'
 import { evaluateAll, buildRuleCtx } from '@/lib/rules'
 import { getMoActionDealIds } from '@/lib/db/summaries'
-import { callClaude } from './client'
 import { AIError } from './errors'
+
+const MAX_FLAGGED_DEALS = 15
 
 const BRIEFING_SYSTEM =
   'You are a business analyst for Horizon Recovery LLC, a surplus funds recovery firm. ' +
@@ -46,7 +48,7 @@ async function getEmployeeActivity(ownerMap: Record<string, string>): Promise<Em
   }))
 }
 
-export async function runBriefingGeneration(): Promise<string> {
+async function buildBriefingPrompt(): Promise<string> {
   const today = new Date()
   const dateStr = today.toLocaleDateString('en-US', {
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
@@ -63,17 +65,23 @@ export async function runBriefingGeneration(): Promise<string> {
 
   const ctx = await buildRuleCtx(stageMap, snoozedDealIds)
   const results = evaluateAll(deals, ctx)
-  const flagged = results.filter(r => r.flags.length > 0 && r.flags[0].type !== 'snoozed')
+  const allFlagged = results.filter(r => r.flags.length > 0 && r.flags[0].type !== 'snoozed')
+  // Cap at MAX_FLAGGED_DEALS — Mo Action Required items sort to the top
+  const flagged = [
+    ...allFlagged.filter(r => moActionIds.has(r.deal.hubspotId)),
+    ...allFlagged.filter(r => !moActionIds.has(r.deal.hubspotId)),
+  ].slice(0, MAX_FLAGGED_DEALS)
 
   const employeeActivity = await getEmployeeActivity(ownerMap)
 
-  // Build prompt
   const lines: string[] = [`DAILY BRIEFING — ${dateStr}`, '']
 
   if (flagged.length === 0) {
     lines.push('ATTENTION QUEUE: No deals need attention right now.')
   } else {
-    lines.push(`ATTENTION QUEUE (${flagged.length} deal${flagged.length !== 1 ? 's' : ''}):`)
+    const totalFlagged = allFlagged.length
+    const cap = totalFlagged > MAX_FLAGGED_DEALS ? ` (showing top ${MAX_FLAGGED_DEALS} of ${totalFlagged})` : ''
+    lines.push(`ATTENTION QUEUE${cap}:`)
     for (const r of flagged) {
       const name = r.deal.name ?? r.deal.hubspotId
       const stage = stageMap[r.deal.stage ?? ''] ?? r.deal.stage ?? '?'
@@ -112,15 +120,46 @@ export async function runBriefingGeneration(): Promise<string> {
     'Be specific and actionable. No generic advice.'
   )
 
-  const prompt = lines.join('\n')
+  return lines.join('\n')
+}
 
-  let text: string
+// Returns a ReadableStream of plain text chunks — caller streams directly to the client.
+export async function streamBriefingGeneration(): Promise<ReadableStream<Uint8Array>> {
+  const prompt = await buildBriefingPrompt()
+
+  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+
+  let stream: Awaited<ReturnType<typeof anthropic.messages.stream>>
   try {
-    text = await callClaude(prompt, BRIEFING_SYSTEM, 2048)
+    stream = anthropic.messages.stream({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 1024,
+      system: BRIEFING_SYSTEM,
+      messages: [{ role: 'user', content: prompt }],
+    })
   } catch (err) {
-    if (err instanceof AIError) throw err
-    throw new AIError(`Briefing generation failed: ${err instanceof Error ? err.message : String(err)}`)
+    throw new AIError(`Briefing stream failed: ${err instanceof Error ? err.message : String(err)}`)
   }
 
-  return text
+  const encoder = new TextEncoder()
+
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        for await (const text of stream.textStream) {
+          controller.enqueue(encoder.encode(text))
+        }
+        const final = await stream.finalMessage()
+        if (final.stop_reason === 'max_tokens') {
+          controller.enqueue(encoder.encode('\n\n[Briefing truncated — max length reached]'))
+        }
+      } catch (err) {
+        controller.error(new AIError(
+          `Briefing stream error: ${err instanceof Error ? err.message : String(err)}`
+        ))
+      } finally {
+        controller.close()
+      }
+    },
+  })
 }

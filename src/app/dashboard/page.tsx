@@ -503,7 +503,8 @@ function DashboardContent() {
   const [selectedDealId, setSelectedDealId] = useState<string | null>(null)
   const [showBriefing, setShowBriefing] = useState(false)
   const [showSnoozed, setShowSnoozed] = useState(false)
-  const [searchActive, setSearchActive] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const searchActive = searchQuery.length >= 2
   const dealParamHandled = useRef(false)
 
   // Auto-select first deal when data loads or tab changes
@@ -604,7 +605,7 @@ function DashboardContent() {
           <DealSearch
             onSelect={id => setSelectedDealId(id)}
             selectedId={selectedDealId}
-            onQueryChange={setSearchActive}
+            onQueryChange={setSearchQuery}
           />
 
           {/* Normal queue — hidden while search is showing results */}
@@ -666,6 +667,7 @@ function DashboardContent() {
               key={selectedDealId}
               hubspotId={selectedDealId}
               inline
+              searchQuery={searchActive ? searchQuery : undefined}
               onClose={() => {
                 setSelectedDealId(null)
                 mutate()

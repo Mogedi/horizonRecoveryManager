@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { formatAmount, relativeDate, formatDate } from '@/lib/utils/format'
+import { highlightByQuery } from '@/lib/utils/highlight'
 import { DealBadges } from '@/components/analytics/DealBadges'
 import { SectionHeader, ActivityItem, ContactItem } from './deal-panel/shared'
 import { OutreachSection } from './deal-panel/OutreachSection'
@@ -116,10 +117,12 @@ export default function DealPanel({
   hubspotId,
   onClose,
   inline = false,
+  searchQuery,
 }: {
   hubspotId: string
   onClose: () => void
   inline?: boolean
+  searchQuery?: string
 }) {
   const [data, setData] = useState<PanelData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -320,17 +323,23 @@ export default function DealPanel({
         {loading && <div className="mt-3 h-5 w-48 bg-gray-100 rounded animate-pulse" />}
         {!loading && deal && (
           <div className="mt-2">
-            <h2 className="font-semibold text-gray-900 text-base leading-snug">{deal.name ?? 'Unnamed deal'}</h2>
+            <h2 className="font-semibold text-gray-900 text-base leading-snug">
+              {searchQuery ? highlightByQuery(deal.name ?? 'Unnamed deal', searchQuery) : (deal.name ?? 'Unnamed deal')}
+            </h2>
             <p className="text-xs text-gray-500 mt-1">
               {deal.stageName ?? deal.stage ?? '—'}
               {deal.ownerName ? ` · ${deal.ownerName}` : ''}
               {deal.amount ? ` · ${formatAmount(deal.amount)}` : ''}
             </p>
             {deal.propertyAddress && (
-              <p className="text-xs text-gray-500 mt-0.5">{deal.propertyAddress}</p>
+              <p className="text-xs text-gray-500 mt-0.5">
+                {searchQuery ? highlightByQuery(deal.propertyAddress, searchQuery) : deal.propertyAddress}
+              </p>
             )}
             {deal.parcelId && (
-              <p className="text-xs text-gray-400 mt-0.5">{deal.parcelId}</p>
+              <p className="text-xs text-gray-400 mt-0.5">
+                {searchQuery ? highlightByQuery(deal.parcelId, searchQuery) : deal.parcelId}
+              </p>
             )}
             {data?.enriched && (
               <DealBadges enriched={data.enriched} />
@@ -502,7 +511,7 @@ export default function DealPanel({
                     : `Contacts (${deal.contactCount > 0 ? `${deal.contactCount} — load full detail for names` : '0'})`
                 } />
                 {contacts && contacts.length > 0 ? (
-                  contacts.map(c => <ContactItem key={c.id} contact={c} />)
+                  contacts.map(c => <ContactItem key={c.id} contact={c} searchQuery={searchQuery} />)
                 ) : (
                   <p className="text-sm text-gray-400">
                     {layer2State === 'done' ? 'No contacts linked' : 'Load full detail to see contacts'}

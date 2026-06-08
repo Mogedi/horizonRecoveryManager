@@ -5,59 +5,16 @@ import Fuse from 'fuse.js'
 import type { FuseResult, RangeTuple } from 'fuse.js'
 import type { SearchDoc } from '@/app/api/deals/search-index/route'
 import { formatAmount } from '@/lib/utils/format'
+import {
+  highlightByIndices,
+  highlightPhone,
+  isPhoneQuery,
+  normalizePhone,
+} from '@/lib/utils/highlight'
 
-// ─── Phone detection + normalization ──────────────────────────────────────────
-
-function isPhoneQuery(q: string): boolean {
-  const digits = q.replace(/\D/g, '')
-  return digits.length >= 4 && digits.length / q.replace(/\s/g, '').length >= 0.6
-}
-
-function normalizePhone(q: string): string {
-  return q.replace(/\D/g, '')
-}
-
-// ─── Text highlighting ────────────────────────────────────────────────────────
-// Uses Fuse's [start, end] index pairs to split text into plain/highlighted runs.
-
-function highlightText(text: string, indices: readonly RangeTuple[]): React.ReactNode {
-  if (!indices || indices.length === 0) return text
-  const nodes: React.ReactNode[] = []
-  let cursor = 0
-  for (const [start, end] of indices) {
-    if (start > cursor) nodes.push(text.slice(cursor, start))
-    nodes.push(
-      <mark key={start} className="bg-amber-200 text-amber-900 rounded-[2px] px-[1px] not-italic">
-        {text.slice(start, end + 1)}
-      </mark>
-    )
-    cursor = end + 1
-  }
-  if (cursor < text.length) nodes.push(text.slice(cursor))
-  return <>{nodes}</>
-}
-
-// Highlight a phone number where the matched digit substring appears.
-// Searches for the digit run in the display string and highlights that span.
-function highlightPhone(phone: string, digitQuery: string): React.ReactNode {
-  const digits = phone.replace(/\D/g, '')
-  const idx = digits.indexOf(digitQuery)
-  if (idx < 0) return phone
-
-  // Map digit position back to display character position
-  let digitCount = 0
-  let start = -1
-  let end = -1
-  for (let i = 0; i < phone.length; i++) {
-    if (/\d/.test(phone[i])) {
-      if (digitCount === idx) start = i
-      if (digitCount === idx + digitQuery.length - 1) { end = i; break }
-      digitCount++
-    }
-  }
-  if (start < 0 || end < 0) return phone
-  return highlightText(phone, [[start, end]])
-}
+// Alias for local use
+const highlightText = (text: string, indices: readonly RangeTuple[]) =>
+  highlightByIndices(text, indices as [number, number][])
 
 // ─── Fuse config ───────────────────────────────────────────────────────────────
 
@@ -188,7 +145,7 @@ function SearchResultCard({
 export type DealSearchProps = {
   onSelect: (hubspotId: string) => void
   selectedId: string | null
-  onQueryChange: (active: boolean) => void
+  onQueryChange: (query: string) => void  // raw query string; parent checks .length >= 2 for active
 }
 
 export default function DealSearch({ onSelect, selectedId, onQueryChange }: DealSearchProps) {
@@ -205,7 +162,7 @@ export default function DealSearch({ onSelect, selectedId, onQueryChange }: Deal
   }, [])
 
   useEffect(() => {
-    onQueryChange(query.trim().length >= 2)
+    onQueryChange(query.trim())
   }, [query, onQueryChange])
 
   useEffect(() => {
@@ -242,19 +199,42 @@ export default function DealSearch({ onSelect, selectedId, onQueryChange }: Deal
 
   const results = useMemo((): FuseResult<SearchDoc>[] => {
     const q = query.trim()
-    if (q.length < 2 || !docs) return []
+    if (q.length < 2 || !docs || !fuse) return []
 
+    // Phone queries: direct digit-substring match, no word splitting
     if (isPhoneQuery(q)) {
       const digits = normalizePhone(q)
       const phoneMatches = docs
         .filter(d => d.phonesNormalized.some(p => p.includes(digits)))
         .map((item, i) => ({ item, refIndex: i, score: 0, matches: [] as never[] }))
-      const fuseMatches = fuse?.search(q) ?? []
+      const fuseMatches = fuse.search(q)
       const seen = new Set(phoneMatches.map(r => r.item.hubspotId))
       return [...phoneMatches, ...fuseMatches.filter(r => !seen.has(r.item.hubspotId))].slice(0, 30)
     }
 
-    return (fuse?.search(q) ?? []).slice(0, 30)
+    // Multi-word AND: split into tokens, run each through Fuse, intersect results.
+    // "Linda Brown" → must match "Linda" AND "Brown" somewhere in the document.
+    // Single-word queries skip the intersection step.
+    const words = q.split(/\s+/).filter(w => w.length >= 2)
+    if (words.length <= 1) return fuse.search(q).slice(0, 30)
+
+    // Run Fuse per word, build Map<hubspotId, result> for each
+    const wordMaps = words.map(word =>
+      new Map(fuse.search(word).map(r => [r.item.hubspotId, r]))
+    )
+
+    // AND: keep only deals that appeared in every word's result set
+    const [first, ...rest] = wordMaps
+    const andResults: FuseResult<SearchDoc>[] = []
+    for (const [id, baseResult] of first) {
+      if (!rest.every(m => m.has(id))) continue
+      // Merge match data from all words so highlighting covers every matched token
+      const allMatches = words.flatMap((_, wi) => wordMaps[wi].get(id)?.matches ?? [])
+      andResults.push({ ...baseResult, matches: allMatches })
+    }
+
+    // Sort by best score (lowest = best in Fuse)
+    return andResults.sort((a, b) => (a.score ?? 1) - (b.score ?? 1)).slice(0, 30)
   }, [query, docs, fuse])
 
   const phoneQuery = isPhoneQuery(query.trim()) ? normalizePhone(query.trim()) : null

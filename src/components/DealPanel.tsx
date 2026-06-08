@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import { formatAmount, relativeDate, formatDate } from '@/lib/utils/format'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -73,6 +74,40 @@ type PanelData = {
   summaryData: { json: SummaryJson; generatedAt: string } | null
 }
 
+type OutreachPhone = {
+  numberE164: string
+  attempts: { happenedAt: string; outcome: string; durationSecs: number | null }[]
+  lastOutcome: 'answered' | 'voicemail' | 'no_answer' | 'busy' | null
+  lastCalledAt: string | null
+  everAnswered: boolean
+}
+
+type OutreachContact = {
+  contactHubspotId: string | null
+  name: string | null
+  contactType: string | null
+  phones: OutreachPhone[]
+  reached: boolean
+  totalAttempts: number
+}
+
+type OutreachDay = {
+  date: string
+  callCount: number
+  answeredCount: number
+  contactsReached: string[]
+}
+
+type OutreachMatrix = {
+  outreachDays: number
+  totalOutboundCalls: number
+  contactsTotal: number
+  contactsReached: number
+  lastCalledAt: string | null
+  contacts: OutreachContact[]
+  days: OutreachDay[]
+}
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const SNOOZE_CATEGORY_LABELS: Record<string, string> = {
@@ -94,36 +129,144 @@ const ACTIVITY_ICONS: Record<string, string> = {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function fmt(dateStr: string | null | undefined, opts?: Intl.DateTimeFormatOptions): string {
-  if (!dateStr) return '—'
-  return new Date(dateStr).toLocaleDateString('en-US', {
-    timeZone: 'America/New_York',
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    ...opts,
-  })
-}
-
-function relTime(dateStr: string | null): string {
-  if (!dateStr) return '—'
-  const diffMs = Date.now() - new Date(dateStr).getTime()
-  const days = Math.floor(diffMs / 86_400_000)
-  if (days === 0) return 'today'
-  if (days === 1) return 'yesterday'
-  if (days < 30) return `${days}d ago`
-  return `${Math.floor(days / 30)}mo ago`
-}
-
-function formatAmount(n: number | null): string {
-  if (n === null) return ''
-  return '$' + Math.round(n).toLocaleString('en-US')
-}
-
 function tomorrowISO(): string {
   const d = new Date()
   d.setDate(d.getDate() + 1)
   return d.toISOString().slice(0, 10)
+}
+
+function formatPhone(e164: string): string {
+  const m = e164.match(/^\+1(\d{3})(\d{3})(\d{4})$/)
+  return m ? `(${m[1]}) ${m[2]}-${m[3]}` : e164
+}
+
+function OutcomeDot({ outcome, everAnswered }: { outcome: OutreachPhone['lastOutcome']; everAnswered: boolean }) {
+  if (!outcome) return <span className="text-gray-300 text-sm">○</span>
+  if (outcome === 'answered') return <span className="text-green-500 text-sm">●</span>
+  if (outcome === 'voicemail') return <span className="text-amber-400 text-sm">●</span>
+  // no_answer / busy
+  return everAnswered
+    ? <span className="text-amber-400 text-sm">●</span>  // was answered before, now not
+    : <span className="text-red-400 text-sm">●</span>
+}
+
+function outcomeLabel(outcome: OutreachPhone['lastOutcome']): string {
+  if (!outcome) return 'not called'
+  if (outcome === 'answered') return 'answered'
+  if (outcome === 'voicemail') return 'voicemail'
+  if (outcome === 'busy') return 'busy'
+  return 'no answer'
+}
+
+// ─── Outreach Section ─────────────────────────────────────────────────────────
+
+function OutreachSection({ matrix }: { matrix: OutreachMatrix }) {
+  const [showDays, setShowDays] = useState(false)
+
+  if (matrix.totalOutboundCalls === 0) {
+    return (
+      <>
+        <SectionHeader title="Call Outreach" />
+        <p className="text-sm text-gray-400 mb-4">No JustCall activity recorded for this deal.</p>
+      </>
+    )
+  }
+
+  const lastDate = matrix.lastCalledAt
+    ? new Date(matrix.lastCalledAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    : null
+
+  return (
+    <>
+      <SectionHeader title="Call Outreach" />
+
+      {/* Summary bar */}
+      <div className="mb-3 flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-500">
+        <span className="font-medium text-gray-700">{matrix.outreachDays} day{matrix.outreachDays !== 1 ? 's' : ''}</span>
+        <span>·</span>
+        <span>{matrix.totalOutboundCalls} calls</span>
+        <span>·</span>
+        <span
+          className={matrix.contactsReached === matrix.contactsTotal ? 'text-green-600 font-medium' : 'text-amber-600 font-medium'}
+        >
+          {matrix.contactsReached}/{matrix.contactsTotal} contacts reached
+        </span>
+        {lastDate && (
+          <>
+            <span>·</span>
+            <span>Last {lastDate}</span>
+          </>
+        )}
+      </div>
+
+      {/* Day-by-day toggle */}
+      {matrix.days.length > 0 && (
+        <button
+          onClick={() => setShowDays(v => !v)}
+          className="text-xs text-gray-400 hover:text-gray-600 mb-3"
+        >
+          {showDays ? '▾' : '▸'} {showDays ? 'Hide' : 'Show'} day-by-day ({matrix.days.length} sessions)
+        </button>
+      )}
+      {showDays && (
+        <div className="mb-4 rounded-lg border border-gray-100 overflow-hidden text-xs">
+          {matrix.days.map(day => (
+            <div key={day.date} className="flex items-baseline gap-3 px-3 py-2 border-b border-gray-100 last:border-0">
+              <span className="text-gray-400 w-20 shrink-0">
+                {new Date(day.date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+              </span>
+              <span className="text-gray-600">{day.callCount} calls</span>
+              {day.answeredCount > 0 ? (
+                <span className="text-green-600">{day.answeredCount} answered</span>
+              ) : (
+                <span className="text-gray-400">0 answered</span>
+              )}
+              {day.contactsReached.length > 0 && (
+                <span className="text-gray-500 truncate">{day.contactsReached.join(', ')}</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Contact × phone grid */}
+      <div className="space-y-3 mb-4">
+        {matrix.contacts.map((contact, i) => (
+          <div key={contact.contactHubspotId ?? i} className="rounded-lg border border-gray-100 overflow-hidden">
+            {/* Contact header */}
+            <div className="flex items-center justify-between px-3 py-2 bg-gray-50 border-b border-gray-100">
+              <span className="text-sm font-medium text-gray-800">
+                {contact.name ?? 'Unknown contact'}
+              </span>
+              <span className={`text-xs px-1.5 py-0.5 rounded-full ${contact.reached ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                {contact.reached ? 'reached' : `${contact.totalAttempts} attempts`}
+              </span>
+            </div>
+            {/* Phone rows */}
+            {contact.phones.length === 0 ? (
+              <div className="px-3 py-2 text-xs text-gray-400">No phone numbers</div>
+            ) : (
+              <div className="divide-y divide-gray-50">
+                {contact.phones.map(phone => (
+                  <div key={phone.numberE164} className="flex items-center gap-2 px-3 py-1.5">
+                    <OutcomeDot outcome={phone.lastOutcome} everAnswered={phone.everAnswered} />
+                    <span className="text-xs text-gray-700 font-mono w-32 shrink-0">
+                      {formatPhone(phone.numberE164)}
+                    </span>
+                    <span className="text-xs text-gray-400">
+                      {phone.attempts.length > 0
+                        ? `${phone.attempts.length} call${phone.attempts.length !== 1 ? 's' : ''} · ${outcomeLabel(phone.lastOutcome)}`
+                        : 'not called'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </>
+  )
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -150,7 +293,7 @@ function ActivityItem({ activity }: { activity: Activity }) {
         <span>·</span>
         <span>{who}</span>
         <span>·</span>
-        <span>{fmt(activity.timestamp)}</span>
+        <span>{formatDate(activity.timestamp)}</span>
       </div>
       {activity.body && (
         <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
@@ -465,6 +608,8 @@ export default function DealPanel({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  const [outreachData, setOutreachData] = useState<OutreachMatrix | null>(null)
+
   const [layer2State, setLayer2State] = useState<'idle' | 'confirming' | 'loading' | 'done'>('idle')
   const [layer2CallMsg, setLayer2CallMsg] = useState<string | null>(null)
   const [layer2Error, setLayer2Error] = useState<string | null>(null)
@@ -480,12 +625,19 @@ export default function DealPanel({
   const fetchDeal = useCallback(async () => {
     setError(null)
     try {
-      const res = await fetch(`/api/deals/${hubspotId}`)
-      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
-      const json = await res.json()
+      const [dealRes, outreachRes] = await Promise.all([
+        fetch(`/api/deals/${hubspotId}`),
+        fetch(`/api/deals/${hubspotId}/outreach`),
+      ])
+      if (!dealRes.ok) throw new Error(`${dealRes.status} ${dealRes.statusText}`)
+      const json = await dealRes.json()
       setData(json)
       if (json.layer2SyncedAt) setLayer2State('done')
       if (json.summaryData) setSummaryState('done')
+      if (outreachRes.ok) {
+        const outreach = await outreachRes.json()
+        setOutreachData(outreach)
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load deal')
     } finally {
@@ -598,7 +750,7 @@ export default function DealPanel({
                   {[
                     deal.county,
                     deal.parcelId,
-                    deal.taxSaleDate ? `Tax sale ${fmt(deal.taxSaleDate, { month: 'short', day: 'numeric', year: 'numeric' })}` : null,
+                    deal.taxSaleDate ? `Tax sale ${formatDate(deal.taxSaleDate, { month: 'short', day: 'numeric', year: 'numeric' })}` : null,
                   ].filter(Boolean).join(' · ')}
                 </p>
               )}
@@ -621,7 +773,7 @@ export default function DealPanel({
                 {snooze ? (
                   <div className="flex-1 flex items-center gap-2 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg">
                     <span className="text-xs text-gray-500 flex-1">
-                      Snoozed until {fmt(snooze.snoozeUntil)} · {SNOOZE_CATEGORY_LABELS[snooze.category] ?? snooze.category}
+                      Snoozed until {formatDate(snooze.snoozeUntil)} · {SNOOZE_CATEGORY_LABELS[snooze.category] ?? snooze.category}
                       {snooze.freeformNote ? ` — ${snooze.freeformNote}` : ''}
                     </span>
                     <button
@@ -744,6 +896,9 @@ export default function DealPanel({
                 </>
               )}
 
+              {/* Call Outreach matrix */}
+              {outreachData && <OutreachSection matrix={outreachData} />}
+
               {/* Contacts */}
               <SectionHeader title={
                 layer2State === 'done'
@@ -781,8 +936,8 @@ export default function DealPanel({
                     <div className="mt-2 space-y-1">
                       {snoozeHistory.map(s => (
                         <div key={s.id} className="text-xs text-gray-400 py-1">
-                          {SNOOZE_CATEGORY_LABELS[s.category] ?? s.category} · until {fmt(s.snoozeUntil)}
-                          {s.wokeAt ? ` · removed ${relTime(s.wokeAt)}` : ' · active'}
+                          {SNOOZE_CATEGORY_LABELS[s.category] ?? s.category} · until {formatDate(s.snoozeUntil)}
+                          {s.wokeAt ? ` · removed ${relativeDate(s.wokeAt)}` : ' · active'}
                           {s.freeformNote ? ` — ${s.freeformNote}` : ''}
                         </div>
                       ))}

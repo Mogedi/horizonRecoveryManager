@@ -214,13 +214,13 @@ export async function getDealsNeedingVerification(): Promise<Array<{
       propertyAddress: true,
       parcelId: true,
       taxSaleDate: true,
-      dealContacts: { select: { name: true }, where: { name: { not: null } } },
+      contacts: { select: { name: true }, where: { name: { not: null } } },
     },
     orderBy: { name: 'asc' },
   })
-  return rows.map(({ dealContacts, ...rest }) => ({
+  return rows.map(({ contacts, ...rest }) => ({
     ...rest,
-    contactNames: dealContacts.map(c => c.name!).filter(Boolean),
+    contactNames: contacts.map(c => c.name!).filter(Boolean),
   }))
 }
 

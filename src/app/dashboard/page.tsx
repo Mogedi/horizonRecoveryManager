@@ -6,6 +6,7 @@ import useSWR from 'swr'
 
 const fetcher = (url: string) => fetch(url).then(r => r.ok ? r.json() : Promise.reject(new Error(r.statusText)))
 import DealPanel from '@/components/DealPanel'
+import DealSearch from '@/components/DealSearch'
 import { formatAmount, relativeDate } from '@/lib/utils/format'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -502,6 +503,7 @@ function DashboardContent() {
   const [selectedDealId, setSelectedDealId] = useState<string | null>(null)
   const [showBriefing, setShowBriefing] = useState(false)
   const [showSnoozed, setShowSnoozed] = useState(false)
+  const [searchActive, setSearchActive] = useState(false)
   const dealParamHandled = useRef(false)
 
   // Auto-select first deal when data loads or tab changes
@@ -587,60 +589,73 @@ function DashboardContent() {
         </div>
       )}
 
-      {/* Tab bar */}
-      <TabBar activeTab={activeTab} onTabChange={handleTabChange} counts={counts} />
+      {/* Tab bar — hidden while search is active */}
+      {!searchActive && (
+        <TabBar activeTab={activeTab} onTabChange={handleTabChange} counts={counts} />
+      )}
 
       {/* Master-detail content */}
       <div className="flex-1 flex min-h-0">
 
-        {/* Left: mini card list */}
+        {/* Left: search + mini card list */}
         <div className="w-72 shrink-0 border-r border-gray-200 bg-white flex flex-col min-h-0">
-          {isLoading && !data ? (
-            <div className="p-4 space-y-3">
-              {[0, 1, 2, 3, 4].map(i => (
-                <div key={i} className="h-14 bg-gray-100 rounded animate-pulse" />
-              ))}
-            </div>
-          ) : sortedItems.length === 0 ? (
-            <EmptyBucket bucket={activeTab} />
-          ) : (
-            <div className="flex-1 overflow-y-auto">
-              {sortedItems.map(item => (
-                <MiniCard
-                  key={item.deal.hubspotId}
-                  item={item}
-                  isSelected={selectedDealId === item.deal.hubspotId}
-                  onClick={() => setSelectedDealId(item.deal.hubspotId)}
-                  bucket={activeTab}
-                  stageMap={data!.stageMap}
-                  classifiedCallCount={data?.classifiedCallCounts[item.deal.hubspotId] ?? 0}
-                />
-              ))}
 
-              {/* Snoozed toggle at bottom */}
-              {snoozedCount > 0 && (
-                <div className="border-t border-gray-100 mt-2">
-                  <button
-                    onClick={() => setShowSnoozed(v => !v)}
-                    className="w-full flex items-center justify-between px-4 py-2.5 text-[11px] text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-colors"
-                  >
-                    <span>Set aside ({snoozedCount})</span>
-                    <span>{showSnoozed ? '▾' : '▸'}</span>
-                  </button>
-                  {showSnoozed && data?.groups.snoozed?.map(item => (
-                    <MiniCard
-                      key={item.deal.hubspotId}
-                      item={item}
-                      isSelected={selectedDealId === item.deal.hubspotId}
-                      onClick={() => setSelectedDealId(item.deal.hubspotId)}
-                      bucket={'call_today'}
-                      stageMap={data.stageMap}
-                      classifiedCallCount={data?.classifiedCallCounts[item.deal.hubspotId] ?? 0}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
+          {/* Search — always visible, manages its own results when active */}
+          <DealSearch
+            onSelect={id => setSelectedDealId(id)}
+            selectedId={selectedDealId}
+            onQueryChange={setSearchActive}
+          />
+
+          {/* Normal queue — hidden while search is showing results */}
+          {!searchActive && (
+            isLoading && !data ? (
+              <div className="p-4 space-y-3">
+                {[0, 1, 2, 3, 4].map(i => (
+                  <div key={i} className="h-14 bg-gray-100 rounded animate-pulse" />
+                ))}
+              </div>
+            ) : sortedItems.length === 0 ? (
+              <EmptyBucket bucket={activeTab} />
+            ) : (
+              <div className="flex-1 overflow-y-auto">
+                {sortedItems.map(item => (
+                  <MiniCard
+                    key={item.deal.hubspotId}
+                    item={item}
+                    isSelected={selectedDealId === item.deal.hubspotId}
+                    onClick={() => setSelectedDealId(item.deal.hubspotId)}
+                    bucket={activeTab}
+                    stageMap={data!.stageMap}
+                    classifiedCallCount={data?.classifiedCallCounts[item.deal.hubspotId] ?? 0}
+                  />
+                ))}
+
+                {/* Snoozed toggle at bottom */}
+                {snoozedCount > 0 && (
+                  <div className="border-t border-gray-100 mt-2">
+                    <button
+                      onClick={() => setShowSnoozed(v => !v)}
+                      className="w-full flex items-center justify-between px-4 py-2.5 text-[11px] text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-colors"
+                    >
+                      <span>Set aside ({snoozedCount})</span>
+                      <span>{showSnoozed ? '▾' : '▸'}</span>
+                    </button>
+                    {showSnoozed && data?.groups.snoozed?.map(item => (
+                      <MiniCard
+                        key={item.deal.hubspotId}
+                        item={item}
+                        isSelected={selectedDealId === item.deal.hubspotId}
+                        onClick={() => setSelectedDealId(item.deal.hubspotId)}
+                        bucket={'call_today'}
+                        stageMap={data.stageMap}
+                        classifiedCallCount={data?.classifiedCallCounts[item.deal.hubspotId] ?? 0}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )
           )}
         </div>
 

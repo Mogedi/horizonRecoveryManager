@@ -1,4 +1,5 @@
 import { prisma } from './client'
+import { Prisma } from '@prisma/client'
 import { withBatchTransaction } from './transaction'
 import type { NormalizedDeal } from '@/lib/rules/types'
 import type { MappedDeal } from '@/lib/hubspot/mapper'
@@ -14,7 +15,7 @@ export async function getDealsForQueue(): Promise<{
 }> {
   const today = new Date()
 
-  const [rawDeals, activeSnoozes, contactPhoneRows] = await Promise.all([
+  const [rawDeals, activeSnoozes, contactPhoneRows, callDayRows] = await Promise.all([
     prisma.deal.findMany({
       select: {
         hubspotId: true,
@@ -35,10 +36,20 @@ export async function getDealsForQueue(): Promise<{
     prisma.dealContact.findMany({
       select: { dealHubspotId: true, phoneNumbers: true },
     }),
+    // Unique call days per deal: distinct calendar days (ET) with outbound JustCall attempts.
+    prisma.$queryRaw<Array<{ deal_hubspot_id: string; unique_call_days: number }>>`
+      SELECT deal_hubspot_id,
+        COUNT(DISTINCT (happened_at AT TIME ZONE 'America/New_York')::date)::int AS unique_call_days
+      FROM activity_events
+      WHERE source = 'JUSTCALL' AND direction = 'outbound'
+      GROUP BY deal_hubspot_id
+    `,
   ])
 
   // Build phone map: dealHubspotId → hasValidPhone (true if any contact has phones)
   // If a deal has no rows in deal_contacts, it won't be in this map → hasValidPhone = null
+  const callDaysMap = new Map(callDayRows.map(r => [r.deal_hubspot_id, Number(r.unique_call_days)]))
+
   const phoneMap = new Map<string, boolean>()
   for (const c of contactPhoneRows) {
     const phones = Array.isArray(c.phoneNumbers) ? c.phoneNumbers : []
@@ -57,6 +68,7 @@ export async function getDealsForQueue(): Promise<{
     // null = no Layer 2 data for this deal; true/false = phone check result
     hasValidPhone: phoneMap.has(d.hubspotId) ? (phoneMap.get(d.hubspotId) ?? false) : null,
     syncedAt: d.syncedAt,
+    uniqueCallDays: callDaysMap.get(d.hubspotId) ?? 0,
   }))
 
   const snoozedDealIds = new Set(activeSnoozes.map(s => s.dealHubspotId))
@@ -83,6 +95,13 @@ export async function getDealById(hubspotId: string) {
       lastActivityDate: true,
       stageEnteredAt: true,
       syncedAt: true,
+      driveFolderId: true,
+      driveFolderUrl: true,
+      driveFolderPath: true,
+      driveFilesCache: true,
+      driveCacheUpdatedAt: true,
+      docVerification: true,
+      docVerificationAt: true,
     },
   })
 }
@@ -140,4 +159,85 @@ export async function upsertDeals(deals: MappedDeal[]): Promise<void> {
       })
     )
   )
+}
+
+export type DriveCacheUpdate = {
+  folderId: string | null
+  folderUrl: string | null
+  folderPath: string | null
+  filesCache: unknown         // DriveFileEntry[] serialised to JSON
+}
+
+// Store the AI document verification report for a deal.
+export async function updateDealDocVerification(
+  hubspotId: string,
+  report: unknown
+): Promise<void> {
+  await prisma.deal.update({
+    where: { hubspotId },
+    data: {
+      docVerification: JSON.parse(JSON.stringify(report)),
+      docVerificationAt: new Date(),
+    },
+  })
+}
+
+// Returns the names of all HubSpot contacts linked to a deal (for owner tracking check).
+export async function getDealContactNames(hubspotId: string): Promise<string[]> {
+  const rows = await prisma.dealContact.findMany({
+    where: { dealHubspotId: hubspotId, name: { not: null } },
+    select: { name: true },
+  })
+  return rows.map(r => r.name!).filter(Boolean)
+}
+
+// Returns all deals that have a Drive folder indexed but no doc verification yet.
+// Includes contact names so the verify job can pass them to Claude for owner tracking.
+export async function getDealsNeedingVerification(): Promise<Array<{
+  hubspotId: string
+  name: string | null
+  driveFilesCache: unknown
+  propertyAddress: string | null
+  parcelId: string | null
+  taxSaleDate: Date | null
+  contactNames: string[]
+}>> {
+  const rows = await prisma.deal.findMany({
+    where: {
+      driveFilesCache: { not: Prisma.AnyNull },
+      docVerification: { equals: Prisma.DbNull },
+    },
+    select: {
+      hubspotId: true,
+      name: true,
+      driveFilesCache: true,
+      propertyAddress: true,
+      parcelId: true,
+      taxSaleDate: true,
+      dealContacts: { select: { name: true }, where: { name: { not: null } } },
+    },
+    orderBy: { name: 'asc' },
+  })
+  return rows.map(({ dealContacts, ...rest }) => ({
+    ...rest,
+    contactNames: dealContacts.map(c => c.name!).filter(Boolean),
+  }))
+}
+
+// Upsert the Drive folder link + cached file list for a deal.
+// Passing null folderId clears a stale match (folder deleted or renamed).
+export async function updateDealDriveCache(
+  hubspotId: string,
+  data: DriveCacheUpdate
+): Promise<void> {
+  await prisma.deal.update({
+    where: { hubspotId },
+    data: {
+      driveFolderId: data.folderId,
+      driveFolderUrl: data.folderUrl,
+      driveFolderPath: data.folderPath,
+      driveFilesCache: data.filesCache ? JSON.parse(JSON.stringify(data.filesCache)) : null,
+      driveCacheUpdatedAt: data.folderId ? new Date() : null,
+    },
+  })
 }

@@ -428,6 +428,85 @@ CREATE TABLE sync_log (
 );
 ```
 
+### `activity_events` — Multi-source event log ✅ (M9+)
+
+Unified log for all external call/email activity. Replaces `deal_activities` for non-HubSpot sources going forward. HubSpot notes/calls still live in `deal_activities` (Layer 2).
+
+```sql
+CREATE TABLE activity_events (
+  id               SERIAL PRIMARY KEY,
+  deal_hubspot_id  TEXT REFERENCES deals(hubspot_id), -- null = unmatched (phone not in registry)
+  source           activity_source NOT NULL,           -- JUSTCALL | GOOGLE | HUBSPOT | USER | AI
+  external_id      TEXT NOT NULL,                      -- source-specific ID (JustCall call ID)
+  direction        TEXT,                               -- inbound | outbound
+  happened_at      TIMESTAMPTZ NOT NULL,
+  duration_secs    INT,
+  from_number      TEXT,
+  to_number        TEXT,
+  outcome          TEXT,                               -- answered | voicemail | no_answer | busy
+  agent_id         TEXT,                               -- JustCall agent ID
+  recording_url    TEXT,
+  raw_payload      JSONB,
+  UNIQUE (source, external_id)                        -- dedup on re-sync
+);
+-- Indexes: (deal_hubspot_id, happened_at), (source, happened_at)
+```
+
+Current data: 7,110 rows — all JUSTCALL (6,928 outbound, 182 inbound).
+
+### `call_transcripts` — Whisper + Claude classification ✅ (M10+)
+
+One row per activity_event that has an audio recording. Populated by the call classifier pipeline (Whisper → Claude).
+
+```sql
+CREATE TABLE call_transcripts (
+  id                  SERIAL PRIMARY KEY,
+  activity_event_id   INT UNIQUE REFERENCES activity_events(id),
+  classification      TEXT,   -- live | voicemail | disconnected | unknown | error
+  transcript          TEXT,
+  summary             TEXT,   -- Claude-generated 1-2 sentence summary
+  duration_secs       INT,
+  processed_at        TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+Current data: 2,432 rows — all classified. 5,000+ activity_events have no transcript (no recording URL, or classification='error' for 413s).
+
+Classification='error' rows are intentional tombstones — they permanently evict calls that will never be transcribed (413 audio too large, missing recording URL) from the backfill queue.
+
+### `phone_numbers` — E.164 phone registry ✅ (M9+)
+
+Normalized phone-to-deal index. Populated from `deal_contacts.phone_numbers` during Layer 2 sync. Used to match incoming JustCall calls to deals when JustCall provides no deal ID.
+
+```sql
+CREATE TABLE phone_numbers (
+  id            SERIAL PRIMARY KEY,
+  number_e164   TEXT NOT NULL,                    -- +14045551234 format, always
+  deal_hubspot_id TEXT REFERENCES deals(hubspot_id),
+  status        phone_status DEFAULT 'unknown',   -- active | disconnected | invalid | unknown
+  created_at    TIMESTAMPTZ DEFAULT NOW()
+);
+-- Indexes: (number_e164), (deal_hubspot_id)
+```
+
+Current data: 2,543 rows.
+
+### `sync_sources` — Integration registry ✅ (M9+)
+
+One row per external data source. Seeded with HUBSPOT (active), JUSTCALL (active), GOOGLE (inactive).
+
+### `pipeline_states` — Pipeline group status ⚠️ (M9 — created, never populated)
+
+Intended to track which pipeline group (setup/outreach/case_mgmt) each deal is currently in. Created in M9 but never written to. Currently 0 rows. May be removed if `PIPELINE_GROUP` constant + `deal.stage` lookup proves sufficient.
+
+### `deal_enriched` — PostgreSQL view ✅ (M11+)
+
+Always-fresh derived layer. No sync step — always computed from the `deals` table on read.
+
+Columns: `state` (GA/FL from address), `normalized_county` (from deal name), `owner_name` (third name segment), `tax_sale_year`, `case_age_months`, `amount_bucket` (small/mid/large/xlarge), `unique_call_days` (LEFT JOIN on activity_events), `call_intensity` (never_called/light/working/exhausted).
+
+**Scale note:** At 150 deals this view is fast. Above ~5,000 deals, convert to `CREATE MATERIALIZED VIEW` refreshed on Layer 1 sync completion.
+
 ---
 
 ## UI Structure
@@ -442,13 +521,11 @@ CREATE TABLE sync_log (
 All routes are password-protected. `/` redirects to `/login` if unauthenticated.
 
 - `/login` — Password gate, redirects to `/dashboard` on success
-- `/dashboard` — Attention queue home ✅
+- `/dashboard` (Queue) — Attention queue home ✅
+- `/dashboard/pipeline` — Portfolio analytics (deal_enriched view) ✅ (unplanned, shipped M11+)
+- `/dashboard/contacts` — Contact quality + owner tracking ✅ (unplanned, shipped M11+)
 - `/dashboard/tasks` — Mo's internal task list ✅
 - `/dashboard/settings` — Configurable thresholds + sync log ✅
-
-**Not building:**
-- `/dashboard/roadmap` — The markdown file IS the roadmap. An in-app editor adds no value. Nav link removed.
-- `/dashboard/drift` — Schema drift monitoring: interesting idea, not worth the complexity for 1 pipeline.
 
 ### Dashboard Home
 

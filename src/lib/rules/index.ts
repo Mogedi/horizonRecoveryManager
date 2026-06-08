@@ -3,6 +3,7 @@ import { checkStaleness } from './staleness'
 import { checkAgreement } from './agreement'
 import { checkSigned } from './signed'
 import { checkContacts } from './contacts'
+import { checkCallsExhausted } from './calls-exhausted'
 import type { NormalizedDeal, RuleContext, AttentionFlag } from './types'
 
 export type { NormalizedDeal, RuleContext, AttentionFlag }
@@ -16,7 +17,7 @@ export type DealWithFlags = {
 
 // Snooze runs first — if snoozed, skip all other rules.
 // Remaining rules run in priority order; a deal can have multiple flags.
-const RULES = [checkStaleness, checkAgreement, checkSigned, checkContacts]
+const RULES = [checkStaleness, checkAgreement, checkSigned, checkContacts, checkCallsExhausted]
 
 export function applyRules(deal: NormalizedDeal, ctx: RuleContext): AttentionFlag[] {
   const snoozeFlag = checkSnooze(deal, ctx)

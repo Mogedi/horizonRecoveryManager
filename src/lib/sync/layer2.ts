@@ -1,7 +1,6 @@
 import { getAssociationIds, batchReadObjects, batchReadContacts } from '@/lib/hubspot/client'
 import { mapContact, mapActivity } from '@/lib/hubspot/mapper'
-import { prisma } from '@/lib/db/client'
-import { asJson } from '@/lib/utils/json'
+import { replaceLayer2Data } from '@/lib/db/activities'
 import {
   assertDailyLimitOk,
   startSyncLog,
@@ -70,43 +69,8 @@ export async function runLayer2Sync(hubspotDealId: string): Promise<Layer2SyncRe
   const mappedContacts = contacts.map(r => mapContact(r))
 
   try {
-    // Step 4: Delete + reinsert in a single transaction
-    await prisma.$transaction(async (tx) => {
-      await tx.dealActivity.deleteMany({ where: { dealHubspotId: hubspotDealId } })
-      await tx.dealContact.deleteMany({ where: { dealHubspotId: hubspotDealId } })
-
-      if (mappedActivities.length > 0) {
-        await tx.dealActivity.createMany({
-          data: mappedActivities.map(a => ({
-            dealHubspotId: hubspotDealId,
-            type: a.type,
-            body: a.body,
-            authorOwnerId: a.authorOwnerId,
-            direction: a.direction,
-            timestamp: a.timestamp,
-            metadata: asJson(a.metadata ?? undefined),
-            rawPayload: asJson(a.rawPayload ?? undefined),
-          })),
-        })
-      }
-
-      if (mappedContacts.length > 0) {
-        await tx.dealContact.createMany({
-          data: mappedContacts.map(c => ({
-            dealHubspotId: hubspotDealId,
-            contactHubspotId: c.contactHubspotId,
-            name: c.name,
-            contactType: c.contactType,
-            ownershipStatus: c.ownershipStatus,
-            isDeceased: c.isDeceased,
-            doNotContact: c.doNotContact,
-            phoneNumbers: c.phoneNumbers,
-            emailList: c.emailList,
-            rawPayload: asJson(c.rawPayload ?? undefined),
-          })),
-        })
-      }
-    })
+    // Step 4: Delete + reinsert via db/activities.ts (30s timeout, enforced by withTransaction)
+    await replaceLayer2Data(hubspotDealId, mappedActivities, mappedContacts)
 
     await completeSyncLog(logEntry.id, apiCallsMade, 1)
     return {

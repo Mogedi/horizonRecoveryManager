@@ -1,7 +1,10 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import useSWR from 'swr'
+
+const fetcher = (url: string) => fetch(url).then(r => r.ok ? r.json() : Promise.reject(new Error(r.statusText)))
 
 type TaskDeal = { name: string | null; hubspotId: string } | null
 
@@ -214,34 +217,18 @@ function AddTaskForm({ onCreated }: { onCreated: () => void }) {
 
 export default function TasksPage() {
   const router = useRouter()
-  const [data, setData] = useState<TasksResponse | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const { data, error, isLoading, mutate } = useSWR<TasksResponse>('/api/tasks', fetcher)
   const [showForm, setShowForm] = useState(false)
-
-  const fetchTasks = useCallback(async () => {
-    try {
-      const res = await fetch('/api/tasks')
-      if (!res.ok) throw new Error(`${res.status}`)
-      setData(await res.json())
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load tasks')
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => { fetchTasks() }, [fetchTasks])
 
   const handleComplete = async (id: number) => {
     await fetch(`/api/tasks/${id}`, { method: 'PATCH' })
-    await fetchTasks()
+    await mutate()
   }
 
   const handleDelete = async (id: number) => {
     if (!confirm('Delete this task?')) return
     await fetch(`/api/tasks/${id}`, { method: 'DELETE' })
-    await fetchTasks()
+    await mutate()
   }
 
   const handleOpenDeal = (hubspotId: string) => {
@@ -278,7 +265,7 @@ export default function TasksPage() {
       {/* Error */}
       {error && (
         <div className="mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
-          {error}
+          {error.message ?? 'Failed to load tasks'}
         </div>
       )}
 
@@ -287,13 +274,13 @@ export default function TasksPage() {
         <AddTaskForm
           onCreated={() => {
             setShowForm(false)
-            fetchTasks()
+            mutate()
           }}
         />
       )}
 
       {/* Loading */}
-      {loading && (
+      {isLoading && (
         <div className="space-y-2">
           {[0, 1, 2].map(i => (
             <div key={i} className="h-12 bg-gray-100 rounded animate-pulse" />
@@ -302,7 +289,7 @@ export default function TasksPage() {
       )}
 
       {/* Open tasks by category */}
-      {!loading && (
+      {!isLoading && (
         <>
           {openTasks.length === 0 ? (
             <div className="text-center py-16 text-gray-400 text-sm">

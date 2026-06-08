@@ -48,3 +48,10 @@ export class BrowserError extends IntegrationError {
     this.name = 'BrowserError'
   }
 }
+
+export class OpenAIError extends IntegrationError {
+  constructor(message: string, public readonly status?: number, cause?: unknown) {
+    super(message, cause)
+    this.name = 'OpenAIError'
+  }
+}

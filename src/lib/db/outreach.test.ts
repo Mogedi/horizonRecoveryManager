@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { computeOutreachMatrix, type RawContact, type RawEvent } from './outreach'
+import {
+  computeOutreachMatrix,
+  deriveDetailedOutcome,
+  classifyVoicemailSubtype,
+  type RawContact,
+  type RawEvent,
+} from './outreach'
 
 // Fixture contacts — based on real deal 321285583585 (TROUP - James Baker), simplified to 2 contacts.
 // Phone numbers and IDs are real values from docs/research/outreach-fixtures.json.
@@ -137,9 +143,9 @@ describe('computeOutreachMatrix', () => {
     expect(matrix.days).toHaveLength(2)
   })
 
-  it('orders days chronologically', () => {
-    expect(matrix.days[0].date).toBe('2026-04-22')
-    expect(matrix.days[1].date).toBe('2026-04-23')
+  it('orders days newest first', () => {
+    expect(matrix.days[0].date).toBe('2026-04-23')  // most recent
+    expect(matrix.days[1].date).toBe('2026-04-22')  // older
   })
 
   it('counts calls per day', () => {
@@ -153,8 +159,10 @@ describe('computeOutreachMatrix', () => {
   })
 
   it('lists contacts reached each day by name', () => {
-    expect(matrix.days[0].contactsReached).toEqual(['James Baker'])
-    expect(matrix.days[1].contactsReached).toEqual(['Latosha Lockhart'])
+    const day22 = matrix.days.find(d => d.date === '2026-04-22')!
+    const day23 = matrix.days.find(d => d.date === '2026-04-23')!
+    expect(day22.contactsReached).toEqual(['James Baker'])
+    expect(day23.contactsReached).toEqual(['Latosha Lockhart'])
   })
 
   // ── Edge cases ─────────────────────────────────────────────────────────────
@@ -228,5 +236,494 @@ describe('computeOutreachMatrix', () => {
     expect(result.contacts[0].reached).toBe(true)
     expect(result.contacts[0].phones[0].everAnswered).toBe(true)
     expect(result.contacts[0].phones[0].numberE164).toBe('+14789604086')
+  })
+})
+
+// ── Session drilldown (calls per day) ──────────────────────────────────────────
+
+describe('computeOutreachMatrix — session calls per day', () => {
+  // Enrich EVENTS with id fields to test activityEventId mapping
+  const enrichedEvents: RawEvent[] = [
+    { id: 1, happenedAt: DAY1, direction: 'outbound', outcome: 'answered',  toNumber: '+17069751509', fromNumber: '+14782802726', durationSecs: 23 },
+    { id: 2, happenedAt: DAY1, direction: 'outbound', outcome: 'no_answer', toNumber: '+17066685460', fromNumber: '+14782802726', durationSecs: 0  },
+    { id: 3, happenedAt: DAY1, direction: 'outbound', outcome: 'no_answer', toNumber: '+19123143349', fromNumber: '+14782802726', durationSecs: 0  },
+    { id: 4, happenedAt: DAY2, direction: 'outbound', outcome: 'voicemail', toNumber: '+17069751509', fromNumber: '+14782802726', durationSecs: 32 },
+    { id: 5, happenedAt: DAY2, direction: 'outbound', outcome: 'answered',  toNumber: '+19123143349', fromNumber: '+14782802726', durationSecs: 45 },
+    { id: 6, happenedAt: DAY2, direction: 'outbound', outcome: 'no_answer', toNumber: '+19125314866', fromNumber: '+14782802726', durationSecs: 0  },
+  ]
+  const matrix = computeOutreachMatrix('321285583585', [JAMES, LATOSHA], enrichedEvents)
+
+  it('each day has a calls array matching callCount', () => {
+    expect(matrix.days[0].calls).toHaveLength(3)
+    expect(matrix.days[1].calls).toHaveLength(3)
+  })
+
+  it('calls within a day are sorted chronologically', () => {
+    const day1 = matrix.days[0].calls
+    for (let i = 1; i < day1.length; i++) {
+      expect(day1[i].happenedAt.getTime()).toBeGreaterThanOrEqual(day1[i - 1].happenedAt.getTime())
+    }
+  })
+
+  it('resolves contact name from phone number', () => {
+    const day1 = matrix.days[0].calls
+    const jamesCall = day1.find(c => c.phoneNumber === '+17069751509')!
+    expect(jamesCall.contactName).toBe('James Baker')
+  })
+
+  it('sets contactHubspotId from phone number match', () => {
+    const day1 = matrix.days[0].calls
+    const jamesCall = day1.find(c => c.phoneNumber === '+17069751509')!
+    expect(jamesCall.contactHubspotId).toBe('473038900962')
+  })
+
+  it('maps activityEventId from id field', () => {
+    const day22 = matrix.days.find(d => d.date === '2026-04-22')!
+    const firstCall = day22.calls[0]
+    expect(firstCall.activityEventId).toBe(1)
+  })
+
+  it('activityEventId defaults to 0 when id is absent', () => {
+    const eventsWithoutId: RawEvent[] = [
+      { happenedAt: DAY1, direction: 'outbound', outcome: 'answered', toNumber: '+17069751509', fromNumber: '+14782802726', durationSecs: 30 },
+    ]
+    const result = computeOutreachMatrix('x', [JAMES], eventsWithoutId)
+    expect(result.days[0].calls[0].activityEventId).toBe(0)
+  })
+
+  it('sets contactName to null when phone is not in any contact', () => {
+    const unknownPhoneEvent: RawEvent = {
+      id: 99,
+      happenedAt: DAY1,
+      direction: 'outbound',
+      outcome: 'no_answer',
+      toNumber: '+10000000000',  // not in any contact
+      fromNumber: '+14782802726',
+      durationSecs: 0,
+    }
+    const result = computeOutreachMatrix('x', [JAMES], [unknownPhoneEvent])
+    expect(result.days[0].calls[0].contactName).toBeNull()
+    expect(result.days[0].calls[0].contactHubspotId).toBeNull()
+  })
+
+  it('sets outcome correctly on each call', () => {
+    const day22 = matrix.days.find(d => d.date === '2026-04-22')!.calls
+    const jamesCall = day22.find(c => c.phoneNumber === '+17069751509')!
+    expect(jamesCall.outcome).toBe('answered')
+    const noAnswerCall = day22.find(c => c.phoneNumber === '+17066685460')!
+    expect(noAnswerCall.outcome).toBe('no_answer')
+  })
+})
+
+// ── transcriptStatus logic ─────────────────────────────────────────────────────
+
+describe('computeOutreachMatrix — transcriptStatus', () => {
+  const base = (overrides: Partial<RawEvent>): RawEvent => ({
+    happenedAt: DAY1,
+    direction: 'outbound',
+    outcome: 'answered',
+    toNumber: '+17069751509',
+    fromNumber: '+14782802726',
+    durationSecs: 30,
+    ...overrides,
+  })
+
+  function getStatus(ev: RawEvent) {
+    const result = computeOutreachMatrix('x', [JAMES], [ev])
+    return result.days[0].calls[0].transcriptStatus
+  }
+
+  it('returns available when transcript text is present', () => {
+    expect(getStatus(base({ transcript: 'Please leave a message after the beep.' }))).toBe('available')
+  })
+
+  it('returns too_short when durationSecs is 0', () => {
+    expect(getStatus(base({ durationSecs: 0 }))).toBe('too_short')
+  })
+
+  it('returns too_short when durationSecs is 3', () => {
+    expect(getStatus(base({ durationSecs: 3 }))).toBe('too_short')
+  })
+
+  it('returns too_short when durationSecs is null (unknown short call)', () => {
+    expect(getStatus(base({ durationSecs: null }))).toBe('too_short')
+  })
+
+  it('does NOT return too_short when durationSecs is 4 or more', () => {
+    expect(getStatus(base({ durationSecs: 4 }))).not.toBe('too_short')
+  })
+
+  it('returns no_recording when hasRecording is explicitly false', () => {
+    expect(getStatus(base({ durationSecs: 30, hasRecording: false }))).toBe('no_recording')
+  })
+
+  it('returns not_started when call is long enough, has a recording, but no transcript yet', () => {
+    expect(getStatus(base({ durationSecs: 30, hasRecording: true }))).toBe('not_started')
+  })
+
+  it('returns not_started when hasRecording is undefined (legacy events)', () => {
+    expect(getStatus(base({ durationSecs: 30 }))).toBe('not_started')
+  })
+
+  it('transcript: available takes priority over too_short duration', () => {
+    // A transcript was produced from a 2s clip — unusual but possible
+    expect(getStatus(base({ durationSecs: 2, transcript: 'The number is not in service.' }))).toBe('available')
+  })
+})
+
+// ── displaySummary derivation ──────────────────────────────────────────────────
+
+describe('computeOutreachMatrix — displaySummary', () => {
+  const base = (overrides: Partial<RawEvent>): RawEvent => ({
+    happenedAt: DAY1,
+    direction: 'outbound',
+    outcome: 'answered',
+    toNumber: '+17069751509',
+    fromNumber: '+14782802726',
+    durationSecs: 30,
+    ...overrides,
+  })
+
+  function getSummary(ev: RawEvent) {
+    const result = computeOutreachMatrix('x', [JAMES], [ev])
+    return result.days[0].calls[0].displaySummary
+  }
+
+  it('uses DB summary (AI-generated) when present', () => {
+    expect(getSummary(base({
+      transcriptSummary: 'James Baker confirmed he received the letter.',
+      transcriptClassification: 'live',
+    }))).toBe('James Baker confirmed he received the letter.')
+  })
+
+  it('returns disconnected message for disconnected calls', () => {
+    expect(getSummary(base({
+      transcriptClassification: 'disconnected',
+      transcript: 'The number you have reached is not in service.',
+    }))).toBe('Number appears disconnected or no longer in service.')
+  })
+
+  it('returns voicemail-full message when mailbox is full', () => {
+    expect(getSummary(base({
+      transcriptClassification: 'voicemail',
+      transcript: 'The mailbox is full and cannot accept messages at this time.',
+    }))).toContain('mailbox full')
+  })
+
+  it('returns message-left summary when transcript mentions leaving a message', () => {
+    expect(getSummary(base({
+      transcriptClassification: 'voicemail',
+      transcript: 'Hi, please leave a message after the beep.',
+    }))).toContain('left a callback message')
+  })
+
+  it('returns callback message when transcript mentions "trying to reach"', () => {
+    expect(getSummary(base({
+      transcriptClassification: 'voicemail',
+      transcript: "Hi, this is Kathleen. I'm trying to reach James Baker. Please call us back.",
+    }))).toContain('callback message')
+  })
+
+  it('returns message-left summary when no specific voicemail pattern matches (default: trust employee)', () => {
+    expect(getSummary(base({
+      transcriptClassification: 'voicemail',
+      transcript: 'Voicemail greeting with no standard phrases.',
+    }))).toBe('Reached voicemail — left a callback message.')
+  })
+
+  it('returns null for live classification with no DB summary (backfill pending)', () => {
+    expect(getSummary(base({
+      transcriptClassification: 'live',
+      transcript: 'Hello, who is this?',
+    }))).toBeNull()
+  })
+
+  it('returns null when no transcript and no classification', () => {
+    expect(getSummary(base({ durationSecs: 30 }))).toBeNull()
+  })
+
+  it('DB summary takes priority over derived voicemail logic', () => {
+    expect(getSummary(base({
+      transcriptSummary: 'Custom AI summary here.',
+      transcriptClassification: 'voicemail',
+      transcript: 'Please leave a message after the beep.',
+    }))).toBe('Custom AI summary here.')
+  })
+})
+
+// ── classifyVoicemailSubtype ───────────────────────────────────────────────────
+
+describe('classifyVoicemailSubtype', () => {
+  it('detects mailbox full — "mailbox is full"', () => {
+    expect(classifyVoicemailSubtype('The mailbox is full. Please try again later.')).toBe('voicemail_full')
+  })
+
+  it('detects mailbox full — "not accept messages"', () => {
+    expect(classifyVoicemailSubtype('This mailbox is full and cannot accept messages at this time.')).toBe('voicemail_full')
+  })
+
+  it('detects message left — "leave a message after the beep"', () => {
+    expect(classifyVoicemailSubtype('Please leave a message after the beep.')).toBe('voicemail_msg_left')
+  })
+
+  it('detects message left — "after the tone"', () => {
+    expect(classifyVoicemailSubtype('Please leave your message after the tone.')).toBe('voicemail_msg_left')
+  })
+
+  it('detects message left — "at the tone"', () => {
+    expect(classifyVoicemailSubtype('At the tone, please record your message.')).toBe('voicemail_msg_left')
+  })
+
+  it('detects message left — "record your message"', () => {
+    expect(classifyVoicemailSubtype('Please record your message after the beep.')).toBe('voicemail_msg_left')
+  })
+
+  it('detects message left — "trying to reach" (Kathleen-drop pattern)', () => {
+    expect(classifyVoicemailSubtype(
+      "Hi, this is Kathleen. I'm trying to reach James Baker. Please call us back.",
+    )).toBe('voicemail_msg_left')
+  })
+
+  it('detects message left — "please give us a call"', () => {
+    expect(classifyVoicemailSubtype('Please give us a call back at your earliest convenience.')).toBe('voicemail_msg_left')
+  })
+
+  it('detects message left — "call us back"', () => {
+    expect(classifyVoicemailSubtype('Hi, please call us back when you get a chance.')).toBe('voicemail_msg_left')
+  })
+
+  it('detects no message left — "not available"', () => {
+    expect(classifyVoicemailSubtype('The person is not available. Please try again later.')).toBe('voicemail_no_msg')
+  })
+
+  it('detects no message left — "unable to take"', () => {
+    expect(classifyVoicemailSubtype('Unable to take your call at the moment.')).toBe('voicemail_no_msg')
+  })
+
+  it('defaults to voicemail_msg_left when no pattern matches', () => {
+    // Trust the employee — when we can't tell, assume message was left
+    expect(classifyVoicemailSubtype('Generic voicemail text with no recognizable pattern.')).toBe('voicemail_msg_left')
+  })
+
+  it('voicemail_full takes priority over message-left signals', () => {
+    // Unusual edge: mailbox full message mentions "leave a message" anyway
+    expect(classifyVoicemailSubtype(
+      'The mailbox is full. You cannot leave a message at this time.',
+    )).toBe('voicemail_full')
+  })
+})
+
+// ── deriveDetailedOutcome ─────────────────────────────────────────────────────
+
+describe('deriveDetailedOutcome', () => {
+  const base = (overrides: Partial<RawEvent>): RawEvent => ({
+    happenedAt: DAY1,
+    direction: 'outbound',
+    outcome: 'answered',
+    toNumber: '+17069751509',
+    fromNumber: '+14782802726',
+    durationSecs: 30,
+    ...overrides,
+  })
+
+  it('no_answer outcome → no_answer', () => {
+    expect(deriveDetailedOutcome(base({ outcome: 'no_answer' }))).toBe('no_answer')
+  })
+
+  it('busy outcome → busy', () => {
+    expect(deriveDetailedOutcome(base({ outcome: 'busy' }))).toBe('busy')
+  })
+
+  it('voicemail outcome with no transcript → voicemail_msg_left (default: trust employee)', () => {
+    expect(deriveDetailedOutcome(base({ outcome: 'voicemail', durationSecs: 30 }))).toBe('voicemail_msg_left')
+  })
+
+  it('voicemail outcome with full-mailbox transcript → voicemail_full', () => {
+    expect(deriveDetailedOutcome(base({
+      outcome: 'voicemail',
+      transcript: 'The mailbox is full and cannot accept messages at this time.',
+      transcriptClassification: 'voicemail',
+    }))).toBe('voicemail_full')
+  })
+
+  it('voicemail outcome with standard VM transcript → voicemail_msg_left', () => {
+    expect(deriveDetailedOutcome(base({
+      outcome: 'voicemail',
+      transcript: 'Please leave a message after the beep.',
+      transcriptClassification: 'voicemail',
+    }))).toBe('voicemail_msg_left')
+  })
+
+  it('answered + classification live + duration 30s → conversation', () => {
+    expect(deriveDetailedOutcome(base({
+      transcript: 'Hello, who is this?',
+      transcriptClassification: 'live',
+      durationSecs: 30,
+    }))).toBe('conversation')
+  })
+
+  it('answered + classification live + duration 8s → conversation (8s is the minimum threshold)', () => {
+    expect(deriveDetailedOutcome(base({
+      transcript: 'Hello, yes.',
+      transcriptClassification: 'live',
+      durationSecs: 8,
+    }))).toBe('conversation')
+  })
+
+  it('answered + classification live + duration 7s → brief_answered (VM greeting misclassified as live)', () => {
+    // Whisper sometimes drops negation prefixes — "unable to take your call" becomes
+    // "able to take your call" — making the classifier see live speech. Duration gate catches this.
+    expect(deriveDetailedOutcome(base({
+      transcript: 'Able to take your call at the moment.',
+      transcriptClassification: 'live',
+      durationSecs: 7,
+    }))).toBe('brief_answered')
+  })
+
+  it('answered + classification live + duration 5s → brief_answered', () => {
+    expect(deriveDetailedOutcome(base({
+      transcript: 'Hello?',
+      transcriptClassification: 'live',
+      durationSecs: 5,
+    }))).toBe('brief_answered')
+  })
+
+  it('answered + classification disconnected → dead_line', () => {
+    expect(deriveDetailedOutcome(base({
+      transcript: 'The number you have reached is not in service.',
+      transcriptClassification: 'disconnected',
+    }))).toBe('dead_line')
+  })
+
+  it('answered + classification voicemail + full mailbox transcript → voicemail_full', () => {
+    expect(deriveDetailedOutcome(base({
+      transcript: 'The mailbox is full.',
+      transcriptClassification: 'voicemail',
+    }))).toBe('voicemail_full')
+  })
+
+  it('answered + classification voicemail + standard transcript → voicemail_msg_left', () => {
+    expect(deriveDetailedOutcome(base({
+      transcript: 'Please leave a message after the beep.',
+      transcriptClassification: 'voicemail',
+    }))).toBe('voicemail_msg_left')
+  })
+
+  it('answered + no transcript + durationSecs < 4 → brief_answered', () => {
+    expect(deriveDetailedOutcome(base({ durationSecs: 3 }))).toBe('brief_answered')
+  })
+
+  it('answered + no transcript + durationSecs 0 → brief_answered', () => {
+    expect(deriveDetailedOutcome(base({ durationSecs: 0 }))).toBe('brief_answered')
+  })
+
+  it('answered + no transcript + hasRecording false → recording_unavailable', () => {
+    expect(deriveDetailedOutcome(base({ durationSecs: 30, hasRecording: false }))).toBe('recording_unavailable')
+  })
+
+  it('answered + no transcript + hasRecording true → pending_transcript', () => {
+    expect(deriveDetailedOutcome(base({ durationSecs: 30, hasRecording: true }))).toBe('pending_transcript')
+  })
+
+  it('answered + no transcript + hasRecording undefined (legacy) → pending_transcript', () => {
+    expect(deriveDetailedOutcome(base({ durationSecs: 30 }))).toBe('pending_transcript')
+  })
+
+  it('answered + unknown classification + durationSecs < 4 → brief_answered', () => {
+    expect(deriveDetailedOutcome(base({
+      transcript: '...',
+      transcriptClassification: 'unknown',
+      durationSecs: 2,
+    }))).toBe('brief_answered')
+  })
+
+  it('answered + unknown classification + durationSecs >= 4 → pending_transcript', () => {
+    expect(deriveDetailedOutcome(base({
+      transcript: '...',
+      transcriptClassification: 'unknown',
+      durationSecs: 30,
+    }))).toBe('pending_transcript')
+  })
+})
+
+// ── Day-level counts (conversationCount, voicemailCount, deadLineCount) ────────
+
+describe('computeOutreachMatrix — day counts', () => {
+  it('conversationCount = 0 when no call has a live transcript', () => {
+    // All EVENTS in the main fixture have no transcripts — pending_transcript or no_answer/voicemail
+    const matrix = computeOutreachMatrix('321285583585', [JAMES, LATOSHA], EVENTS)
+    expect(matrix.days[0].conversationCount).toBe(0)
+    expect(matrix.days[1].conversationCount).toBe(0)
+  })
+
+  it('conversationCount increments for each call classified as live', () => {
+    const events: RawEvent[] = [
+      {
+        happenedAt: DAY1, direction: 'outbound', outcome: 'answered', toNumber: '+17069751509',
+        fromNumber: '+14782802726', durationSecs: 60,
+        transcript: 'Hello, this is James.', transcriptClassification: 'live',
+      },
+      {
+        happenedAt: DAY1, direction: 'outbound', outcome: 'answered', toNumber: '+19123143349',
+        fromNumber: '+14782802726', durationSecs: 45,
+        transcript: 'Hi there!', transcriptClassification: 'live',
+      },
+    ]
+    const matrix = computeOutreachMatrix('x', [JAMES, LATOSHA], events)
+    expect(matrix.days[0].conversationCount).toBe(2)
+  })
+
+  it('voicemailCount counts all voicemail subtypes', () => {
+    const events: RawEvent[] = [
+      // voicemail_msg_left
+      {
+        happenedAt: DAY1, direction: 'outbound', outcome: 'voicemail', toNumber: '+17069751509',
+        fromNumber: '+14782802726', durationSecs: 32,
+        transcript: 'Please leave a message after the beep.', transcriptClassification: 'voicemail',
+      },
+      // voicemail_full
+      {
+        happenedAt: DAY1, direction: 'outbound', outcome: 'voicemail', toNumber: '+19123143349',
+        fromNumber: '+14782802726', durationSecs: 15,
+        transcript: 'The mailbox is full.', transcriptClassification: 'voicemail',
+      },
+    ]
+    const matrix = computeOutreachMatrix('x', [JAMES, LATOSHA], events)
+    expect(matrix.days[0].voicemailCount).toBe(2)
+  })
+
+  it('deadLineCount increments for dead_line calls', () => {
+    const events: RawEvent[] = [
+      {
+        happenedAt: DAY1, direction: 'outbound', outcome: 'answered', toNumber: '+17069751509',
+        fromNumber: '+14782802726', durationSecs: 10,
+        transcript: 'The number you have reached is not in service.', transcriptClassification: 'disconnected',
+      },
+    ]
+    const matrix = computeOutreachMatrix('x', [JAMES], events)
+    expect(matrix.days[0].deadLineCount).toBe(1)
+  })
+
+  it('no_answer and busy calls do not affect voicemail or conversation counts', () => {
+    const events: RawEvent[] = [
+      { happenedAt: DAY1, direction: 'outbound', outcome: 'no_answer', toNumber: '+17069751509', fromNumber: '+14782802726', durationSecs: 0 },
+      { happenedAt: DAY1, direction: 'outbound', outcome: 'busy', toNumber: '+17066685460', fromNumber: '+14782802726', durationSecs: 0 },
+    ]
+    const matrix = computeOutreachMatrix('x', [JAMES], events)
+    expect(matrix.days[0].conversationCount).toBe(0)
+    expect(matrix.days[0].voicemailCount).toBe(0)
+    expect(matrix.days[0].deadLineCount).toBe(0)
+  })
+
+  it('detailedOutcome is set on each SessionCall', () => {
+    const events: RawEvent[] = [
+      {
+        happenedAt: DAY1, direction: 'outbound', outcome: 'answered', toNumber: '+17069751509',
+        fromNumber: '+14782802726', durationSecs: 60,
+        transcript: 'Hello, how can I help you?', transcriptClassification: 'live',
+      },
+    ]
+    const matrix = computeOutreachMatrix('x', [JAMES], events)
+    expect(matrix.days[0].calls[0].detailedOutcome).toBe('conversation')
   })
 })

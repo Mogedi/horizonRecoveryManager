@@ -166,8 +166,37 @@ All M0–M8 milestones shipped.
 | A2P texting fix | 2026-06 | Submit support ticket to fix text messaging |
 | Website update needed | 2026-06 | Track as internal task |
 | JustCall webhook (vs polling) | 2026-06 | Webhook would give real-time call events; polling is good enough for daily cadence checks |
+| Cross-source deal reconciliation / AI Case Manager | 2026-06 | See vision below |
+
+### Vision: AI Case Manager
+
+The idea is a per-deal "source of truth" reconciliation that continuously checks whether all data sources agree.
+
+**Sources to compare:**
+- HubSpot deal record (address, parcel ID, contact names, sale date, stage)
+- Tax Sale Deed (extracted via doc verification)
+- PropertyRadar profile (extracted via doc verification)
+- HubSpot activity notes (case manager updates, attorney correspondence)
+
+**What it produces:**
+- A side-by-side field comparison table: "HubSpot says parcel 123 — Deed says 123 ✓ — PropertyRadar says 123 ✓"
+- A list of discrepancies: "HubSpot contact is Linda Brown, deed lists Linda J Brown AND Isaac S Monroe — Isaac not tracked"
+- A one-paragraph case health summary: what's confirmed, what's unresolved, what needs attention next
+- An "untracked parties" alert: any person named in the deed who is not a HubSpot contact
+
+**When to run:**
+- On-demand (button in deal panel) — no auto-regeneration, same rule as AI summaries
+- Possibly triggered when new notes come in with certain keywords (attorney update, filing, etc.) — deferred
+
+**Why it's close:**
+- Doc verification already extracts deed + PropertyRadar fields and compares them
+- HubSpot deal fields are already in the DB
+- The missing piece is a comparison pass between `consolidatedData` and `deal.*` fields, surfaced as a structured table rather than free-text mismatches
+- Owner tracking check (tax lien debtors vs. contacts) is already built as of 2026-06
+
+**Estimated effort:** ~4 hours to add cross-source field comparison table + case health summary. Notes-triggered re-check is larger (needs event listener on HubSpot notes sync).
 
 ---
 
-*Last updated: 2026-06-07 (M8 complete, M9 starting)*
+*Last updated: 2026-06-08 (M8 complete, M9 starting)*
 *Strategic direction: multi-source communications intelligence via JustCall + Google Workspace*

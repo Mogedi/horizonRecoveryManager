@@ -24,13 +24,6 @@ enum PhoneStatus {
   unknown
 }
 
-// M9+: Pipeline group a deal belongs to (derived from stage ID via PIPELINE_GROUP constant)
-enum PipelineGroup {
-  setup
-  outreach
-  case_mgmt
-  terminal
-}
 
 enum SnoozeCategory {
   waiting_on_attorney
@@ -83,6 +76,15 @@ model Deal {
   callAttemptCount  Int       @default(0) @map("call_attempt_count")
   lastCallAttemptAt DateTime? @map("last_call_attempt_at") @db.Timestamptz(6)
 
+  // Google Drive — populated by drive indexing job; null until indexed
+  driveFolderId       String?   @map("drive_folder_id")
+  driveFolderUrl      String?   @map("drive_folder_url")
+  driveFolderPath     String?   @map("drive_folder_path")      // e.g. "HorizonRecovery Onboarding > Georgia Cases > ..."
+  driveFilesCache     Json?     @map("drive_files_cache")      // DriveFileEntry[] — cached at index time
+  driveCacheUpdatedAt DateTime? @map("drive_cache_updated_at") @db.Timestamptz(6)
+  docVerification     Json?     @map("doc_verification")       // FullVerificationReport — cached AI doc check
+  docVerificationAt   DateTime? @map("doc_verification_at")   @db.Timestamptz(6)
+
   activities     DealActivity[]
   contacts       DealContact[]
   snoozes        DealSnooze[]
@@ -90,7 +92,6 @@ model Deal {
   tasks          InternalTask[]
   activityEvents ActivityEvent[]  // M9+
   phoneNumbers   PhoneNumber[]    // M9+
-  pipelineStates PipelineState[]  // M9+
 
   @@map("deals")
 }
@@ -130,6 +131,7 @@ model DealContact {
 
   deal Deal @relation(fields: [dealHubspotId], references: [hubspotId])
 
+  @@index([dealHubspotId])
   @@map("deal_contacts")
 }
 
@@ -220,7 +222,8 @@ model ActivityEvent {
   rawPayload    Json?          @map("raw_payload")
   createdAt     DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  deal Deal? @relation(fields: [dealHubspotId], references: [hubspotId], onDelete: Cascade)
+  deal       Deal?           @relation(fields: [dealHubspotId], references: [hubspotId], onDelete: Cascade)
+  transcript CallTranscript?
 
   @@unique([source, externalId], name: "activity_events_dedup")
   @@index([dealHubspotId, happenedAt])
@@ -248,19 +251,21 @@ model PhoneNumber {
 
 // M9+: Operational state per deal per pipeline group.
 // One row per (deal, pipeline). Auto-computed from event data in future; seeded for now.
-model PipelineState {
-  id            Int           @id @default(autoincrement())
-  dealHubspotId String        @map("deal_hubspot_id")
-  pipeline      PipelineGroup
-  status        String        @default("not_started") // not_started | active | completed | blocked
-  enteredAt     DateTime?     @map("entered_at") @db.Timestamptz(6)
-  completedAt   DateTime?     @map("completed_at") @db.Timestamptz(6)
-  updatedAt     DateTime      @default(now()) @map("updated_at") @db.Timestamptz(6)
 
-  deal Deal @relation(fields: [dealHubspotId], references: [hubspotId], onDelete: Cascade)
+// Call transcript + classification — written by call-classifier microservice only.
+// One row per ActivityEvent (outbound answered calls only). Never written by sync.
+model CallTranscript {
+  id              Int       @id @default(autoincrement())
+  activityEventId Int       @unique @map("activity_event_id")
+  transcript      String    @db.Text       // full Whisper output
+  classification  String?                  // 'live' | 'voicemail' | 'disconnected' | 'unknown'
+  summary         String?   @db.Text       // Claude summary — live calls only
+  whisperSecs     Float?    @map("whisper_secs")  // audio duration from Whisper response metadata
+  processedAt     DateTime  @default(now()) @map("processed_at") @db.Timestamptz(6)
 
-  @@unique([dealHubspotId, pipeline])
-  @@map("pipeline_states")
+  event ActivityEvent @relation(fields: [activityEventId], references: [id], onDelete: Cascade)
+
+  @@map("call_transcripts")
 }
 
 // M9+: Integration registry — one row per external data source.

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/db/client'
+import { getDealById } from '@/lib/db/deals'
+import { getDealEnrichedById } from '@/lib/db/analytics'
 import { loadStageMap, loadOwnerMap } from '@/lib/db/settings'
 import { getActivitiesForDeal, getLayer2SyncedAt } from '@/lib/db/activities'
 import { getContactsForDeal } from '@/lib/db/contacts'
@@ -9,26 +10,8 @@ import { getLatestSummary } from '@/lib/db/summaries'
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
 
-  const [deal, activities, contacts, snooze, snoozeHistory, stageMap, ownerMap, summary] = await Promise.all([
-    prisma.deal.findUnique({
-      where: { hubspotId: id },
-      select: {
-        hubspotId: true,
-        name: true,
-        stage: true,
-        ownerId: true,
-        amount: true,
-        hubspotUrl: true,
-        propertyAddress: true,
-        county: true,
-        parcelId: true,
-        taxSaleDate: true,
-        contactCount: true,
-        lastActivityDate: true,
-        stageEnteredAt: true,
-        syncedAt: true,
-      },
-    }),
+  const [deal, activities, contacts, snooze, snoozeHistory, stageMap, ownerMap, summary, enriched] = await Promise.all([
+    getDealById(id),
     getActivitiesForDeal(id),
     getContactsForDeal(id),
     getActiveSnooze(id),
@@ -36,6 +19,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     loadStageMap(),
     loadOwnerMap(),
     getLatestSummary(id),
+    getDealEnrichedById(id),
   ])
 
   if (!deal) return NextResponse.json({ error: 'Not found' }, { status: 404 })
@@ -103,5 +87,6 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     summaryData: summary
       ? { json: summary.summaryJson, generatedAt: summary.generatedAt }
       : null,
+    enriched,
   })
 }

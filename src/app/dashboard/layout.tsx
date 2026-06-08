@@ -22,7 +22,13 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
         </div>
         <nav className="flex-1 px-2 py-4 space-y-1">
           <Link href="/dashboard" className="flex items-center px-3 py-2 text-sm text-gray-700 rounded-md hover:bg-gray-50">
-            Dashboard
+            Queue
+          </Link>
+          <Link href="/dashboard/pipeline" className="flex items-center px-3 py-2 text-sm text-gray-700 rounded-md hover:bg-gray-50">
+            Pipeline
+          </Link>
+          <Link href="/dashboard/contacts" className="flex items-center px-3 py-2 text-sm text-gray-700 rounded-md hover:bg-gray-50">
+            Contacts
           </Link>
           <Link href="/dashboard/tasks" className="flex items-center px-3 py-2 text-sm text-gray-700 rounded-md hover:bg-gray-50">
             Tasks
@@ -36,7 +42,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
           <LogoutButton />
         </div>
       </aside>
-      <main className="flex-1 overflow-auto">
+      <main className="flex-1 overflow-hidden">
         {children}
       </main>
     </div>

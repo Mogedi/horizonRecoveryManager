@@ -1,5 +1,5 @@
 export class AIError extends Error {
-  constructor(message: string) {
+  constructor(message: string, public readonly cause?: unknown) {
     super(message)
     this.name = 'AIError'
   }

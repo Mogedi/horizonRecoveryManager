@@ -34,13 +34,44 @@ All original milestones shipped. See `docs/archive/milestones-m0-m8.md` for full
 
 **What's running in production:**
 - Layer 1 sync (all 150 deals, 4×/day via Vercel cron)
-- Attention queue: flagged deals grouped by issue type (Stage Stale, Agreement No Follow-Up, Signed No Activity, No Contacts, Mo Action Required, Snoozed, Healthy)
+- Attention queue: flagged deals grouped by issue type (Stage Stale, Agreement No Follow-Up, Signed No Activity, No Contacts, Mo Action Required, Calls Exhausted, Snoozed, Healthy)
 - Deal detail panel: Layer 2 on-demand (contacts, notes, calls, emails, tasks)
 - Per-deal AI summary (7 structured fields via Claude claude-sonnet-4-6)
 - Internal task list (6 categories, Trello replacement)
 - Daily Briefing modal (AI-generated, attention queue + tasks + employee activity)
 - Settings page (configurable staleness thresholds, sync log)
-- 175 tests passing
+- 342 tests passing
+
+---
+
+## Current State Snapshot (as of June 2026)
+
+### Milestones Complete ✅
+- **M9** — Multi-source DB foundation: `activity_events`, `phone_numbers`, `pipeline_states`, `sync_sources`, `PIPELINE_GROUP` constant
+- **M10** — JustCall client, normalizer, sample sync, `/api/sync/justcall`
+- **M11 (partial)** — Full JustCall pull complete (7,110 events, 2,543 phone numbers). Rules engine: `calls_exhausted` (7+ unique call days) and `setup_readiness` shipped. **Not yet done:** `call_due_today` rule, stage staleness refactor for outreach, call cadence settings.
+
+### Shipped Beyond Original Gameplan
+These were unplanned but shipped because the data unlocked them:
+
+**Call Transcription Pipeline** (`src/lib/integrations/call-classifier/`)
+- Whisper transcription + Claude classification → `call_transcripts` table
+- 2,432 calls transcribed and classified (live/voicemail/disconnected/unknown)
+- Backfill system with permanent error-row tombstones for 413s and missing recording URLs
+- Per-contact call timeline with transcripts in DealPanel
+
+**Analytics Layer** (unplanned M11+)
+- `deal_enriched` PostgreSQL view: state, county, owner_name, tax_sale_year, case_age_months, amount_bucket, unique_call_days, call_intensity
+- `src/lib/db/analytics.ts`: `getPortfolioAnalytics()`, `getDealEnrichedById()`
+- `src/lib/db/pipeline-stats.ts`: `computePipelineStats()`, `getWeeklyCallStats()`
+- `/dashboard/pipeline` — portfolio analytics page (geography, vintage, outreach coverage, amount distribution)
+- `/dashboard/contacts` — contact quality page (contact tiers, owner matching, phone coverage, skip-trace surfacing)
+
+### In Progress / Pending
+- M11 remainder: call_due_today rule, outreach staleness refactor, cadence settings UI
+- M12: Deal Workspace Redesign (DealPanel.tsx is 1,277 lines — needs breaking up)
+- M13: Google Workspace (scaffold exists at `src/lib/integrations/google/client.ts`)
+- `pipeline_states` table: created in M9, never populated — reassess whether needed
 
 ---
 

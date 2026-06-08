@@ -1,4 +1,88 @@
 import { prisma } from './client'
+import { withTransaction } from './transaction'
+import type { MappedActivity, MappedContact } from '@/lib/hubspot/mapper'
+import { asJson } from '@/lib/utils/json'
+
+export type EmployeeActivity = { ownerName: string; notes: number; calls: number }
+
+// Aggregates notes and calls per owner for the last 7 days.
+// Returns null when no activity data exists (prompts AI to omit the section).
+export async function getEmployeeActivitySummary(
+  ownerMap: Record<string, string>
+): Promise<EmployeeActivity[] | null> {
+  const sevenDaysAgo = new Date()
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
+
+  const rows = await prisma.dealActivity.groupBy({
+    by: ['authorOwnerId', 'type'],
+    where: {
+      timestamp: { gte: sevenDaysAgo },
+      type: { in: ['note', 'call'] },
+    },
+    _count: { id: true },
+  })
+
+  if (rows.length === 0) return null
+
+  const byOwner = new Map<string, { notes: number; calls: number }>()
+  for (const row of rows) {
+    const id = row.authorOwnerId ?? 'unknown'
+    if (!byOwner.has(id)) byOwner.set(id, { notes: 0, calls: 0 })
+    const entry = byOwner.get(id)!
+    if (row.type === 'note') entry.notes += row._count.id
+    else if (row.type === 'call') entry.calls += row._count.id
+  }
+
+  return Array.from(byOwner.entries()).map(([id, counts]) => ({
+    ownerName: ownerMap[id] ?? id,
+    ...counts,
+  }))
+}
+
+// Atomically replaces all Layer 2 data for a deal (delete + reinsert).
+// Uses withTransaction to enforce the 30s timeout and guarantee consistency.
+export async function replaceLayer2Data(
+  dealHubspotId: string,
+  activities: MappedActivity[],
+  contacts: MappedContact[]
+): Promise<void> {
+  await withTransaction(async tx => {
+    await tx.dealActivity.deleteMany({ where: { dealHubspotId } })
+    await tx.dealContact.deleteMany({ where: { dealHubspotId } })
+
+    if (activities.length > 0) {
+      await tx.dealActivity.createMany({
+        data: activities.map(a => ({
+          dealHubspotId,
+          type: a.type,
+          body: a.body,
+          authorOwnerId: a.authorOwnerId,
+          direction: a.direction,
+          timestamp: a.timestamp,
+          metadata: asJson(a.metadata ?? undefined),
+          rawPayload: asJson(a.rawPayload ?? undefined),
+        })),
+      })
+    }
+
+    if (contacts.length > 0) {
+      await tx.dealContact.createMany({
+        data: contacts.map(c => ({
+          dealHubspotId,
+          contactHubspotId: c.contactHubspotId,
+          name: c.name,
+          contactType: c.contactType,
+          ownershipStatus: c.ownershipStatus,
+          isDeceased: c.isDeceased,
+          doNotContact: c.doNotContact,
+          phoneNumbers: c.phoneNumbers,
+          emailList: c.emailList,
+          rawPayload: asJson(c.rawPayload ?? undefined),
+        })),
+      })
+    }
+  })
+}
 
 export async function getActivitiesForDeal(hubspotId: string) {
   return prisma.dealActivity.findMany({

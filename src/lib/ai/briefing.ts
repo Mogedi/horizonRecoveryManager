@@ -1,11 +1,12 @@
-import Anthropic from '@anthropic-ai/sdk'
-import { prisma } from '@/lib/db/client'
 import { getOpenTasks } from '@/lib/db/tasks'
 import { loadStageMap, loadOwnerMap } from '@/lib/db/settings'
 import { getDealsForQueue } from '@/lib/db/deals'
+import { getEmployeeActivitySummary } from '@/lib/db/activities'
 import { evaluateAll, buildRuleCtx } from '@/lib/rules'
 import { getMoActionDealIds } from '@/lib/db/summaries'
+import { callClaudeStreaming } from './client'
 import { AIError } from './errors'
+import { log } from '@/lib/logger'
 
 const MAX_FLAGGED_DEALS = 15
 
@@ -16,37 +17,6 @@ const BRIEFING_SYSTEM =
   'Be specific — name deals, name tasks, call out overdue items. ' +
   'Do not hedge or add generic advice. Respond in plain text with no markdown headers.'
 
-type EmployeeActivity = { ownerName: string; notes: number; calls: number }
-
-async function getEmployeeActivity(ownerMap: Record<string, string>): Promise<EmployeeActivity[] | null> {
-  const sevenDaysAgo = new Date()
-  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
-
-  const rows = await prisma.dealActivity.groupBy({
-    by: ['authorOwnerId', 'type'],
-    where: {
-      timestamp: { gte: sevenDaysAgo },
-      type: { in: ['note', 'call'] },
-    },
-    _count: { id: true },
-  })
-
-  if (rows.length === 0) return null
-
-  const byOwner = new Map<string, { notes: number; calls: number }>()
-  for (const row of rows) {
-    const id = row.authorOwnerId ?? 'unknown'
-    if (!byOwner.has(id)) byOwner.set(id, { notes: 0, calls: 0 })
-    const entry = byOwner.get(id)!
-    if (row.type === 'note') entry.notes += row._count.id
-    else if (row.type === 'call') entry.calls += row._count.id
-  }
-
-  return Array.from(byOwner.entries()).map(([id, counts]) => ({
-    ownerName: ownerMap[id] ?? id,
-    ...counts,
-  }))
-}
 
 async function buildBriefingPrompt(): Promise<string> {
   const today = new Date()
@@ -57,8 +27,8 @@ async function buildBriefingPrompt(): Promise<string> {
 
   const [{ deals, snoozedDealIds }, stageMap, ownerMap, openTasks, moActionIds] = await Promise.all([
     getDealsForQueue(),
-    loadStageMap().catch(() => ({} as Record<string, string>)),
-    loadOwnerMap().catch(() => ({} as Record<string, string>)),
+    loadStageMap().catch((err: unknown) => { log.warn('briefing: failed to load stageMap, using empty fallback', { err }); return {} as Record<string, string> }),
+    loadOwnerMap().catch((err: unknown) => { log.warn('briefing: failed to load ownerMap, using empty fallback', { err }); return {} as Record<string, string> }),
     getOpenTasks(),
     getMoActionDealIds(),
   ])
@@ -72,7 +42,7 @@ async function buildBriefingPrompt(): Promise<string> {
     ...allFlagged.filter(r => !moActionIds.has(r.deal.hubspotId)),
   ].slice(0, MAX_FLAGGED_DEALS)
 
-  const employeeActivity = await getEmployeeActivity(ownerMap)
+  const employeeActivity = await getEmployeeActivitySummary(ownerMap)
 
   const lines: string[] = [`DAILY BRIEFING — ${dateStr}`, '']
 
@@ -127,31 +97,19 @@ async function buildBriefingPrompt(): Promise<string> {
 export async function streamBriefingGeneration(): Promise<ReadableStream<Uint8Array>> {
   const prompt = await buildBriefingPrompt()
 
-  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-
-  let stream: Awaited<ReturnType<typeof anthropic.messages.stream>>
-  try {
-    stream = anthropic.messages.stream({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 1024,
-      system: BRIEFING_SYSTEM,
-      messages: [{ role: 'user', content: prompt }],
-    })
-  } catch (err) {
-    throw new AIError(`Briefing stream failed: ${err instanceof Error ? err.message : String(err)}`)
-  }
+  const stream = callClaudeStreaming(prompt, BRIEFING_SYSTEM)
 
   const encoder = new TextEncoder()
 
   return new ReadableStream<Uint8Array>({
     async start(controller) {
       try {
-        for await (const text of stream.textStream) {
-          controller.enqueue(encoder.encode(text))
-        }
-        const final = await stream.finalMessage()
-        if (final.stop_reason === 'max_tokens') {
-          controller.enqueue(encoder.encode('\n\n[Briefing truncated — max length reached]'))
+        for await (const event of stream) {
+          if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+            controller.enqueue(encoder.encode(event.delta.text))
+          } else if (event.type === 'message_delta' && event.delta.stop_reason === 'max_tokens') {
+            controller.enqueue(encoder.encode('\n\n[Briefing truncated — max length reached]'))
+          }
         }
       } catch (err) {
         controller.error(new AIError(

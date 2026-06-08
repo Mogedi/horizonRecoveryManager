@@ -4,6 +4,7 @@ import { checkAgreement } from './agreement'
 import { checkSigned } from './signed'
 import { checkContacts } from './contacts'
 import { checkSnooze } from './snooze'
+import { checkCallsExhausted } from './calls-exhausted'
 import { applyRules, evaluateAll } from './index'
 import type { NormalizedDeal, RuleContext } from './types'
 
@@ -37,6 +38,7 @@ function makeDeal(overrides: Partial<NormalizedDeal> = {}): NormalizedDeal {
     contactCount: 3,
     hasValidPhone: null, // Layer 2 not loaded by default
     syncedAt: MONDAY,
+    uniqueCallDays: 0,
     ...overrides,
   }
 }
@@ -285,5 +287,43 @@ describe('evaluateAll', () => {
     expect(results[1].deal.hubspotId).toBe('deal-b')
     expect(Array.isArray(results[0].flags)).toBe(true)
     expect(Array.isArray(results[1].flags)).toBe(true)
+  })
+})
+
+// ─── checkCallsExhausted ──────────────────────────────────────────────────────
+
+describe('checkCallsExhausted', () => {
+  const ctx = makeCtx(MONDAY)
+
+  it('returns null when uniqueCallDays < 7', () => {
+    expect(checkCallsExhausted(makeDeal({ uniqueCallDays: 6 }), ctx)).toBeNull()
+  })
+
+  it('returns null when uniqueCallDays = 0 (never called)', () => {
+    expect(checkCallsExhausted(makeDeal({ uniqueCallDays: 0 }), ctx)).toBeNull()
+  })
+
+  it('fires warning at exactly 7 unique call days', () => {
+    const flag = checkCallsExhausted(makeDeal({ uniqueCallDays: 7 }), ctx)
+    expect(flag).not.toBeNull()
+    expect(flag!.type).toBe('calls_exhausted')
+    expect(flag!.severity).toBe('warning')
+  })
+
+  it('fires urgent at 10+ unique call days', () => {
+    const flag = checkCallsExhausted(makeDeal({ uniqueCallDays: 10 }), ctx)
+    expect(flag!.severity).toBe('urgent')
+  })
+
+  it('returns null on terminal stage', () => {
+    const flag = checkCallsExhausted(
+      makeDeal({ uniqueCallDays: 10, stage: TERMINAL_STAGE }), ctx
+    )
+    expect(flag).toBeNull()
+  })
+
+  it('message includes the unique day count', () => {
+    const flag = checkCallsExhausted(makeDeal({ uniqueCallDays: 8 }), ctx)
+    expect(flag!.message).toContain('8')
   })
 })

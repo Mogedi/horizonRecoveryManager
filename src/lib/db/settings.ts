@@ -26,7 +26,7 @@ export const PIPELINE_GROUP: Record<string, 'setup' | 'outreach' | 'case_mgmt' |
 // These describe which stages are "done" (no rules should fire on them).
 // Stage IDs confirmed in M1 (docs/research/pipeline-stages.json).
 // Not stored in app_settings because changing them would require understanding HubSpot pipeline semantics.
-const TERMINAL_STAGE_IDS = new Set<string>([
+export const TERMINAL_STAGE_IDS = new Set<string>([
   '3501274836', // More Research Need
   '3639720641', // F (Mortgage Foreclosures — Georgia)
   '3478695645', // Closed – Paid

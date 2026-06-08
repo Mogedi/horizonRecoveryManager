@@ -7,9 +7,9 @@ import {
   failSyncLog,
   getLastSyncedAt,
 } from '@/lib/db/sync-log'
-import { prisma } from '@/lib/db/client'
-import { asJson } from '@/lib/utils/json'
+import { upsertDeals } from '@/lib/db/deals'
 
+// "Cases – Surplus Funds" pipeline — see docs/research/pipeline-stages.json for stage IDs
 const PIPELINE_ID = '2172337854'
 
 const DEAL_PROPERTIES = [
@@ -66,54 +66,7 @@ export async function runLayer1Sync(force = false): Promise<Layer1SyncResult> {
     const deals = results.map(raw => mapDeal(raw))
     dealsSynced = deals.length
 
-    // Batch all upserts in one transaction — atomic and benefits from Prisma 7 query pipelining
-    await prisma.$transaction(
-      deals.map(deal =>
-        prisma.deal.upsert({
-          where: { hubspotId: deal.hubspotId },
-          update: {
-            name: deal.name,
-            stage: deal.stage,
-            pipeline: deal.pipeline,
-            ownerId: deal.ownerId,
-            amount: deal.amount,
-            estimatedSurplus: deal.estimatedSurplus,
-            closeDate: deal.closeDate,
-            lastActivityDate: deal.lastActivityDate,
-            stageEnteredAt: deal.stageEnteredAt,
-            lastModified: deal.lastModified,
-            contactCount: deal.contactCount,
-            propertyAddress: deal.propertyAddress,
-            county: deal.county,
-            parcelId: deal.parcelId,
-            taxSaleDate: deal.taxSaleDate,
-            hubspotUrl: deal.hubspotUrl,
-            rawPayload: asJson(deal.rawPayload),
-            syncedAt: new Date(),
-          },
-          create: {
-            hubspotId: deal.hubspotId,
-            name: deal.name,
-            stage: deal.stage,
-            pipeline: deal.pipeline,
-            ownerId: deal.ownerId,
-            amount: deal.amount,
-            estimatedSurplus: deal.estimatedSurplus,
-            closeDate: deal.closeDate,
-            lastActivityDate: deal.lastActivityDate,
-            stageEnteredAt: deal.stageEnteredAt,
-            lastModified: deal.lastModified,
-            contactCount: deal.contactCount,
-            propertyAddress: deal.propertyAddress,
-            county: deal.county,
-            parcelId: deal.parcelId,
-            taxSaleDate: deal.taxSaleDate,
-            hubspotUrl: deal.hubspotUrl,
-            rawPayload: asJson(deal.rawPayload),
-          },
-        })
-      )
-    )
+    await upsertDeals(deals)
 
     await completeSyncLog(logEntry.id, apiCallsMade, dealsSynced)
     return { dealsSynced, apiCallsMade, mode }

@@ -14,6 +14,9 @@ export type NormalizedDeal = {
   // true  = Layer 2 synced, at least one contact has a valid phone number
   hasValidPhone: boolean | null
   syncedAt: Date
+  // Distinct calendar days (America/New_York) with at least one outbound JustCall attempt.
+  // 0 = never called. Used by checkCallsExhausted (fires at 7+ unique days).
+  uniqueCallDays: number
 }
 
 export type RuleContext = {
@@ -32,6 +35,7 @@ export type AttentionFlagType =
   | 'agreement_no_followup'
   | 'signed_no_activity'
   | 'no_contacts'
+  | 'calls_exhausted'
   | 'snoozed'
 
 export type AttentionFlag = {

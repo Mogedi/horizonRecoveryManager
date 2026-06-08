@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client'
 import { prisma } from './client'
 import { PhoneStatus } from '@prisma/client'
 
@@ -57,7 +58,7 @@ export async function populateFromDealContacts(
   normalizeE164: (raw: string) => string | null
 ): Promise<{ processed: number; inserted: number; skipped: number }> {
   const contacts = await prisma.dealContact.findMany({
-    where: { phoneNumbers: { not: null } },
+    where: { phoneNumbers: { not: Prisma.JsonNull } },
     select: { dealHubspotId: true, name: true, phoneNumbers: true },
   })
 

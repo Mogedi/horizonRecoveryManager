@@ -28,11 +28,13 @@
     "@sentry/nextjs": "^10.56.0",
     "jose": "^6.2.3",
     "next": "16.2.7",
+    "openai": "^6.42.0",
     "pg": "^8.21.0",
     "prisma": "^7.8.0",
     "react": "19.2.4",
     "react-dom": "19.2.4",
-    "server-only": "^0.0.1"
+    "server-only": "^0.0.1",
+    "swr": "^2.4.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

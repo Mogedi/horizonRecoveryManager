@@ -37,6 +37,9 @@ yarn-error.log*
 # Research data — contains real deal data, never commit
 docs/research/
 
+# Claude Code memory — contains personal context, never commit
+.claude/
+
 # vercel
 .vercel
 

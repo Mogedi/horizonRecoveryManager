@@ -11,6 +11,7 @@ const deal = {
   contactCount: 2,
   hasValidPhone: true,
   syncedAt: new Date('2026-06-07T00:00:00Z'),
+  uniqueCallDays: 0,
 }
 
 const contacts = [

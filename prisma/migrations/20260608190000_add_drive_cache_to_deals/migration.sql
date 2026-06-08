@@ -1,0 +1,3 @@
+ALTER TABLE deals ADD COLUMN IF NOT EXISTS drive_folder_path TEXT;
+ALTER TABLE deals ADD COLUMN IF NOT EXISTS drive_files_cache JSONB;
+ALTER TABLE deals ADD COLUMN IF NOT EXISTS drive_cache_updated_at TIMESTAMPTZ;

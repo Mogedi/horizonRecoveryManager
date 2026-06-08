@@ -5,7 +5,7 @@ import { parseSummaryResponse } from './summary'
 import { upsertSummary } from '@/lib/db/summaries'
 import { getActivitiesForDeal } from '@/lib/db/activities'
 import { getContactsForDeal } from '@/lib/db/contacts'
-import { prisma } from '@/lib/db/client'
+import { getDealById } from '@/lib/db/deals'
 import { loadStageMap, loadThresholds } from '@/lib/db/settings'
 import type { SummaryJson } from './summary'
 
@@ -13,19 +13,7 @@ export async function runSummaryGeneration(hubspotId: string): Promise<{
   summary: SummaryJson
   generatedAt: Date
 }> {
-  const deal = await prisma.deal.findUnique({
-    where: { hubspotId },
-    select: {
-      hubspotId: true,
-      name: true,
-      stage: true,
-      amount: true,
-      stageEnteredAt: true,
-      lastActivityDate: true,
-      contactCount: true,
-      syncedAt: true,
-    },
-  })
+  const deal = await getDealById(hubspotId)
   if (!deal) throw new AIError(`Deal not found: ${hubspotId}`)
 
   const [contacts, activities, stageMap, thresholds] = await Promise.all([
@@ -45,6 +33,7 @@ export async function runSummaryGeneration(hubspotId: string): Promise<{
     contactCount: deal.contactCount,
     hasValidPhone: null as boolean | null,
     syncedAt: deal.syncedAt,
+    uniqueCallDays: 0,
   }
 
   const prompt = buildSummaryPrompt(

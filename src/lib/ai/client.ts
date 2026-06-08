@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
+import type { MessageStreamEvent } from '@anthropic-ai/sdk/resources/messages/messages.js'
 import { AIError } from './errors'
 
 const anthropic = new Anthropic({
@@ -39,4 +40,66 @@ export async function callClaude(
   }
 
   return block.text
+}
+
+// Sends one or more base64-encoded documents alongside a text prompt.
+// Uses the Anthropic "document" content block — supports PDF natively.
+// All documents are passed in a single request so Claude can cross-reference them.
+export async function callClaudeWithDocuments(
+  documents: Array<{ data: string; mimeType: string; label: string }>,
+  prompt: string,
+  systemPrompt?: string,
+  maxTokens = 1024
+): Promise<string> {
+  const docBlocks = documents.map(d => ({
+    type: 'document' as const,
+    source: {
+      type: 'base64' as const,
+      media_type: (d.mimeType.startsWith('application/pdf') ? 'application/pdf' : d.mimeType) as 'application/pdf',
+      data: d.data,
+    },
+    title: d.label,
+  }))
+
+  let response
+  try {
+    response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: maxTokens,
+      system: systemPrompt ?? DEFAULT_SYSTEM,
+      messages: [{
+        role: 'user',
+        content: [...docBlocks, { type: 'text' as const, text: prompt }],
+      }],
+    })
+  } catch (err) {
+    throw new AIError(
+      `Anthropic document API call failed: ${err instanceof Error ? err.message : String(err)}`
+    )
+  }
+
+  if (response.stop_reason === 'max_tokens') {
+    throw new AIError('Claude response was truncated — increase max_tokens')
+  }
+
+  const block = response.content[0]
+  if (block.type !== 'text') {
+    throw new AIError(`Unexpected content block type: ${block.type}`)
+  }
+
+  return block.text
+}
+
+// Returns the MessageStream AsyncIterable directly — caller iterates events.
+// Used for streaming responses (e.g. Daily Briefing). Single shared SDK instance.
+export function callClaudeStreaming(
+  prompt: string,
+  systemPrompt?: string
+): AsyncIterable<MessageStreamEvent> {
+  return anthropic.messages.stream({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 1024,
+    system: systemPrompt ?? DEFAULT_SYSTEM,
+    messages: [{ role: 'user', content: prompt }],
+  })
 }

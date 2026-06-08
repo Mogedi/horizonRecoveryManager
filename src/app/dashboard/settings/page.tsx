@@ -1,6 +1,10 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
+import useSWR from 'swr'
+
+const fetcher = (url: string) => fetch(url).then(r => r.ok ? r.json() : Promise.reject(new Error(r.statusText)))
+import { relativeDate } from '@/lib/utils/format'
 
 type SettingItem = {
   key: string
@@ -34,16 +38,6 @@ const SYNC_TYPE_LABELS: Record<string, string> = {
   manual: 'Manual',
 }
 
-function relativeTime(dateStr: string): string {
-  const diffMs = Date.now() - new Date(dateStr).getTime()
-  const mins = Math.floor(diffMs / 60_000)
-  if (mins < 1) return 'just now'
-  if (mins < 60) return `${mins}m ago`
-  const hrs = Math.floor(mins / 60)
-  if (hrs < 24) return `${hrs}h ago`
-  const days = Math.floor(hrs / 24)
-  return `${days}d ago`
-}
 
 function ThresholdGroup({
   group,
@@ -176,7 +170,7 @@ function SyncLog({ rows }: { rows: SyncLogRow[] }) {
                   {SYNC_TYPE_LABELS[row.syncType ?? ''] ?? row.syncType ?? '—'}
                 </td>
                 <td className="px-5 py-2.5 text-gray-500">
-                  {relativeTime(row.startedAt)}
+                  {relativeDate(row.startedAt)}
                 </td>
                 <td className="px-5 py-2.5 text-right text-gray-500">
                   {row.dealsSynced ?? '—'}
@@ -207,24 +201,163 @@ function SyncLog({ rows }: { rows: SyncLogRow[] }) {
   )
 }
 
-export default function SettingsPage() {
-  const [data, setData] = useState<SettingsResponse | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+type BulkVerifyDeal = { hubspotId: string; name: string | null }
+type BulkVerifyResult = {
+  hubspotId: string
+  name?: string | null
+  overallMatch?: boolean
+  confidence?: string
+  summary?: string
+  error?: string
+  skipped?: boolean
+}
 
-  const fetchSettings = useCallback(async () => {
+function BulkVerifyPanel() {
+  const [pending, setPending] = useState<BulkVerifyDeal[] | null>(null)
+  const [running, setRunning] = useState(false)
+  const [results, setResults] = useState<BulkVerifyResult[]>([])
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const abortRef = useRef(false)
+
+  const loadPending = useCallback(async () => {
+    setLoadError(null)
     try {
-      const res = await fetch('/api/settings')
+      const res = await fetch('/api/admin/verify-all')
       if (!res.ok) throw new Error(`${res.status}`)
-      setData(await res.json())
+      const json = await res.json() as { count: number; deals: BulkVerifyDeal[] }
+      setPending(json.deals)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load settings')
-    } finally {
-      setLoading(false)
+      setLoadError(e instanceof Error ? e.message : 'Failed to load')
     }
   }, [])
 
-  useEffect(() => { fetchSettings() }, [fetchSettings])
+  useEffect(() => { loadPending() }, [loadPending])
+
+  const runAll = async () => {
+    if (!pending || pending.length === 0) return
+    abortRef.current = false
+    setRunning(true)
+    setResults([])
+
+    for (const deal of pending) {
+      if (abortRef.current) break
+      try {
+        const res = await fetch('/api/admin/verify-all', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ hubspotId: deal.hubspotId }),
+        })
+        const json = await res.json() as BulkVerifyResult
+        setResults(prev => [...prev, { ...json, name: json.name ?? deal.name }])
+      } catch (e) {
+        setResults(prev => [...prev, {
+          hubspotId: deal.hubspotId,
+          name: deal.name,
+          error: e instanceof Error ? e.message : 'Failed',
+        }])
+      }
+    }
+
+    setRunning(false)
+    loadPending()
+  }
+
+  const stop = () => { abortRef.current = true }
+
+  const doneCount = results.length
+  const totalCount = pending?.length ?? 0
+  const matchCount = results.filter(r => r.overallMatch).length
+  const errorCount = results.filter(r => r.error).length
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+      <div className="px-5 py-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+        <div>
+          <h2 className="text-sm font-semibold text-gray-700">Document Verification</h2>
+          {pending !== null && !running && (
+            <p className="text-xs text-gray-400 mt-0.5">
+              {totalCount === 0 ? 'All deals verified' : `${totalCount} deal${totalCount !== 1 ? 's' : ''} pending verification`}
+            </p>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {running ? (
+            <>
+              <span className="text-xs text-gray-400">{doneCount} / {totalCount}</span>
+              <button onClick={stop}
+                className="px-3 py-1 text-xs text-white bg-red-500 rounded hover:bg-red-600">
+                Stop
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={runAll}
+              disabled={!pending || totalCount === 0 || !!loadError}
+              className="px-3 py-1 text-xs text-white bg-gray-900 rounded hover:bg-gray-700 disabled:opacity-40"
+            >
+              {totalCount === 0 ? 'Nothing to verify' : `Verify ${totalCount} deal${totalCount !== 1 ? 's' : ''}`}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {loadError && (
+        <div className="px-5 py-3 text-sm text-red-600">{loadError}</div>
+      )}
+
+      {running && doneCount < totalCount && (
+        <div className="px-5 py-2 bg-blue-50 border-b border-blue-100">
+          <div className="flex items-center gap-2">
+            <div className="w-full bg-blue-100 rounded-full h-1.5">
+              <div className="bg-blue-500 h-1.5 rounded-full transition-all"
+                   style={{ width: `${totalCount > 0 ? (doneCount / totalCount) * 100 : 0}%` }} />
+            </div>
+            <span className="text-xs text-blue-600 shrink-0">{Math.round(totalCount > 0 ? (doneCount / totalCount) * 100 : 0)}%</span>
+          </div>
+          <p className="text-xs text-blue-600 mt-1">
+            Verifying: {pending?.[doneCount]?.name ?? '…'}
+          </p>
+        </div>
+      )}
+
+      {results.length > 0 && (
+        <>
+          {(running || doneCount === totalCount) && doneCount > 0 && (
+            <div className="px-5 py-2 bg-gray-50 border-b border-gray-100 flex gap-4 text-xs text-gray-500">
+              <span className="text-green-600">{matchCount} matched</span>
+              <span className="text-amber-600">{doneCount - matchCount - errorCount} issues</span>
+              {errorCount > 0 && <span className="text-red-600">{errorCount} errors</span>}
+            </div>
+          )}
+          <div className="divide-y divide-gray-50 max-h-72 overflow-y-auto">
+            {results.map(r => (
+              <div key={r.hubspotId} className="px-5 py-2 flex items-start gap-2">
+                <span className={`text-sm shrink-0 mt-0.5 ${r.error ? 'text-red-400' : r.skipped ? 'text-gray-300' : r.overallMatch ? 'text-green-500' : 'text-amber-400'}`}>
+                  {r.error ? '✗' : r.skipped ? '—' : r.overallMatch ? '✓' : '~'}
+                </span>
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-gray-700 truncate">{r.name ?? r.hubspotId}</p>
+                  {r.error ? (
+                    <p className="text-xs text-red-500">{r.error}</p>
+                  ) : r.skipped ? (
+                    <p className="text-xs text-gray-400">skipped</p>
+                  ) : (
+                    <p className="text-xs text-gray-400">
+                      {r.confidence} confidence{r.summary ? ` — ${r.summary.slice(0, 80)}${r.summary.length > 80 ? '…' : ''}` : ''}
+                    </p>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+export default function SettingsPage() {
+  const { data, error, isLoading, mutate } = useSWR<SettingsResponse>('/api/settings', fetcher)
 
   const handleSave = useCallback(async (updates: { key: string; value: number }[]) => {
     const res = await fetch('/api/settings', {
@@ -234,8 +367,8 @@ export default function SettingsPage() {
     })
     const json = await res.json()
     if (!res.ok) throw new Error(json.error ?? 'Save failed')
-    setData(prev => prev ? { ...prev, settings: json.settings } : prev)
-  }, [])
+    await mutate({ ...data!, settings: json.settings }, false)
+  }, [data, mutate])
 
   const groups = data
     ? GROUP_ORDER.map(group => ({
@@ -255,11 +388,11 @@ export default function SettingsPage() {
 
       {error && (
         <div className="mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
-          {error}
+          {error.message ?? 'Failed to load settings'}
         </div>
       )}
 
-      {loading && (
+      {isLoading && (
         <div className="space-y-3">
           {[0, 1, 2].map(i => (
             <div key={i} className="h-32 bg-gray-100 rounded-lg animate-pulse" />
@@ -267,7 +400,7 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {!loading && (
+      {!isLoading && (
         <div className="space-y-4">
           {groups.map(({ group, items }) => (
             <ThresholdGroup
@@ -286,6 +419,9 @@ export default function SettingsPage() {
 
           {/* Sync log */}
           <SyncLog rows={data?.recentSyncs ?? []} />
+
+          {/* Bulk document verification */}
+          <BulkVerifyPanel />
         </div>
       )}
     </div>

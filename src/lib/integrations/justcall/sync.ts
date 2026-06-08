@@ -116,12 +116,14 @@ async function syncCallsInRange(
   // Refresh callAttemptCount on all affected deals
   const dealsUpdated = await refreshDealCallCounts(matchedDealIds)
 
-  // Update sync_sources record
-  await prisma.syncSource.upsert({
-    where: { name: 'JUSTCALL' },
-    create: { name: 'JUSTCALL', isActive: true, lastSyncedAt: new Date() },
-    update: { lastSyncedAt: new Date(), isActive: true },
-  })
+  // Only advance the cursor on full syncs — sample is a preview, not authoritative
+  if (mode === 'full') {
+    await prisma.syncSource.upsert({
+      where: { name: 'JUSTCALL' },
+      create: { name: 'JUSTCALL', isActive: true, lastSyncedAt: new Date() },
+      update: { lastSyncedAt: new Date(), isActive: true },
+    })
+  }
 
   const report: SyncReport = {
     mode,

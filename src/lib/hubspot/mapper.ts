@@ -35,6 +35,10 @@ export type MappedContact = {
   doNotContact: boolean
   phoneNumbers: string[]
   emailList: string[]
+  address: string | null
+  city: string | null
+  state: string | null
+  zip: string | null
   rawPayload: unknown
 }
 
@@ -149,6 +153,10 @@ export function mapContact(
     doNotContact: p?.do_not_contact === 'true',
     phoneNumbers: phones,
     emailList,
+    address: p?.address?.trim() || null,
+    city:    p?.city?.trim()    || null,
+    state:   p?.state?.trim()   || null,
+    zip:     p?.zip?.trim()     || null,
     rawPayload: raw,
   }
 }

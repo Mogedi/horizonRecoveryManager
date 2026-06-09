@@ -97,7 +97,8 @@ export async function batchReadContacts(ids: string[]): Promise<{ results: { id:
     'phone_1', 'phone_2', 'phone_3', 'phone_4', 'phone_5', 'phone_6', 'phone_7',
     'phone_numbers__excess_elite', 'phone_numbers__beenverified_fastpeople_etc',
     'is_deceased', 'do_not_contact',
-    'contact_type1', 'ownership_contact_status1', 'attorney1',
+    'contact_type1', 'ownership_contact_status1',
+    'address', 'city', 'state', 'zip',
     'hs_object_id',
   ])
 }

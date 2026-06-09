@@ -103,6 +103,39 @@ describe('mapContact', () => {
       })
     })
   })
+
+  it('maps all 4 address components from HubSpot properties', () => {
+    const raw = { id: '1', properties: { address: '123 Main St', city: 'Atlanta', state: 'GA', zip: '30301' } }
+    const c = mapContact(raw)
+    expect(c.address).toBe('123 Main St')
+    expect(c.city).toBe('Atlanta')
+    expect(c.state).toBe('GA')
+    expect(c.zip).toBe('30301')
+  })
+
+  it('returns null for absent address components independently', () => {
+    const raw = { id: '2', properties: { city: 'Atlanta', state: 'GA' } }
+    const c = mapContact(raw)
+    expect(c.address).toBeNull()
+    expect(c.city).toBe('Atlanta')
+    expect(c.state).toBe('GA')
+    expect(c.zip).toBeNull()
+  })
+
+  it('returns null for empty-string address components', () => {
+    const raw = { id: '3', properties: { address: '', city: 'Atlanta', state: '', zip: '30301' } }
+    const c = mapContact(raw)
+    expect(c.address).toBeNull()
+    expect(c.state).toBeNull()
+    expect(c.city).toBe('Atlanta')
+    expect(c.zip).toBe('30301')
+  })
+
+  it('does not include an attorney field', () => {
+    const raw = { id: '4', properties: { attorney1: 'Some Attorney' } }
+    const c = mapContact(raw)
+    expect(c).not.toHaveProperty('attorney')
+  })
 })
 
 // ─── mapActivity ─────────────────────────────────────────────────────────────

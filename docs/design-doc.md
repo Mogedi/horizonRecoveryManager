@@ -185,10 +185,17 @@ These three boundaries are sufficient to integrate any future automation layer. 
 ## Environment Variables
 
 ```
-DATABASE_URL=             # Neon connection string
-HUBSPOT_ACCESS_TOKEN=     # HubSpot Private App token
-DASHBOARD_PASSWORD=       # Simple password auth
-ANTHROPIC_API_KEY=        # Claude API key
+DATABASE_URL=                  # Neon connection string (pooled via PgBouncer)
+DIRECT_URL=                    # Neon direct connection (Prisma CLI only)
+HUBSPOT_ACCESS_TOKEN=          # HubSpot Private App token
+DASHBOARD_PASSWORD=            # Simple shared password auth
+ANTHROPIC_API_KEY=             # Claude API key
+JUSTCALL_API_KEY=              # JustCall API key
+JUSTCALL_API_SECRET=           # JustCall API secret
+GOOGLE_CLIENT_ID=              # Google OAuth client ID (gmail.readonly)
+GOOGLE_CLIENT_SECRET=          # Google OAuth client secret
+GOOGLE_REFRESH_TOKEN=          # Google OAuth refresh token
+CRON_SECRET=                   # Vercel cron auth header (Bearer token)
 ```
 
 ---

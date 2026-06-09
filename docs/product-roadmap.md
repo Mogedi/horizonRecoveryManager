@@ -33,77 +33,20 @@ All M0–M8 milestones shipped.
 
 ---
 
-## Phase 2 — Active
+## Phase 2 — Complete ✅
 
-### M9: Three-Pipeline DB Foundation
+### M9–M13: Multi-Source Intelligence Layer
 
-*Goal: Database infrastructure for multi-source event tracking.*
+All shipped. See `docs/gameplan.md` for full build history.
 
-| Item | Status |
+| What shipped | Status |
 |---|---|
-| `activity_events` table (multi-source event log) | Pending |
-| `phone_numbers` table (E.164 phone registry) | Pending |
-| `pipeline_states` table | Pending |
-| `sync_sources` table + seed (HUBSPOT, JUSTCALL, GOOGLE) | Pending |
-| `callAttemptCount` + `lastCallAttemptAt` on `deals` | Pending |
-| `PIPELINE_GROUP` constant in settings.ts | Pending |
-| DB layer: `activity-events.ts`, `phone-numbers.ts` | Pending |
-| Migration + tests | Pending |
-
-### M10: JustCall Sample Integration
-
-*Goal: Pull a small sample of JustCall call records. Mo approves before full pull.*
-
-| Item | Status |
-|---|---|
-| `PhoneProvider` interface | Pending |
-| JustCall client (18 req/min cap) | Pending |
-| E.164 phone normalizer | Pending |
-| Sample sync (last 24h, max 20 records) | Pending |
-| Match report (matched vs unmatched calls) | Pending |
-| Settings page: JustCall sync status | Pending |
-| **Mo reviews sample → approves full pull** | Blocked on sample |
-
-### M11: JustCall Full Pull + Rules Refactor
-
-*Goal: Full JustCall history. Replace time-based outreach rules with call cadence rules.*
-
-| Item | Status |
-|---|---|
-| Phone number population from deal_contacts | Pending |
-| Full JustCall historical pull (90 days) | Blocked on M10 approval |
-| Phone → deal matching via phone_numbers table | Pending |
-| `call_due_today` rule | Pending |
-| `calls_exhausted` rule | Pending |
-| `setup_incomplete` rule | Pending |
-| Remove time-based staleness for outreach stages | Pending |
-| New cadence settings in app_settings | Pending |
-| Settings page: cadence controls replace stale controls | Pending |
-| Attention queue: new flag groups | Pending |
-
-### M12: Deal Workspace Redesign
-
-*Goal: Replace organically grown DealPanel with principled three-pipeline layout.*
-
-| Item | Status |
-|---|---|
-| Design layout (discuss with Mo first) | Pending |
-| Pipeline status track (Setup → Outreach → Case Mgmt) | Pending |
-| Pipeline 2 panel: JustCall call history, next call due | Pending |
-| Pipeline 3 panel: agreement status, attorney status | Pending |
-| Unified timeline (HubSpot + JustCall + Google) | Pending |
-
-### M13: Google Workspace Integration
-
-*Goal: Pull emails and calendar events into unified timeline.*
-
-| Item | Status |
-|---|---|
-| Mo provides Google OAuth credentials | Blocked on Mo |
-| Google client (gmail.readonly, calendar.readonly) | Pending |
-| Email → deal matching via contact email | Pending |
-| Populate activity_events with email events | Pending |
-| Sample sync first (last 7 days, max 50 emails) | Pending |
+| Multi-source DB (`activity_events`, `phone_numbers`, `sync_sources`, `PIPELINE_GROUP`) | ✅ Done |
+| JustCall integration — full history, phone registry, sample + full sync | ✅ Done |
+| Call transcription pipeline (Whisper → Claude, `call_transcripts` table) | ✅ Done (unplanned) |
+| Analytics layer (`deal_enriched` view, `/dashboard/pipeline`, `/dashboard/contacts`) | ✅ Done (unplanned) |
+| Deal Workspace Redesign — 7-tab DealPanel, case business object layer | ✅ Done |
+| Google Workspace — Gmail sync, email → deal matching, Settings UI | ✅ Done |
 
 ---
 
@@ -198,5 +141,5 @@ The idea is a per-deal "source of truth" reconciliation that continuously checks
 
 ---
 
-*Last updated: 2026-06-08 (M8 complete, M9 starting)*
-*Strategic direction: multi-source communications intelligence via JustCall + Google Workspace*
+*Last updated: 2026-06-09 (M9–M13 complete, Hermes integration active)*
+*Strategic direction: AI-first case operating system — Hermes as reasoning + action layer on top of Horizon Manager*

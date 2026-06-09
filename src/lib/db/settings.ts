@@ -1,26 +1,8 @@
 import { prisma } from './client'
+import { PIPELINE_GROUP as _PG } from '@/lib/utils/pipeline-group'
 
-// Stage ID → pipeline group mapping — structural, not configurable.
-// Stage IDs confirmed in M1 (docs/research/pipeline-stages.json).
-// Rules use this to determine which pipeline a deal is in (Setup / Outreach / Case Mgmt / Terminal).
-export const PIPELINE_GROUP: Record<string, 'setup' | 'outreach' | 'case_mgmt' | 'terminal'> = {
-  '3501274836': 'terminal',   // More Research Need
-  '3639720641': 'terminal',   // F (Mortgage Foreclosures — Georgia)
-  '3477730034': 'setup',      // New Case
-  '3477730035': 'setup',      // Ready for Outreach
-  '3477730036': 'outreach',   // Attempted Contact
-  '3477730037': 'outreach',   // Contact Made
-  '3477730038': 'outreach',   // Follow-Up Needed
-  '3477730039': 'outreach',   // Engaged / Interested
-  '3551234806': 'outreach',   // Letter Outreach - Final Attempt
-  '3477730040': 'case_mgmt',  // Agreement Sent
-  '3478695644': 'case_mgmt',  // Signed / In Progress
-  '3478695645': 'terminal',   // Closed – Paid
-  '3478695646': 'terminal',   // Dead / Not Interested
-  '3513772741': 'terminal',   // DNC
-  '3513772742': 'terminal',   // Blocked, Missing Info
-  '3741613778': 'terminal',   // Exhausted
-}
+// Re-export from shared pure module so server rules continue to import from here unchanged.
+export const PIPELINE_GROUP = _PG
 
 // Terminal stage IDs — structural, not configurable.
 // These describe which stages are "done" (no rules should fire on them).

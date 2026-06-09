@@ -4,13 +4,14 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { formatAmount, relativeDate, formatDate } from '@/lib/utils/format'
 import { refreshHighlight } from '@/lib/utils/search-highlight'
 import { DealBadges } from '@/components/analytics/DealBadges'
-import { SectionHeader, ActivityItem, ContactItem } from './deal-panel/shared'
-import { OutreachSection } from './deal-panel/OutreachSection'
+import { SectionHeader, ActivityItem } from './deal-panel/shared'
 import { AiSummaryBlock } from './deal-panel/AiSummaryBlock'
 import { SnoozeModal } from './deal-panel/SnoozeModal'
-import { ContactPanel } from './ContactPanel'
 import { StoryTab } from './deal-panel/StoryTab'
+import { ContactsTab } from './deal-panel/ContactsTab'
+import { CallsTab } from './deal-panel/CallsTab'
 import { TaskPromptInline } from './deal-panel/TaskPromptInline'
+import { getPipelineGroup, defaultTabForPipelineGroup } from '@/lib/utils/pipeline-group'
 import type { PanelData, OutreachMatrix } from './deal-panel/types'
 import { SNOOZE_CATEGORY_LABELS } from './deal-panel/types'
 
@@ -170,11 +171,11 @@ export default function DealPanel({
   const [layer2Error, setLayer2Error] = useState<string | null>(null)
 
   const [showSnooze, setShowSnooze] = useState(false)
-  const [selectedContactId, setSelectedContactId] = useState<number | null>(null)
   const [snoozeRemoving, setSnoozeRemoving] = useState(false)
   const [showSnoozeHistory, setShowSnoozeHistory] = useState(false)
 
   const [activeTab, setActiveTab] = useState<TabId>('story')
+  const [tabSetByUser, setTabSetByUser] = useState(false)
   const [summaryState, setSummaryState] = useState<'idle' | 'loading' | 'done' | 'error'>('idle')
   const [summaryError, setSummaryError] = useState<string | null>(null)
   const [taskPromptState, setTaskPromptState] = useState<'idle' | 'open' | 'done' | 'dismissed'>('idle')
@@ -376,6 +377,12 @@ export default function DealPanel({
   useEffect(() => { fetchGmail() }, [fetchGmail])
   useEffect(() => { fetchDrive() }, [fetchDrive])
   useEffect(() => { if (!loading && data) refreshHighlight() }, [loading, data])
+
+  // Set pipeline-aware default tab when deal first loads (only if user hasn't switched tabs)
+  useEffect(() => {
+    if (!data?.deal?.stage || tabSetByUser) return
+    setActiveTab(defaultTabForPipelineGroup(getPipelineGroup(data.deal.stage)))
+  }, [data?.deal?.stage, tabSetByUser])
 
   // Auto-advance to HubSpot check after "Verify first" prompt verify completes
   useEffect(() => {
@@ -661,7 +668,7 @@ export default function DealPanel({
           {TAB_IDS.map(tab => (
             <button
               key={tab}
-              onClick={() => setActiveTab(tab)}
+              onClick={() => { setActiveTab(tab); setTabSetByUser(true) }}
               className={`px-4 py-2.5 text-xs font-medium whitespace-nowrap border-b-2 -mb-px transition-colors ${
                 activeTab === tab
                   ? 'border-gray-900 text-gray-900'
@@ -692,42 +699,21 @@ export default function DealPanel({
 
             {/* Contacts Tab */}
             {activeTab === 'contacts' && (
-              <div className="px-6 py-4">
-                <SectionHeader title={
-                  layer2State === 'done'
-                    ? `Contacts (${contacts?.length ?? 0})`
-                    : `Contacts (${deal.contactCount > 0 ? `${deal.contactCount} — load full detail for names` : '0'})`
-                } />
-                {contacts && contacts.length > 0 ? (
-                  contacts.map(c => (
-                    <ContactItem key={c.id} contact={c} onSelect={() => setSelectedContactId(c.id)} />
-                  ))
-                ) : (
-                  <p className="text-sm text-gray-400">
-                    {layer2State === 'done' ? 'No contacts linked' : 'Load full detail to see contacts'}
-                  </p>
-                )}
-              </div>
+              <ContactsTab
+                contacts={contacts}
+                layer2State={layer2State}
+                contactCount={deal.contactCount}
+              />
             )}
 
             {/* Calls Tab */}
             {activeTab === 'calls' && (
-              <div className="px-6 py-4">
-                {outreachError ? (
-                  <div className="mb-4 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
-                    {outreachError} — try refreshing or restarting the dev server
-                  </div>
-                ) : outreachData ? (
-                  <OutreachSection
-                    matrix={outreachData}
-                    panelContacts={contacts ?? []}
-                  />
-                ) : (
-                  <p className="text-sm text-gray-400 text-center py-4">
-                    {layer2State === 'done' ? 'No call data available' : 'Load full detail to see calls'}
-                  </p>
-                )}
-              </div>
+              <CallsTab
+                outreachData={outreachData}
+                outreachError={outreachError}
+                contacts={contacts}
+                layer2State={layer2State}
+              />
             )}
 
             {/* Notes Tab */}
@@ -1474,13 +1460,6 @@ export default function DealPanel({
           hubspotId={hubspotId}
           onClose={() => setShowSnooze(false)}
           onSuccess={() => { setShowSnooze(false); fetchDeal(); onClose() }}
-        />
-      )}
-      {selectedContactId !== null && (
-        <ContactPanel
-          dealHubspotId={hubspotId}
-          contactId={selectedContactId}
-          onClose={() => setSelectedContactId(null)}
         />
       )}
     </>

@@ -318,7 +318,7 @@ function BulkVerifyPanel() {
                     ) : r.error ? (
                       <p className="text-xs text-red-500 break-words">{r.error}</p>
                     ) : r.skipped ? (
-                      <p className="text-xs text-gray-400">skipped — no Drive files</p>
+                      <p className="text-xs text-gray-400">skipped — {r.skipReason ?? 'no Drive files'}</p>
                     ) : (
                       <p className="text-xs text-gray-400">
                         {r.confidence} confidence{r.summary ? ` — ${r.summary.slice(0, 80)}${r.summary.length > 80 ? '…' : ''}` : ''}
@@ -366,6 +366,7 @@ function BulkHubspotCheckPanel() {
   const missingCount = results.filter(r => !r.filesLinked && !r.sessionExpired && !r.error && !r.skipped).length
   const expiredCount = results.filter(r => r.sessionExpired).length
   const errorCount = results.filter(r => !!r.error).length
+  const skippedCount = results.filter(r => r.skipped).length
 
   return (
     <>
@@ -446,6 +447,7 @@ function BulkHubspotCheckPanel() {
             <span className="text-green-600">{linkedCount} linked</span>
             {missingCount > 0 && <span className="text-red-500">{missingCount} not linked</span>}
             {expiredCount > 0 && <span className="text-gray-400">{expiredCount} expired</span>}
+            {skippedCount > 0 && <span className="text-gray-400">{skippedCount} skipped</span>}
             {errorCount > 0 && <span className="text-red-600">{errorCount} errors</span>}
             <span className="text-gray-400 ml-auto">{results.length} total</span>
           </div>
@@ -458,11 +460,12 @@ function BulkHubspotCheckPanel() {
               <div key={r.hubspotId} className="px-5 py-2 flex items-start gap-2 hover:bg-gray-50">
                 <span className={`text-sm shrink-0 mt-0.5 ${
                   r.error ? 'text-red-400'
+                  : r.skipped ? 'text-gray-300'
                   : r.sessionExpired ? 'text-gray-300'
                   : r.filesLinked ? 'text-green-500'
                   : 'text-red-400'
                 }`}>
-                  {r.error ? '✗' : r.sessionExpired ? '⚠' : r.filesLinked ? '✓' : '✗'}
+                  {r.error ? '✗' : r.skipped ? '—' : r.sessionExpired ? '⚠' : r.filesLinked ? '✓' : '✗'}
                 </span>
                 <div className="min-w-0 flex-1">
                   <button
@@ -473,10 +476,11 @@ function BulkHubspotCheckPanel() {
                   </button>
                   <p className="text-xs text-gray-400">
                     {r.error ? r.error
+                      : r.skipped ? `${r.skipCode ? `${r.skipCode}: ` : ''}${r.skipReason ?? 'skipped'}`
                       : r.sessionExpired ? 'session expired — re-capture cookies'
                       : r.filesLinked ? 'linked in HubSpot'
                       : 'not linked in HubSpot'}
-                    {r.checkedAt && !r.error && (
+                    {r.checkedAt && !r.error && !r.skipped && (
                       <span className="ml-1">· {relativeDate(r.checkedAt)}</span>
                     )}
                   </p>

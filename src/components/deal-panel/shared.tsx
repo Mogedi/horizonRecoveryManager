@@ -43,8 +43,11 @@ export function ActivityItem({ activity }: { activity: Activity }) {
   )
 }
 
-export function ContactItem({ contact }: { contact: Contact }) {
-  return (
+export function ContactItem({ contact, onSelect }: { contact: Contact; onSelect?: () => void }) {
+  const formattedAddress = [contact.address, contact.city, contact.state, contact.zip]
+    .filter(Boolean).join(', ')
+
+  const inner = (
     <div className="py-2.5 border-b border-gray-100 last:border-0">
       <div className="flex items-start justify-between gap-2">
         <div>
@@ -56,22 +59,46 @@ export function ContactItem({ contact }: { contact: Contact }) {
             <span className="ml-2 text-xs bg-red-50 text-red-600 px-1.5 py-0.5 rounded">DNC</span>
           )}
         </div>
-        <span className="text-xs text-gray-400 shrink-0">
-          {contact.contactType ?? '—'}
-          {contact.ownershipStatus ? ` · ${contact.ownershipStatus}` : ''}
-        </span>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <span className="text-xs text-gray-400">
+            {contact.contactType ?? '—'}
+            {contact.ownershipStatus ? ` · ${contact.ownershipStatus}` : ''}
+          </span>
+          {onSelect && <span className="text-gray-300 text-xs">›</span>}
+        </div>
       </div>
       {contact.phoneNumbers.length > 0 && (
-        <p className="text-xs text-gray-600 mt-0.5">
-          {contact.phoneNumbers.join(' · ')}
-        </p>
+        <div className="mt-0.5 space-y-0.5">
+          {contact.phoneNumbers.map(p => (
+            <p key={p} className="text-xs text-gray-600">{p}</p>
+          ))}
+        </div>
       )}
       {contact.emailList.length > 0 && (
-        <p className="text-xs text-gray-500 mt-0.5">{contact.emailList.join(' · ')}</p>
+        <div className="mt-0.5 space-y-0.5">
+          {contact.emailList.map(e => (
+            <p key={e} className="text-xs text-gray-500">{e}</p>
+          ))}
+        </div>
       )}
-      {contact.phoneNumbers.length === 0 && contact.emailList.length === 0 && (
+      {formattedAddress && (
+        <p className="text-xs text-gray-400 mt-0.5">{formattedAddress}</p>
+      )}
+      {contact.phoneNumbers.length === 0 && contact.emailList.length === 0 && !formattedAddress && (
         <p className="text-xs text-gray-400 mt-0.5">No contact info</p>
       )}
     </div>
   )
+
+  if (onSelect) {
+    return (
+      <button
+        onClick={onSelect}
+        className="w-full text-left hover:bg-gray-50 cursor-pointer px-0 rounded transition-colors"
+      >
+        {inner}
+      </button>
+    )
+  }
+  return inner
 }

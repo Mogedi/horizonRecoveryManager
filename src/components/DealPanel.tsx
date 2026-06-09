@@ -8,6 +8,7 @@ import { SectionHeader, ActivityItem, ContactItem } from './deal-panel/shared'
 import { OutreachSection } from './deal-panel/OutreachSection'
 import { AiSummaryBlock } from './deal-panel/AiSummaryBlock'
 import { SnoozeModal } from './deal-panel/SnoozeModal'
+import { ContactPanel } from './ContactPanel'
 import { TaskPromptInline } from './deal-panel/TaskPromptInline'
 import type { PanelData, OutreachMatrix } from './deal-panel/types'
 import { SNOOZE_CATEGORY_LABELS } from './deal-panel/types'
@@ -161,6 +162,7 @@ export default function DealPanel({
   const [layer2Error, setLayer2Error] = useState<string | null>(null)
 
   const [showSnooze, setShowSnooze] = useState(false)
+  const [selectedContactId, setSelectedContactId] = useState<number | null>(null)
   const [snoozeRemoving, setSnoozeRemoving] = useState(false)
   const [showSnoozeHistory, setShowSnoozeHistory] = useState(false)
 
@@ -644,7 +646,9 @@ export default function DealPanel({
                     : `Contacts (${deal.contactCount > 0 ? `${deal.contactCount} — load full detail for names` : '0'})`
                 } />
                 {contacts && contacts.length > 0 ? (
-                  contacts.map(c => <ContactItem key={c.id} contact={c} />)
+                  contacts.map(c => (
+                    <ContactItem key={c.id} contact={c} onSelect={() => setSelectedContactId(c.id)} />
+                  ))
                 ) : (
                   <p className="text-sm text-gray-400">
                     {layer2State === 'done' ? 'No contacts linked' : 'Load full detail to see contacts'}
@@ -1404,6 +1408,13 @@ export default function DealPanel({
           hubspotId={hubspotId}
           onClose={() => setShowSnooze(false)}
           onSuccess={() => { setShowSnooze(false); fetchDeal(); onClose() }}
+        />
+      )}
+      {selectedContactId !== null && (
+        <ContactPanel
+          dealHubspotId={hubspotId}
+          contactId={selectedContactId}
+          onClose={() => setSelectedContactId(null)}
         />
       )}
     </>

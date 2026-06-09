@@ -9,6 +9,7 @@ import { OutreachSection } from './deal-panel/OutreachSection'
 import { AiSummaryBlock } from './deal-panel/AiSummaryBlock'
 import { SnoozeModal } from './deal-panel/SnoozeModal'
 import { ContactPanel } from './ContactPanel'
+import { StoryTab } from './deal-panel/StoryTab'
 import { TaskPromptInline } from './deal-panel/TaskPromptInline'
 import type { PanelData, OutreachMatrix } from './deal-panel/types'
 import { SNOOZE_CATEGORY_LABELS } from './deal-panel/types'
@@ -141,6 +142,13 @@ type HubSpotCheckResult = {
   docStatuses: HubSpotDocStatusEntry[] | null
 }
 
+type TabId = 'story' | 'tasks' | 'contacts' | 'calls' | 'emails' | 'documents' | 'notes'
+const TAB_IDS: TabId[] = ['story', 'tasks', 'contacts', 'calls', 'emails', 'documents', 'notes']
+const TAB_LABELS: Record<TabId, string> = {
+  story: 'Story', tasks: 'Tasks', contacts: 'Contacts',
+  calls: 'Calls', emails: 'Emails', documents: 'Documents', notes: 'Notes',
+}
+
 export default function DealPanel({
   hubspotId,
   onClose,
@@ -166,6 +174,7 @@ export default function DealPanel({
   const [snoozeRemoving, setSnoozeRemoving] = useState(false)
   const [showSnoozeHistory, setShowSnoozeHistory] = useState(false)
 
+  const [activeTab, setActiveTab] = useState<TabId>('story')
   const [summaryState, setSummaryState] = useState<'idle' | 'loading' | 'done' | 'error'>('idle')
   const [summaryError, setSummaryError] = useState<string | null>(null)
   const [taskPromptState, setTaskPromptState] = useState<'idle' | 'open' | 'done' | 'dismissed'>('idle')
@@ -433,7 +442,7 @@ export default function DealPanel({
     }
   }
 
-  const { deal, activities, contacts, snooze, snoozeHistory, summaryData } = data ?? {}
+  const { deal, activities, contacts, snooze, snoozeHistory, summaryData, layer2SyncedAt } = data ?? {}
 
   const panelContent = (
     <div id="deal-panel" className={inline ? 'h-full flex flex-col bg-white overflow-hidden' : 'fixed right-0 top-0 h-full z-50 w-full max-w-xl bg-white shadow-2xl flex flex-col overflow-hidden'}>
@@ -483,18 +492,17 @@ export default function DealPanel({
         )}
       </div>
 
-      {/* Scrollable body */}
-      <div className="flex-1 overflow-y-auto px-6 py-4">
+      {/* Panel controls */}
+      <div className="px-6 py-3 border-b border-gray-100 shrink-0">
         {error && (
-          <div className="mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+          <div className="mb-2 px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
             {error}
           </div>
         )}
-
         {!loading && deal && (
           <>
             {/* Snooze status + actions */}
-            <div className="flex items-center gap-2 mb-4">
+            <div className="flex items-center gap-2 mb-2">
               {snooze ? (
                 <div className="flex-1 flex items-center gap-2 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg">
                   <span className="text-xs text-gray-500 flex-1">
@@ -523,13 +531,13 @@ export default function DealPanel({
             {layer2State === 'idle' && (
               <button
                 onClick={startLayer2}
-                className="w-full py-2 text-sm text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 mb-4"
+                className="w-full py-2 text-sm text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 mb-2"
               >
                 Load Full Detail
               </button>
             )}
             {layer2State === 'confirming' && (
-              <div className="mb-4 px-4 py-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+              <div className="mb-2 px-4 py-3 bg-yellow-50 border border-yellow-200 rounded-lg">
                 <p className="text-sm text-yellow-800 mb-2">{layer2CallMsg}</p>
                 <div className="flex gap-2">
                   <button
@@ -548,43 +556,43 @@ export default function DealPanel({
               </div>
             )}
             {layer2State === 'loading' && (
-              <div className="mb-4 px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-500 animate-pulse">
+              <div className="mb-2 px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-500 animate-pulse">
                 Loading full detail from HubSpot…
               </div>
             )}
             {layer2Error && (
-              <div className="mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+              <div className="mb-2 px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
                 {layer2Error}
               </div>
             )}
             {layer2State === 'done' && (
               <button
                 onClick={startLayer2}
-                className="text-xs text-gray-400 hover:text-gray-600 mb-4"
+                className="text-xs text-gray-400 hover:text-gray-600 mb-2"
               >
                 ↻ Refresh contacts & activity from HubSpot
               </button>
             )}
 
-            {/* AI Summary */}
+            {/* AI Summary (Case Snapshot) */}
             {layer2State === 'done' && (
               <>
                 <SectionHeader title="AI Summary" />
                 {summaryState === 'idle' && (
                   <button
                     onClick={generateSummary}
-                    className="w-full py-2 text-sm text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 mb-4"
+                    className="w-full py-2 text-sm text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 mb-2"
                   >
                     Generate AI Summary
                   </button>
                 )}
                 {summaryState === 'loading' && (
-                  <div className="mb-4 px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-500 animate-pulse">
+                  <div className="mb-2 px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-500 animate-pulse">
                     Generating summary — this may take up to 20 seconds…
                   </div>
                 )}
                 {summaryState === 'error' && (
-                  <div className="mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-lg">
+                  <div className="mb-2 px-4 py-3 bg-red-50 border border-red-200 rounded-lg">
                     <p className="text-sm font-medium text-red-800">Summary unavailable</p>
                     {summaryError && (
                       <p className="text-xs text-red-600 mt-0.5">{summaryError}</p>
@@ -614,32 +622,77 @@ export default function DealPanel({
                   />
                 )}
                 {summaryState === 'done' && taskPromptState === 'done' && (
-                  <div className="mb-4 px-3 py-2 bg-green-50 border border-green-200 rounded text-xs text-green-700">
+                  <div className="mb-2 px-3 py-2 bg-green-50 border border-green-200 rounded text-xs text-green-700">
                     Task created and added to your task list.
                   </div>
                 )}
               </>
             )}
 
-            {/* Call Outreach — primary contact view when outreach data is available */}
-            {outreachError && (
+            {/* Snooze history */}
+            {snoozeHistory && snoozeHistory.length > 0 && (
               <>
-                <SectionHeader title="Call Outreach" />
-                <div className="mb-4 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
-                  {outreachError} — try refreshing or restarting the dev server
-                </div>
+                <button
+                  onClick={() => setShowSnoozeHistory(v => !v)}
+                  className="mt-2 text-xs text-gray-400 hover:text-gray-600"
+                >
+                  {showSnoozeHistory ? '▾' : '▸'} Snooze history ({snoozeHistory.length})
+                </button>
+                {showSnoozeHistory && (
+                  <div className="mt-2 space-y-1">
+                    {snoozeHistory.map(s => (
+                      <div key={s.id} className="text-xs text-gray-400 py-1">
+                        {SNOOZE_CATEGORY_LABELS[s.category] ?? s.category} · until {formatDate(s.snoozeUntil)}
+                        {s.wokeAt ? ` · removed ${relativeDate(s.wokeAt)}` : ' · active'}
+                        {s.freeformNote ? ` — ${s.freeformNote}` : ''}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </>
             )}
-            {outreachData && !outreachError && (
-              <OutreachSection
-                matrix={outreachData}
-                panelContacts={contacts ?? []}
-              />
+          </>
+        )}
+      </div>
+
+      {/* Tab strip */}
+      {!loading && deal && (
+        <div className="shrink-0 border-b border-gray-200 flex overflow-x-auto">
+          {TAB_IDS.map(tab => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`px-4 py-2.5 text-xs font-medium whitespace-nowrap border-b-2 -mb-px transition-colors ${
+                activeTab === tab
+                  ? 'border-gray-900 text-gray-900'
+                  : 'border-transparent text-gray-400 hover:text-gray-600'
+              }`}
+            >
+              {TAB_LABELS[tab]}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Tab content */}
+      <div className="flex-1 overflow-y-auto">
+        {!loading && deal && (
+          <>
+            {/* Story Tab */}
+            {activeTab === 'story' && (
+              <StoryTab dealHubspotId={hubspotId} layer2SyncedAt={layer2SyncedAt ?? null} />
             )}
 
-            {/* Contacts — only shown when outreach data is NOT available */}
-            {!outreachData && !outreachError && (
-              <>
+            {/* Tasks Tab */}
+            {activeTab === 'tasks' && (
+              <div className="px-6 py-6 text-center text-sm text-gray-400">
+                Tasks — coming soon
+              </div>
+            )}
+
+            {/* Contacts Tab */}
+            {activeTab === 'contacts' && (
+              <div className="px-6 py-4">
                 <SectionHeader title={
                   layer2State === 'done'
                     ? `Contacts (${contacts?.length ?? 0})`
@@ -654,57 +707,90 @@ export default function DealPanel({
                     {layer2State === 'done' ? 'No contacts linked' : 'Load full detail to see contacts'}
                   </p>
                 )}
-              </>
+              </div>
             )}
 
-            {/* Activity timeline */}
-            <SectionHeader title={`Activity (${activities?.length ?? 0})`} />
-            {activities && activities.length > 0 ? (
-              activities.map(a => <ActivityItem key={a.id} activity={a} />)
-            ) : (
-              <p className="text-sm text-gray-400">
-                {layer2State === 'done' ? 'No activity recorded' : 'Load full detail to see activity timeline'}
-              </p>
-            )}
-
-            {/* Gmail */}
-            {gmailEmails !== null && (
-              <>
-                <SectionHeader title={`Gmail (${gmailEmails.length})`} />
-                {gmailEmails.length === 0 ? (
-                  <p className="text-sm text-gray-400 mb-4">No emails linked to this deal</p>
-                ) : (
-                  <div className="space-y-2 mb-4">
-                    {gmailEmails.slice(0, 10).map(email => {
-                      const meta = email.metadata as { subject?: string; from?: string; to?: string } | null
-                      return (
-                        <div key={email.id} className="px-3 py-2 bg-gray-50 rounded-lg text-xs">
-                          <div className="flex items-center justify-between gap-2 mb-0.5">
-                            <span className="font-medium text-gray-800 truncate">
-                              {meta?.subject ?? '(no subject)'}
-                            </span>
-                            <span className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded-full ${
-                              email.direction === 'outbound'
-                                ? 'bg-blue-100 text-blue-700'
-                                : 'bg-gray-100 text-gray-500'
-                            }`}>
-                              {email.direction === 'outbound' ? 'sent' : 'received'}
-                            </span>
-                          </div>
-                          <p className="text-gray-500 truncate">
-                            {email.direction === 'outbound' ? `To: ${meta?.to ?? '—'}` : `From: ${meta?.from ?? '—'}`}
-                          </p>
-                          <p className="text-gray-400 mt-0.5">{relativeDate(email.happenedAt)}</p>
-                        </div>
-                      )
-                    })}
-                    {gmailEmails.length > 10 && (
-                      <p className="text-xs text-gray-400">+ {gmailEmails.length - 10} more</p>
-                    )}
+            {/* Calls Tab */}
+            {activeTab === 'calls' && (
+              <div className="px-6 py-4">
+                {outreachError ? (
+                  <div className="mb-4 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+                    {outreachError} — try refreshing or restarting the dev server
                   </div>
+                ) : outreachData ? (
+                  <OutreachSection
+                    matrix={outreachData}
+                    panelContacts={contacts ?? []}
+                  />
+                ) : (
+                  <p className="text-sm text-gray-400 text-center py-4">
+                    {layer2State === 'done' ? 'No call data available' : 'Load full detail to see calls'}
+                  </p>
                 )}
-              </>
+              </div>
             )}
+
+            {/* Notes Tab */}
+            {activeTab === 'notes' && (
+              <div className="px-6 py-4">
+                <SectionHeader title={`Activity (${activities?.length ?? 0})`} />
+                {activities && activities.length > 0 ? (
+                  activities.map(a => <ActivityItem key={a.id} activity={a} />)
+                ) : (
+                  <p className="text-sm text-gray-400">
+                    {layer2State === 'done' ? 'No activity recorded' : 'Load full detail to see activity timeline'}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Emails Tab */}
+            {activeTab === 'emails' && (
+              <div className="px-6 py-4">
+                {gmailEmails !== null ? (
+                  <>
+                    {gmailEmails.length === 0 ? (
+                      <p className="text-sm text-gray-400 mb-4">No emails linked to this deal</p>
+                    ) : (
+                      <div className="space-y-2 mb-4">
+                        {gmailEmails.slice(0, 10).map(email => {
+                          const meta = email.metadata as { subject?: string; from?: string; to?: string } | null
+                          return (
+                            <div key={email.id} className="px-3 py-2 bg-gray-50 rounded-lg text-xs">
+                              <div className="flex items-center justify-between gap-2 mb-0.5">
+                                <span className="font-medium text-gray-800 truncate">
+                                  {meta?.subject ?? '(no subject)'}
+                                </span>
+                                <span className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded-full ${
+                                  email.direction === 'outbound'
+                                    ? 'bg-blue-100 text-blue-700'
+                                    : 'bg-gray-100 text-gray-500'
+                                }`}>
+                                  {email.direction === 'outbound' ? 'sent' : 'received'}
+                                </span>
+                              </div>
+                              <p className="text-gray-500 truncate">
+                                {email.direction === 'outbound' ? `To: ${meta?.to ?? '—'}` : `From: ${meta?.from ?? '—'}`}
+                              </p>
+                              <p className="text-gray-400 mt-0.5">{relativeDate(email.happenedAt)}</p>
+                            </div>
+                          )
+                        })}
+                        {gmailEmails.length > 10 && (
+                          <p className="text-xs text-gray-400">+ {gmailEmails.length - 10} more</p>
+                        )}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-sm text-gray-400">No email data loaded</p>
+                )}
+              </div>
+            )}
+
+            {/* Documents Tab */}
+            {activeTab === 'documents' && (
+            <div className="px-6 py-4">
 
             {/* Drive */}
             <div className="flex items-center justify-between mb-1">
@@ -1355,29 +1441,9 @@ export default function DealPanel({
                 </button>
               </div>
             )}
-
-            {/* Snooze history */}
-            {snoozeHistory && snoozeHistory.length > 0 && (
-              <>
-                <button
-                  onClick={() => setShowSnoozeHistory(v => !v)}
-                  className="mt-6 text-xs text-gray-400 hover:text-gray-600"
-                >
-                  {showSnoozeHistory ? '▾' : '▸'} Snooze history ({snoozeHistory.length})
-                </button>
-                {showSnoozeHistory && (
-                  <div className="mt-2 space-y-1">
-                    {snoozeHistory.map(s => (
-                      <div key={s.id} className="text-xs text-gray-400 py-1">
-                        {SNOOZE_CATEGORY_LABELS[s.category] ?? s.category} · until {formatDate(s.snoozeUntil)}
-                        {s.wokeAt ? ` · removed ${relativeDate(s.wokeAt)}` : ' · active'}
-                        {s.freeformNote ? ` — ${s.freeformNote}` : ''}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </>
+            </div>
             )}
+            {/* /Documents Tab */}
           </>
         )}
       </div>

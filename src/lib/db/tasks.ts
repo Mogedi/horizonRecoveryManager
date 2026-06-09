@@ -72,3 +72,9 @@ export async function completeTask(id: number): Promise<TaskRow> {
 export async function deleteTask(id: number): Promise<void> {
   await prisma.internalTask.delete({ where: { id } })
 }
+
+export async function getOpenTaskCountForDeal(dealHubspotId: string): Promise<number> {
+  return prisma.internalTask.count({
+    where: { dealHubspotId, status: TaskStatus.open },
+  })
+}

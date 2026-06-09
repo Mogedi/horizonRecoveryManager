@@ -24,6 +24,27 @@ export type Contact = {
   doNotContact: boolean
   phoneNumbers: string[]
   emailList: string[]
+  address: string | null
+  city: string | null
+  state: string | null
+  zip: string | null
+}
+
+export type ContactStats = {
+  totalCalls: number
+  conversations: number
+  lastConversationDate: string | null  // ISO string
+  lastCallDate: string | null          // ISO string
+  bestPhone: string | null
+  bestPhoneSource: 'inferred'
+}
+
+export type ContactCall = {
+  id: number
+  happenedAt: string  // ISO string
+  direction: string | null
+  outcome: string | null
+  durationSecs: number | null
 }
 
 export type Snooze = {

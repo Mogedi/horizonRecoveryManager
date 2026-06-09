@@ -65,6 +65,10 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       doNotContact: c.doNotContact,
       phoneNumbers: Array.isArray(c.phoneNumbers) ? c.phoneNumbers : [],
       emailList: Array.isArray(c.emailList) ? c.emailList : [],
+      address: c.address ?? null,
+      city: c.city ?? null,
+      state: c.state ?? null,
+      zip: c.zip ?? null,
     })),
     snooze: snooze
       ? {

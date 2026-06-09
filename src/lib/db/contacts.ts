@@ -13,6 +13,10 @@ export async function getContactsForDeal(hubspotId: string) {
       doNotContact: true,
       phoneNumbers: true,
       emailList: true,
+      address: true,
+      city: true,
+      state: true,
+      zip: true,
     },
   })
 }

@@ -77,6 +77,10 @@ export async function replaceLayer2Data(
           doNotContact: c.doNotContact,
           phoneNumbers: c.phoneNumbers,
           emailList: c.emailList,
+          address: c.address ?? null,
+          city: c.city ?? null,
+          state: c.state ?? null,
+          zip: c.zip ?? null,
           rawPayload: asJson(c.rawPayload ?? undefined),
         })),
       })

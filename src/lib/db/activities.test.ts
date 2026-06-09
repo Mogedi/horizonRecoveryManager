@@ -112,7 +112,7 @@ describe('replaceLayer2Data', () => {
     { type: 'note', body: 'Test note', authorOwnerId: 'owner-1', direction: null, timestamp: new Date(), metadata: null, rawPayload: {} },
   ]
   const contacts = [
-    { contactHubspotId: 'contact-1', name: 'John Doe', contactType: 'owner', ownershipStatus: null, isDeceased: false, doNotContact: false, phoneNumbers: ['555-1234'], emailList: [], rawPayload: {} },
+    { contactHubspotId: 'contact-1', name: 'John Doe', contactType: 'owner', ownershipStatus: null, isDeceased: false, doNotContact: false, phoneNumbers: ['555-1234'], emailList: [], address: '123 Main St', city: 'Atlanta', state: 'GA', zip: '30301', rawPayload: {} },
   ]
 
   it('calls withTransaction', async () => {
@@ -164,5 +164,25 @@ describe('replaceLayer2Data', () => {
     })
 
     await replaceLayer2Data(dealId, activities, [])
+  })
+
+  it('persists all 4 address fields in contact createMany payload', async () => {
+    let capturedData: Record<string, unknown>[] = []
+    mockWithTransaction.mockImplementation(async (fn: (tx: unknown) => Promise<void>) => {
+      const tx = {
+        dealActivity: { deleteMany: vi.fn().mockResolvedValue({}), createMany: vi.fn().mockResolvedValue({}) },
+        dealContact: {
+          deleteMany: vi.fn().mockResolvedValue({}),
+          createMany: vi.fn().mockImplementation(({ data }: { data: Record<string, unknown>[] }) => {
+            capturedData = data
+            return Promise.resolve({})
+          }),
+        },
+      }
+      await fn(tx)
+    })
+
+    await replaceLayer2Data(dealId, activities, contacts)
+    expect(capturedData[0]).toMatchObject({ address: '123 Main St', city: 'Atlanta', state: 'GA', zip: '30301' })
   })
 })

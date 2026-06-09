@@ -86,9 +86,15 @@ model Deal {
   docVerificationAt   DateTime? @map("doc_verification_at")   @db.Timestamptz(6)
 
   // HubSpot browser screenshot check — populated by hubspot-check route (manual only)
-  hubspotCheck       Json?     @map("hubspot_check")          // HubSpotDriveCheckResult sans screenshotBase64
-  hubspotCheckAt     DateTime? @map("hubspot_check_at")       @db.Timestamptz(6)
-  hubspotScreenshot  String?   @map("hubspot_screenshot")     // JPEG base64, ~100-200KB
+  hubspotCheck        Json?     @map("hubspot_check")         // HubSpotDriveCheckResult sans screenshotBase64
+  hubspotCheckAt      DateTime? @map("hubspot_check_at")      @db.Timestamptz(6)
+  hubspotScreenshot   String?   @map("hubspot_screenshot")    // JPEG base64, ~100-200KB
+  // Queryable summary columns — extracted from hubspotCheck for fast filtering/sorting
+  hubspotFilesLinked  Boolean?  @map("hubspot_files_linked")  // true = all files linked; false = gaps found
+  hubspotMissingCount Int?      @map("hubspot_missing_count") // count of missing files (0 when all linked)
+  // Per-doc-type status array — [{type, label, linked, fileName}] — GIN-indexed for @> queries
+  // e.g. WHERE hubspot_doc_status @> '[{"type":"tax_sale_deed","linked":false}]'
+  hubspotDocStatus    Json?     @map("hubspot_doc_status")
 
   activities     DealActivity[]
   contacts       DealContact[]
@@ -131,6 +137,10 @@ model DealContact {
   doNotContact     Boolean  @default(false) @map("do_not_contact")
   phoneNumbers     Json?    @map("phone_numbers") // validated array from all 11 phone field variants
   emailList        Json?    @map("email_list")
+  address          String?  @map("address")
+  city             String?  @map("city")
+  state            String?  @map("state")
+  zip              String?  @map("zip")
   rawPayload       Json?    @map("raw_payload")
   syncedAt         DateTime @default(now()) @map("synced_at") @db.Timestamptz(6)
 

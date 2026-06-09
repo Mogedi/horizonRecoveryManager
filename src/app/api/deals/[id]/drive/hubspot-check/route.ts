@@ -9,16 +9,17 @@
 //
 // Response:
 //   HubSpotDriveCheckResult (see src/lib/integrations/hubspot-browser/drive-check.ts)
-//
-// This is intentionally POST-only (not cached) — each call takes a fresh screenshot.
-// The result is returned to the client for display; it is NOT persisted to DB
-// since HubSpot sidebar state can change at any time.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { isAuthenticated, isCronRequest, unauthorizedResponse } from '@/lib/auth/require-session'
 import { getDealById, updateDealHubspotCheck } from '@/lib/db/deals'
-import { checkHubSpotDriveAttachments } from '@/lib/integrations/hubspot-browser/drive-check'
-import { classifyFiles } from '@/lib/integrations/google/doc-classifier'
+import {
+  checkHubSpotDriveAttachments,
+  buildDocStatuses,
+  buildStructured,
+  buildCheckSummary,
+} from '@/lib/integrations/hubspot-browser/drive-check'
+import { buildExpectedFiles } from '@/lib/integrations/hubspot-browser/expected-files'
 import { log } from '@/lib/logger'
 
 type Params = { params: Promise<{ id: string }> }
@@ -33,19 +34,15 @@ export async function POST(req: NextRequest, { params }: Params) {
     return NextResponse.json({ error: 'Deal not found' }, { status: 404 })
   }
 
-  // Determine which files to look for — use request body if provided,
-  // otherwise fall back to the classified required docs from the Drive cache.
   let expectedFiles: string[]
+  let classifiedDocs: ReturnType<typeof buildExpectedFiles>['classifiedDocs']
   try {
     const body = await req.json() as { expectedFiles?: string[] }
     if (Array.isArray(body.expectedFiles) && body.expectedFiles.length > 0) {
       expectedFiles = body.expectedFiles
+      classifiedDocs = null
     } else {
-      const cached = JSON.parse(JSON.stringify(deal.driveFilesCache ?? [])) as import('@/lib/integrations/google/drive-index').DriveFileEntry[]
-      const checklist = classifyFiles(cached)
-      expectedFiles = checklist.required
-        .filter(d => d.found && d.file)
-        .map(d => d.file!.name)
+      ;({ expectedFiles, classifiedDocs } = buildExpectedFiles(deal))
     }
   } catch {
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
@@ -53,23 +50,45 @@ export async function POST(req: NextRequest, { params }: Params) {
 
   if (expectedFiles.length === 0) {
     return NextResponse.json({
-      error: 'No expected files specified and no classified docs found in Drive cache',
+      error: 'No Drive files found — sync Drive first or specify files manually',
     }, { status: 422 })
   }
 
   try {
-    log.info('hubspot-check: starting', { hubspotId: id, expectedFiles })
     const result = await checkHubSpotDriveAttachments(id, expectedFiles)
 
-    // Persist: store result (without screenshot) and screenshot separately
     if (result.checked) {
-      const { screenshotBase64, ...checkWithoutScreenshot } = result
-      await updateDealHubspotCheck(id, checkWithoutScreenshot, screenshotBase64)
+      const docStatuses = classifiedDocs
+        ? buildDocStatuses(classifiedDocs, result.linkedFiles)
+        : undefined
+
+      const structured = docStatuses ? buildStructured(docStatuses) : undefined
+      const summary = structured ? buildCheckSummary(structured) : undefined
+
+      log.info('hubspot-check step 3/3: persisting to DB', {
+        hubspotId: id, hasScreenshot: !!result.screenshotBase64, docTypes: docStatuses?.map(d => d.type),
+      })
+      const { screenshotBase64, ...checkData } = result
+      await updateDealHubspotCheck(
+        id,
+        { ...checkData, structured, summary },
+        screenshotBase64,
+        docStatuses,
+      )
+      log.info('hubspot-check step 3/3: persisted', { hubspotId: id })
     }
 
+    log.info('hubspot-check: complete', {
+      hubspotId: id, checked: result.checked, sessionExpired: result.sessionExpired,
+      filesLinked: result.filesLinked,
+    })
     return NextResponse.json(result)
   } catch (err) {
-    log.error('hubspot-check: failed', { hubspotId: id, err })
+    log.error('hubspot-check: failed', {
+      hubspotId: id,
+      step: (err as any)?.step ?? 'unknown',
+      err: err instanceof Error ? { name: err.name, message: err.message } : err,
+    })
     return NextResponse.json(
       { error: err instanceof Error ? err.message : 'Check failed' },
       { status: 500 }

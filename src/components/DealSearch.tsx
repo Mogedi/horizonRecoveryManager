@@ -11,6 +11,7 @@ import {
   isPhoneQuery,
   normalizePhone,
 } from '@/lib/utils/highlight'
+import { setHighlightQuery } from '@/lib/utils/search-highlight'
 
 // Alias for local use
 const highlightText = (text: string, indices: readonly RangeTuple[]) =>
@@ -162,7 +163,9 @@ export default function DealSearch({ onSelect, selectedId, onQueryChange }: Deal
   }, [])
 
   useEffect(() => {
-    onQueryChange(query.trim())
+    const q = query.trim()
+    onQueryChange(q)
+    setHighlightQuery(q)
   }, [query, onQueryChange])
 
   useEffect(() => {

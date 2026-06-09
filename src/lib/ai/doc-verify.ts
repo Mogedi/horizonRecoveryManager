@@ -348,9 +348,9 @@ export async function verifyAllFiles(
       mimeType: 'application/pdf' as const,
       label: d.file.name,
     }))
-    raw = await callClaudeWithDocuments(documents, prompt, SYSTEM, 3000)
+    raw = await callClaudeWithDocuments(documents, prompt, SYSTEM, 8000)
   } else {
-    raw = await callClaude(prompt, SYSTEM, 3000)
+    raw = await callClaude(prompt, SYSTEM, 8000)
   }
 
   // Parse response

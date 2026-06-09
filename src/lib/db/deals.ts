@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client'
 import { withBatchTransaction } from './transaction'
 import type { NormalizedDeal } from '@/lib/rules/types'
 import type { MappedDeal } from '@/lib/hubspot/mapper'
+import type { HubSpotDriveCheckResult } from '@/lib/integrations/hubspot-browser/drive-check'
 import { asJson } from '@/lib/utils/json'
 
 // Single source for all deal data consumed by the rules pipeline.
@@ -102,6 +103,9 @@ export async function getDealById(hubspotId: string) {
       driveCacheUpdatedAt: true,
       docVerification: true,
       docVerificationAt: true,
+      hubspotCheck: true,
+      hubspotCheckAt: true,
+      hubspotScreenshot: true,
     },
   })
 }
@@ -222,6 +226,40 @@ export async function getDealsNeedingVerification(): Promise<Array<{
     ...rest,
     contactNames: contacts.map(c => c.name!).filter(Boolean),
   }))
+}
+
+// Persist a HubSpot browser screenshot check result for a deal.
+// The JSON column stores everything except screenshotBase64 (stored separately to keep queries fast).
+export async function updateDealHubspotCheck(
+  hubspotId: string,
+  check: Omit<HubSpotDriveCheckResult, 'screenshotBase64'>,
+  screenshotBase64: string | null,
+): Promise<void> {
+  await prisma.deal.update({
+    where: { hubspotId },
+    data: {
+      hubspotCheck: JSON.parse(JSON.stringify(check)) as Prisma.InputJsonValue,
+      hubspotCheckAt: new Date(check.checkedAt),
+      hubspotScreenshot: screenshotBase64,
+    },
+  })
+}
+
+// Returns all deals for the bulk HubSpot check job.
+// uncheckedOnly = true: only deals not checked or checked >7 days ago.
+export async function getDealsForBulkHubspotCheck(
+  uncheckedOnly: boolean,
+): Promise<Array<{ hubspotId: string; name: string | null }>> {
+  return prisma.deal.findMany({
+    where: uncheckedOnly ? {
+      OR: [
+        { hubspotCheckAt: null },
+        { hubspotCheckAt: { lt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } },
+      ],
+    } : undefined,
+    select: { hubspotId: true, name: true },
+    orderBy: { name: 'asc' },
+  })
 }
 
 // Upsert the Drive folder link + cached file list for a deal.

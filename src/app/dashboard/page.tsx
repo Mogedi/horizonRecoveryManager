@@ -667,7 +667,6 @@ function DashboardContent() {
               key={selectedDealId}
               hubspotId={selectedDealId}
               inline
-              searchQuery={searchActive ? searchQuery : undefined}
               onClose={() => {
                 setSelectedDealId(null)
                 mutate()

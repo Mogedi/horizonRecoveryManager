@@ -1,18 +1,11 @@
 // Google Workspace API client — Gmail and Drive.
-// All calls flow through request() which handles token refresh, rate limiting, and retry.
+// All calls flow through googleLimiter (rate limiting + 429/503 retry).
+// 401 token refresh is handled inline: one auto-refresh per request, then throw.
 
 import { GoogleError } from '@/lib/errors'
 import { log } from '@/lib/logger'
-import { TokenBucket } from '@/lib/utils/rate-limiter'
+import { googleLimiter } from '@/lib/rate-limiters'
 import { getAccessToken, clearTokenCache } from './auth'
-
-// Google Workspace default quota: 250 req/s. Use 30% cap = 75 req/s.
-const rateLimiter = new TokenBucket(75, 75)
-const MAX_RETRIES = 3
-
-function sleep(ms: number) {
-  return new Promise<void>(r => setTimeout(r, ms))
-}
 
 // ─── Raw API response types ───────────────────────────────────────────────────
 
@@ -67,57 +60,52 @@ export type DriveListResponse = {
 // ─── Client ───────────────────────────────────────────────────────────────────
 
 export class GoogleClient {
+  // Wraps fetch with one automatic 401 token-refresh. Returns the response as-is
+  // after the refresh attempt so callers can check the final status.
+  private async fetchWithAuth(url: string, opts: RequestInit = {}): Promise<Response> {
+    const token = await getAccessToken()
+    const res = await fetch(url, {
+      ...opts,
+      headers: { ...opts.headers, Authorization: `Bearer ${token}` },
+    })
+    if (res.status !== 401) return res
+
+    clearTokenCache()
+    const freshToken = await getAccessToken()
+    return fetch(url, {
+      ...opts,
+      headers: { ...opts.headers, Authorization: `Bearer ${freshToken}` },
+    })
+  }
+
   private async request<T>(
     service: string,
     method: 'GET' | 'POST',
     url: string,
     params?: Record<string, string>,
     body?: unknown,
-    attempt = 0
   ): Promise<T> {
-    await rateLimiter.acquire()
+    return googleLimiter.schedule(async () => {
+      const fullUrl = params ? `${url}?${new URLSearchParams(params)}` : url
+      const start = Date.now()
 
-    const token = await getAccessToken()
-    const fullUrl = params
-      ? `${url}?${new URLSearchParams(params)}`
-      : url
+      const res = await this.fetchWithAuth(fullUrl, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+      })
 
-    const start = Date.now()
+      log.info('google api call', { service, method, url, status: res.status, ms: Date.now() - start })
 
-    const res = await fetch(fullUrl, {
-      method,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
+      if (res.status === 401) throw new GoogleError('Google authentication failed — refresh token may be expired', 401)
+      if (res.status === 429 || res.status === 503) throw new GoogleError('Rate limited', res.status)
+      if (!res.ok) {
+        const text = await res.text().catch(() => '')
+        throw new GoogleError(`Google ${service} error ${res.status}`, res.status, text)
+      }
+
+      return res.json() as Promise<T>
     })
-
-    log.info('google api call', { service, method, url, status: res.status, ms: Date.now() - start })
-
-    if (res.status === 429 || res.status === 503) {
-      if (attempt >= MAX_RETRIES) throw new GoogleError('Google rate limit exceeded after retries', res.status)
-      const backoffMs = 1000 * Math.pow(2, attempt)
-      log.warn('google rate limit — backing off', { backoffMs, attempt })
-      await sleep(backoffMs)
-      return this.request(service, method, url, params, body, attempt + 1)
-    }
-
-    if (res.status === 401 && attempt === 0) {
-      clearTokenCache()
-      return this.request(service, method, url, params, body, attempt + 1)
-    }
-
-    if (res.status === 401) {
-      throw new GoogleError('Google authentication failed — refresh token may be expired', 401)
-    }
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => '')
-      throw new GoogleError(`Google ${service} error ${res.status}`, res.status, text)
-    }
-
-    return res.json() as Promise<T>
   }
 
   // ─── Gmail ─────────────────────────────────────────────────────────────────
@@ -154,7 +142,6 @@ export class GoogleClient {
 
   // ─── Drive ─────────────────────────────────────────────────────────────────
 
-  // List all immediate children of a folder. Paginates until all results are returned.
   async listFolderContents(
     folderId: string,
     opts: { mimeType?: string } = {}
@@ -185,31 +172,26 @@ export class GoogleClient {
     return files
   }
 
-  // Search for files/folders by name within a specific parent folder.
-  // Uses exact name match — caller handles normalization before calling this.
   async searchByNameInFolder(
     name: string,
     parentFolderId: string,
     mimeType?: string
   ): Promise<DriveFile[]> {
-    // Escape single quotes in name for Drive query syntax
     const escapedName = name.replace(/'/g, "\\'")
     const mimeFilter = mimeType ? ` and mimeType = '${mimeType}'` : ''
-    const params: Record<string, string> = {
-      q: `name = '${escapedName}' and '${parentFolderId}' in parents and trashed = false${mimeFilter}`,
-      fields: 'files(id,name,mimeType,modifiedTime,webViewLink,iconLink)',
-      supportsAllDrives: 'true',
-      includeItemsFromAllDrives: 'true',
-    }
     const res = await this.request<DriveListResponse>(
       'drive', 'GET',
       'https://www.googleapis.com/drive/v3/files',
-      params
+      {
+        q: `name = '${escapedName}' and '${parentFolderId}' in parents and trashed = false${mimeFilter}`,
+        fields: 'files(id,name,mimeType,modifiedTime,webViewLink,iconLink)',
+        supportsAllDrives: 'true',
+        includeItemsFromAllDrives: 'true',
+      }
     )
     return res.files ?? []
   }
 
-  // Get the display name of a shared drive by ID.
   async getDriveName(driveId: string): Promise<string> {
     const res = await this.request<{ name: string }>(
       'drive', 'GET',
@@ -219,8 +201,6 @@ export class GoogleClient {
     return res.name
   }
 
-  // List ALL folders in a shared drive (any depth) in one paginated pass.
-  // Returns folders with their parents[] so callers can build full paths.
   async listAllFoldersInDrive(driveId: string): Promise<DriveFile[]> {
     const folders: DriveFile[] = []
     let pageToken: string | undefined
@@ -249,105 +229,86 @@ export class GoogleClient {
     return folders
   }
 
-  // Download a Drive file as a raw Buffer.
-  // Used for local PDF text extraction (pdf-parse) — avoids sending binary to Claude.
+  // Download a Drive file as a raw Buffer (for local PDF parsing).
   async downloadFileAsBuffer(fileId: string): Promise<{ buffer: Buffer; mimeType: string }> {
-    await rateLimiter.acquire()
-    const token = await getAccessToken()
     const url = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`
+    return googleLimiter.schedule(async () => {
+      const start = Date.now()
+      const res = await this.fetchWithAuth(url)
+      log.info('google api call', { service: 'drive', method: 'GET', url, status: res.status, ms: Date.now() - start })
 
-    const start = Date.now()
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
-    log.info('google api call', { service: 'drive', method: 'GET', url, status: res.status, ms: Date.now() - start })
+      if (res.status === 401) throw new GoogleError('Authentication failed', 401)
+      if (res.status === 429 || res.status === 503) throw new GoogleError('Rate limited', res.status)
+      if (!res.ok) {
+        const text = await res.text().catch(() => '')
+        throw new GoogleError(`Drive download error ${res.status}`, res.status, text)
+      }
 
-    if (res.status === 401) { clearTokenCache(); return this.downloadFileAsBuffer(fileId) }
-    if (!res.ok) {
-      const text = await res.text().catch(() => '')
-      throw new GoogleError(`Drive download error ${res.status}`, res.status, text)
-    }
-
-    const mimeType = res.headers.get('content-type') ?? 'application/octet-stream'
-    const buffer = Buffer.from(await res.arrayBuffer())
-    return { buffer, mimeType }
+      const mimeType = res.headers.get('content-type') ?? 'application/octet-stream'
+      return { buffer: Buffer.from(await res.arrayBuffer()), mimeType }
+    })
   }
 
   // Export a Google Workspace file (Doc, etc.) as plain text.
-  // Returns the raw text string — far cheaper to pass to Claude than a PDF binary.
   async exportFileAsText(fileId: string): Promise<string> {
-    await rateLimiter.acquire()
-    const token = await getAccessToken()
     const url = `https://www.googleapis.com/drive/v3/files/${fileId}/export?mimeType=text/plain`
+    return googleLimiter.schedule(async () => {
+      const start = Date.now()
+      const res = await this.fetchWithAuth(url)
+      log.info('google api call', { service: 'drive', method: 'GET', url, status: res.status, ms: Date.now() - start })
 
-    const start = Date.now()
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
-    log.info('google api call', { service: 'drive', method: 'GET', url, status: res.status, ms: Date.now() - start })
+      if (res.status === 401) throw new GoogleError('Authentication failed', 401)
+      if (res.status === 429 || res.status === 503) throw new GoogleError('Rate limited', res.status)
+      if (!res.ok) {
+        const text = await res.text().catch(() => '')
+        throw new GoogleError(`Drive text export error ${res.status}`, res.status, text)
+      }
 
-    if (res.status === 401) { clearTokenCache(); return this.exportFileAsText(fileId) }
-    if (!res.ok) {
-      const text = await res.text().catch(() => '')
-      throw new GoogleError(`Drive text export error ${res.status}`, res.status, text)
-    }
-
-    return res.text()
+      return res.text()
+    })
   }
 
-  // Download a Drive file and return it as base64.
-  // For native PDFs only — use exportFileAsPdf() for Google Workspace files.
+  // Download a Drive file as base64 (for native PDFs sent to Claude).
   async downloadFileAsBase64(fileId: string): Promise<{ data: string; mimeType: string }> {
-    await rateLimiter.acquire()
-    const token = await getAccessToken()
     const url = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`
+    return googleLimiter.schedule(async () => {
+      const start = Date.now()
+      const res = await this.fetchWithAuth(url)
+      log.info('google api call', { service: 'drive', method: 'GET', url, status: res.status, ms: Date.now() - start })
 
-    const start = Date.now()
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${token}` },
+      if (res.status === 401) throw new GoogleError('Authentication failed', 401)
+      if (res.status === 429 || res.status === 503) throw new GoogleError('Rate limited', res.status)
+      if (!res.ok) {
+        const text = await res.text().catch(() => '')
+        throw new GoogleError(`Drive download error ${res.status}`, res.status, text)
+      }
+
+      const mimeType = res.headers.get('content-type') ?? 'application/octet-stream'
+      const data = Buffer.from(await res.arrayBuffer()).toString('base64')
+      return { data, mimeType }
     })
-    log.info('google api call', { service: 'drive', method: 'GET', url, status: res.status, ms: Date.now() - start })
-
-    if (res.status === 401) {
-      clearTokenCache()
-      return this.downloadFileAsBase64(fileId)
-    }
-    if (!res.ok) {
-      const text = await res.text().catch(() => '')
-      throw new GoogleError(`Drive download error ${res.status}`, res.status, text)
-    }
-
-    const mimeType = res.headers.get('content-type') ?? 'application/octet-stream'
-    const buffer = await res.arrayBuffer()
-    const data = Buffer.from(buffer).toString('base64')
-    return { data, mimeType }
   }
 
   // Export a Google Workspace file (Doc, Sheet, etc.) as PDF.
-  // Use this for mimeType starting with "application/vnd.google-apps."
   async exportFileAsPdf(fileId: string): Promise<{ data: string; mimeType: string }> {
-    await rateLimiter.acquire()
-    const token = await getAccessToken()
     const url = `https://www.googleapis.com/drive/v3/files/${fileId}/export?mimeType=application/pdf`
+    return googleLimiter.schedule(async () => {
+      const start = Date.now()
+      const res = await this.fetchWithAuth(url)
+      log.info('google api call', { service: 'drive', method: 'GET', url, status: res.status, ms: Date.now() - start })
 
-    const start = Date.now()
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${token}` },
+      if (res.status === 401) throw new GoogleError('Authentication failed', 401)
+      if (res.status === 429 || res.status === 503) throw new GoogleError('Rate limited', res.status)
+      if (!res.ok) {
+        const text = await res.text().catch(() => '')
+        throw new GoogleError(`Drive export error ${res.status}`, res.status, text)
+      }
+
+      const data = Buffer.from(await res.arrayBuffer()).toString('base64')
+      return { data, mimeType: 'application/pdf' }
     })
-    log.info('google api call', { service: 'drive', method: 'GET', url, status: res.status, ms: Date.now() - start })
-
-    if (res.status === 401) {
-      clearTokenCache()
-      return this.exportFileAsPdf(fileId)
-    }
-    if (!res.ok) {
-      const text = await res.text().catch(() => '')
-      throw new GoogleError(`Drive export error ${res.status}`, res.status, text)
-    }
-
-    const buffer = await res.arrayBuffer()
-    const data = Buffer.from(buffer).toString('base64')
-    return { data, mimeType: 'application/pdf' }
   }
 
-  // Full-text search across all accessible drives (My Drive + Shared Drives).
-  // Used as fallback when folder-based lookup fails.
   async searchDriveFiles(
     query: string,
     opts: { maxResults?: number; pageToken?: string; driveId?: string } = {}
@@ -361,7 +322,6 @@ export class GoogleClient {
     }
     if (opts.maxResults) params.pageSize = String(opts.maxResults)
     if (opts.pageToken) params.pageToken = opts.pageToken
-    // Scope search to a specific shared drive when provided
     if (opts.driveId) {
       params.corpora = 'drive'
       params.driveId = opts.driveId

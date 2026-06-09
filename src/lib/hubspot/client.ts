@@ -1,48 +1,36 @@
-import { rateLimiter } from '@/lib/utils/rate-limiter'
+import { hubspotLimiter } from '@/lib/rate-limiters'
 import { HubSpotError } from '@/lib/errors'
 
 const BASE = 'https://api.hubapi.com'
-const MAX_RETRIES = 3
-
-function sleep(ms: number) {
-  return new Promise<void>(r => setTimeout(r, ms))
-}
 
 // All HubSpot API calls go through here — rate limiting, 429 backoff, error typing.
 // Never call the HubSpot API directly anywhere else in the codebase.
+// 429 retry is handled by hubspotLimiter's 'failed' event (2s backoff, up to 3 retries).
 export async function hubspotRequest<T>(
   method: 'GET' | 'POST',
   path: string,
   body?: unknown,
-  attempt = 0
 ): Promise<T> {
-  await rateLimiter.acquire()
+  return hubspotLimiter.schedule(async () => {
+    const url = path.startsWith('http') ? path : `${BASE}${path}`
+    const res = await fetch(url, {
+      method,
+      headers: {
+        Authorization: `Bearer ${process.env.HUBSPOT_ACCESS_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    })
 
-  const url = path.startsWith('http') ? path : `${BASE}${path}`
-  const res = await fetch(url, {
-    method,
-    headers: {
-      Authorization: `Bearer ${process.env.HUBSPOT_ACCESS_TOKEN}`,
-      'Content-Type': 'application/json',
-    },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  })
+    if (res.status === 429) throw new HubSpotError('Rate limited', 429)
 
-  if (res.status === 429) {
-    if (attempt >= MAX_RETRIES) {
-      throw new HubSpotError('Rate limit exceeded after retries', 429)
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      throw new HubSpotError(`HubSpot API error ${res.status}`, res.status, text)
     }
-    const backoffMs = 1000 * Math.pow(2, attempt)
-    await sleep(backoffMs)
-    return hubspotRequest<T>(method, path, body, attempt + 1)
-  }
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    throw new HubSpotError(`HubSpot API error ${res.status}`, res.status, text)
-  }
-
-  return res.json() as Promise<T>
+    return res.json() as Promise<T>
+  })
 }
 
 // ─── Typed wrappers ───────────────────────────────────────────────────────────

@@ -1,4 +1,4 @@
-import { TokenBucket } from '@/lib/utils/rate-limiter'
+import { justcallLimiter } from '@/lib/rate-limiters'
 import { JustCallError } from '@/lib/errors'
 import { log } from '@/lib/logger'
 import type { JustCallCallsResponse } from './types'
@@ -7,15 +7,6 @@ import { normalizeJustCallRecord } from './normalize'
 
 const BASE = 'https://api.justcall.io/v2.1'
 const PER_PAGE = 100
-const MAX_RETRIES = 3
-
-// 30% of 60 req/min burst cap = 18 req/min = 0.3 req/sec
-// TokenBucket: capacity 18 (max burst), refills at 0.3/sec
-const limiter = new TokenBucket(18, 18 / 60)
-
-function sleep(ms: number) {
-  return new Promise<void>(r => setTimeout(r, ms))
-}
 
 // Format a Date as JustCall-expected datetime string: "yyyy-mm-dd hh:mm:ss"
 // JustCall accepts datetimes in the account's timezone (America/New_York).
@@ -47,44 +38,35 @@ class JustCallClient implements PhoneProvider {
   private async request<T>(
     path: string,
     params: Record<string, string | number | boolean>,
-    attempt = 0
   ): Promise<T> {
-    await limiter.acquire()
-
-    const url = new URL(`${BASE}${path}`)
-    for (const [k, v] of Object.entries(params)) {
-      url.searchParams.set(k, String(v))
-    }
-
-    const start = Date.now()
-    const res = await fetch(url.toString(), {
-      method: 'GET',
-      headers: {
-        Authorization: `${this.apiKey}:${this.apiSecret}`,
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-    })
-    const ms = Date.now() - start
-
-    log.info('justcall api call', { path, status: res.status, ms })
-
-    if (res.status === 429) {
-      if (attempt >= MAX_RETRIES) {
-        throw new JustCallError('Rate limit exceeded after retries', 429)
+    return justcallLimiter.schedule(async () => {
+      const url = new URL(`${BASE}${path}`)
+      for (const [k, v] of Object.entries(params)) {
+        url.searchParams.set(k, String(v))
       }
-      const backoffMs = 1000 * Math.pow(2, attempt + 1) // 2s, 4s, 8s
-      log.warn('justcall 429 — backing off', { backoffMs, attempt })
-      await sleep(backoffMs)
-      return this.request<T>(path, params, attempt + 1)
-    }
 
-    if (!res.ok) {
-      const text = await res.text().catch(() => '')
-      throw new JustCallError(`JustCall API error ${res.status}: ${text}`, res.status)
-    }
+      const start = Date.now()
+      const res = await fetch(url.toString(), {
+        method: 'GET',
+        headers: {
+          Authorization: `${this.apiKey}:${this.apiSecret}`,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+      })
+      const ms = Date.now() - start
 
-    return res.json() as Promise<T>
+      log.info('justcall api call', { path, status: res.status, ms })
+
+      if (res.status === 429) throw new JustCallError('Rate limited', 429)
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => '')
+        throw new JustCallError(`JustCall API error ${res.status}: ${text}`, res.status)
+      }
+
+      return res.json() as Promise<T>
+    })
   }
 
   // Implements PhoneProvider. Fetches all calls in the given UTC range.

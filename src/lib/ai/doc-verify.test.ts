@@ -392,4 +392,29 @@ describe('verifyAllFiles', () => {
     expect(Object.values(report.consolidatedData).every(v => v === null)).toBe(true)
     expect(report.summary).toBe('')
   })
+
+  it('passes max_tokens=8000 to callClaudeWithDocuments (PDF path)', async () => {
+    vi.mocked(googleClient.downloadFileAsBase64).mockResolvedValue({ data: 'b64', mimeType: 'application/pdf' })
+    vi.mocked(callClaudeWithDocuments).mockResolvedValue(CLAUDE_RESPONSE)
+
+    await verifyAllFiles([makeFile({ name: 'deed.pdf', mimeType: 'application/pdf' })], PROPERTY)
+
+    const call = vi.mocked(callClaudeWithDocuments).mock.calls[0]
+    // callClaudeWithDocuments(documents, prompt, system, maxTokens)
+    expect(call[3]).toBe(8000)
+  })
+
+  it('passes max_tokens=8000 to callClaude (text-only path)', async () => {
+    vi.mocked(googleClient.exportFileAsText).mockResolvedValue('notice letter content')
+    vi.mocked(callClaude).mockResolvedValue(CLAUDE_RESPONSE)
+
+    await verifyAllFiles(
+      [makeFile({ name: 'notice.gdoc', mimeType: 'application/vnd.google-apps.document' })],
+      PROPERTY,
+    )
+
+    const call = vi.mocked(callClaude).mock.calls[0]
+    // callClaude(prompt, system, maxTokens)
+    expect(call[2]).toBe(8000)
+  })
 })

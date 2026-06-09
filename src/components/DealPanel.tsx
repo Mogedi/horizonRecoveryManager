@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { formatAmount, relativeDate, formatDate } from '@/lib/utils/format'
-import { highlightByQuery } from '@/lib/utils/highlight'
+import { refreshHighlight } from '@/lib/utils/search-highlight'
 import { DealBadges } from '@/components/analytics/DealBadges'
 import { SectionHeader, ActivityItem, ContactItem } from './deal-panel/shared'
 import { OutreachSection } from './deal-panel/OutreachSection'
@@ -108,21 +108,34 @@ type DriveResult = {
   docChecklist: DocChecklist
   docVerification: VerifyReport | null
   docVerificationAt: string | null
+  hubspotCheck: HubSpotCheckResult | null
+  hubspotCheckAt: string | null
+  hubspotScreenshot: string | null
   stale: boolean
   cachedAt: string | null
   warning: string | null
+}
+
+type HubSpotCheckResult = {
+  checked: boolean
+  filesLinked: boolean
+  linkedFiles: string[]
+  missingFiles: string[]
+  confidence: 'high' | 'medium' | 'low'
+  findings: string[]
+  sessionExpired: boolean
+  screenshotBase64: string | null
+  checkedAt: string
 }
 
 export default function DealPanel({
   hubspotId,
   onClose,
   inline = false,
-  searchQuery,
 }: {
   hubspotId: string
   onClose: () => void
   inline?: boolean
-  searchQuery?: string
 }) {
   const [data, setData] = useState<PanelData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -149,10 +162,12 @@ export default function DealPanel({
   const [driveError, setDriveError] = useState<string | null>(null)
   const [verifyState, setVerifyState] = useState<'idle' | 'loading' | 'done' | 'error'>('idle')
   const [verifyReport, setVerifyReport] = useState<VerifyReport | null>(null)
+  const [hubspotCheckState, setHubspotCheckState] = useState<'idle' | 'loading' | 'done' | 'error'>('idle')
+  const [hubspotCheckResult, setHubspotCheckResult] = useState<HubSpotCheckResult | null>(null)
+  const [showHubspotScreenshot, setShowHubspotScreenshot] = useState(false)
   const [verifyError, setVerifyError] = useState<string | null>(null)
   // docType → fileId manually assigned by Mo
   const [manualOverrides, setManualOverrides] = useState<Record<string, string>>({})
-
   const fetchGmail = useCallback(async () => {
     const res = await fetch(`/api/deals/${hubspotId}/google`)
     if (res.ok) {
@@ -173,6 +188,11 @@ export default function DealPanel({
       if (json.docVerification) {
         setVerifyReport(json.docVerification)
         setVerifyState('done')
+      }
+      // Hydrate saved HubSpot check — shows last-checked result without re-running
+      if (json.hubspotCheck) {
+        setHubspotCheckResult({ ...json.hubspotCheck, screenshotBase64: json.hubspotScreenshot })
+        setHubspotCheckState('done')
       }
     } catch (e) {
       setDriveError(e instanceof Error ? e.message : 'Drive unavailable')
@@ -241,6 +261,7 @@ export default function DealPanel({
   useEffect(() => { fetchDeal() }, [fetchDeal])
   useEffect(() => { fetchGmail() }, [fetchGmail])
   useEffect(() => { fetchDrive() }, [fetchDrive])
+  useEffect(() => { if (!loading && data) refreshHighlight() }, [loading, data])
 
   const startLayer2 = async () => {
     setLayer2State('confirming')
@@ -301,7 +322,7 @@ export default function DealPanel({
   const { deal, activities, contacts, snooze, snoozeHistory, summaryData } = data ?? {}
 
   const panelContent = (
-    <div className={inline ? 'h-full flex flex-col bg-white overflow-hidden' : 'fixed right-0 top-0 h-full z-50 w-full max-w-xl bg-white shadow-2xl flex flex-col overflow-hidden'}>
+    <div id="deal-panel" className={inline ? 'h-full flex flex-col bg-white overflow-hidden' : 'fixed right-0 top-0 h-full z-50 w-full max-w-xl bg-white shadow-2xl flex flex-col overflow-hidden'}>
       {/* Header */}
       <div className="px-6 py-4 border-b border-gray-200 shrink-0">
         <div className="flex items-start justify-between gap-3">
@@ -324,7 +345,7 @@ export default function DealPanel({
         {!loading && deal && (
           <div className="mt-2">
             <h2 className="font-semibold text-gray-900 text-base leading-snug">
-              {searchQuery ? highlightByQuery(deal.name ?? 'Unnamed deal', searchQuery) : (deal.name ?? 'Unnamed deal')}
+              {deal.name ?? 'Unnamed deal'}
             </h2>
             <p className="text-xs text-gray-500 mt-1">
               {deal.stageName ?? deal.stage ?? '—'}
@@ -333,12 +354,12 @@ export default function DealPanel({
             </p>
             {deal.propertyAddress && (
               <p className="text-xs text-gray-500 mt-0.5">
-                {searchQuery ? highlightByQuery(deal.propertyAddress, searchQuery) : deal.propertyAddress}
+                {deal.propertyAddress}
               </p>
             )}
             {deal.parcelId && (
               <p className="text-xs text-gray-400 mt-0.5">
-                {searchQuery ? highlightByQuery(deal.parcelId, searchQuery) : deal.parcelId}
+                {deal.parcelId}
               </p>
             )}
             {data?.enriched && (
@@ -511,7 +532,7 @@ export default function DealPanel({
                     : `Contacts (${deal.contactCount > 0 ? `${deal.contactCount} — load full detail for names` : '0'})`
                 } />
                 {contacts && contacts.length > 0 ? (
-                  contacts.map(c => <ContactItem key={c.id} contact={c} searchQuery={searchQuery} />)
+                  contacts.map(c => <ContactItem key={c.id} contact={c} />)
                 ) : (
                   <p className="text-sm text-gray-400">
                     {layer2State === 'done' ? 'No contacts linked' : 'Load full detail to see contacts'}
@@ -570,7 +591,86 @@ export default function DealPanel({
             )}
 
             {/* Drive */}
-            <SectionHeader title="Google Drive" />
+            <div className="flex items-center justify-between mb-1">
+              <SectionHeader title="Google Drive" />
+              {driveResult && (
+                <div className="flex items-center gap-2 shrink-0">
+                  {/* HubSpot linked status badge */}
+                  {hubspotCheckResult && (
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
+                      hubspotCheckResult.sessionExpired
+                        ? 'bg-gray-100 text-gray-500'
+                        : hubspotCheckResult.filesLinked
+                        ? 'bg-green-100 text-green-700'
+                        : 'bg-red-100 text-red-600'
+                    }`}
+                    title={hubspotCheckResult.findings.join(' · ')}
+                    >
+                      {hubspotCheckResult.sessionExpired
+                        ? 'session expired'
+                        : hubspotCheckResult.filesLinked
+                        ? 'linked in HubSpot'
+                        : `${hubspotCheckResult.missingFiles.length} not linked`}
+                    </span>
+                  )}
+                  {/* Last checked timestamp */}
+                  {hubspotCheckResult?.checkedAt && (
+                    <span className="text-[10px] text-gray-400 shrink-0" title={new Date(hubspotCheckResult.checkedAt).toLocaleString()}>
+                      {relativeDate(hubspotCheckResult.checkedAt)}
+                    </span>
+                  )}
+                  {/* Screenshot preview toggle */}
+                  {hubspotCheckResult?.screenshotBase64 && (
+                    <button
+                      onClick={() => setShowHubspotScreenshot(v => !v)}
+                      className="text-[10px] text-gray-400 hover:text-gray-600"
+                      title="Toggle screenshot"
+                    >
+                      {showHubspotScreenshot ? 'hide' : 'screenshot'}
+                    </button>
+                  )}
+                  {/* Check / re-check button */}
+                  <button
+                    onClick={async () => {
+                      setHubspotCheckState('loading')
+                      setHubspotCheckResult(null)
+                      setShowHubspotScreenshot(false)
+                      try {
+                        const res = await fetch(`/api/deals/${hubspotId}/drive/hubspot-check`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({}),
+                        })
+                        const json = await res.json() as HubSpotCheckResult | { error: string }
+                        if (!res.ok || 'error' in json) {
+                          setHubspotCheckState('error')
+                        } else {
+                          setHubspotCheckResult(json as HubSpotCheckResult)
+                          setHubspotCheckState('done')
+                        }
+                      } catch {
+                        setHubspotCheckState('error')
+                      }
+                    }}
+                    disabled={hubspotCheckState === 'loading'}
+                    className="text-[10px] text-gray-400 hover:text-blue-600 disabled:opacity-40"
+                    title="Screenshot HubSpot and verify Drive files are linked"
+                  >
+                    {hubspotCheckState === 'loading' ? 'checking…' : hubspotCheckResult ? '↻' : 'check HubSpot'}
+                  </button>
+                </div>
+              )}
+            </div>
+            {/* Screenshot preview */}
+            {showHubspotScreenshot && hubspotCheckResult?.screenshotBase64 && (
+              <div className="mb-3 border border-gray-200 rounded overflow-hidden">
+                <img
+                  src={`data:image/jpeg;base64,${hubspotCheckResult.screenshotBase64}`}
+                  alt="HubSpot deal page screenshot"
+                  className="w-full"
+                />
+              </div>
+            )}
             {driveLoading && (
               <div className="mb-4 space-y-1">
                 <div className="h-3 w-3/4 bg-gray-100 rounded animate-pulse" />

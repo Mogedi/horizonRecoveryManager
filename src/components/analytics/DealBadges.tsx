@@ -1,7 +1,4 @@
 // Per-deal derived data badges. Used in DealPanel header.
-// Pure — accepts enriched data as props, no fetching.
-// Add new badges here as more derived fields become available.
-
 import type { DealEnriched } from '@/lib/db/analytics'
 
 const INTENSITY_META: Record<string, { label: string; className: string }> = {
@@ -30,14 +27,13 @@ function Badge({ children, className }: { children: React.ReactNode; className: 
 export function DealBadges({ enriched }: { enriched: DealEnriched }) {
   const intensity = INTENSITY_META[enriched.callIntensity] ?? INTENSITY_META.never_called
   const bucket = BUCKET_META[enriched.amountBucket] ?? BUCKET_META.unknown
+  const geoParts = [enriched.state, enriched.normalizedCounty].filter(Boolean).join(' · ')
 
   return (
     <div className="flex flex-wrap gap-1.5 mt-2">
       {/* Geography */}
-      {(enriched.state || enriched.normalizedCounty) && (
-        <Badge className="bg-slate-100 text-slate-700">
-          {[enriched.state, enriched.normalizedCounty].filter(Boolean).join(' · ')}
-        </Badge>
+      {geoParts && (
+        <Badge className="bg-slate-100 text-slate-700">{geoParts}</Badge>
       )}
 
       {/* Vintage */}

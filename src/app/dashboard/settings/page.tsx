@@ -1,10 +1,14 @@
 'use client'
 
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import useSWR from 'swr'
+import { useBulkVerify } from '@/lib/context/bulk-verify-context'
+import type { BulkVerifyDeal } from '@/lib/context/bulk-verify-context'
+import { useBulkHubspotCheck } from '@/lib/context/bulk-hubspot-check-context'
+import DealPanel from '@/components/DealPanel'
+import { relativeDate } from '@/lib/utils/format'
 
 const fetcher = (url: string) => fetch(url).then(r => r.ok ? r.json() : Promise.reject(new Error(r.statusText)))
-import { relativeDate } from '@/lib/utils/format'
 
 type SettingItem = {
   key: string
@@ -201,158 +205,295 @@ function SyncLog({ rows }: { rows: SyncLogRow[] }) {
   )
 }
 
-type BulkVerifyDeal = { hubspotId: string; name: string | null }
-type BulkVerifyResult = {
-  hubspotId: string
-  name?: string | null
-  overallMatch?: boolean
-  confidence?: string
-  summary?: string
-  error?: string
-  skipped?: boolean
-}
-
 function BulkVerifyPanel() {
-  const [pending, setPending] = useState<BulkVerifyDeal[] | null>(null)
-  const [running, setRunning] = useState(false)
-  const [results, setResults] = useState<BulkVerifyResult[]>([])
-  const [loadError, setLoadError] = useState<string | null>(null)
-  const abortRef = useRef(false)
+  const {
+    pending, running, loadError, results, runQueue, activeDealNames,
+    currentRpm, cooldownSecsLeft, retryingSet,
+    runAll, stop, retryDeal,
+  } = useBulkVerify()
 
-  const loadPending = useCallback(async () => {
-    setLoadError(null)
-    try {
-      const res = await fetch('/api/admin/verify-all')
-      if (!res.ok) throw new Error(`${res.status}`)
-      const json = await res.json() as { count: number; deals: BulkVerifyDeal[] }
-      setPending(json.deals)
-    } catch (e) {
-      setLoadError(e instanceof Error ? e.message : 'Failed to load')
-    }
-  }, [])
+  const [selectedDealId, setSelectedDealId] = useState<string | null>(null)
 
-  useEffect(() => { loadPending() }, [loadPending])
-
-  const runAll = async () => {
-    if (!pending || pending.length === 0) return
-    abortRef.current = false
-    setRunning(true)
-    setResults([])
-
-    for (const deal of pending) {
-      if (abortRef.current) break
-      try {
-        const res = await fetch('/api/admin/verify-all', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ hubspotId: deal.hubspotId }),
-        })
-        const json = await res.json() as BulkVerifyResult
-        setResults(prev => [...prev, { ...json, name: json.name ?? deal.name }])
-      } catch (e) {
-        setResults(prev => [...prev, {
-          hubspotId: deal.hubspotId,
-          name: deal.name,
-          error: e instanceof Error ? e.message : 'Failed',
-        }])
-      }
-    }
-
-    setRunning(false)
-    loadPending()
-  }
-
-  const stop = () => { abortRef.current = true }
-
-  const doneCount = results.length
+  const runQueueSet = useMemo(() => new Set(runQueue.map(d => d.hubspotId)), [runQueue])
+  const runDoneCount = results.filter(r => runQueueSet.has(r.hubspotId)).length
   const totalCount = pending?.length ?? 0
   const matchCount = results.filter(r => r.overallMatch).length
-  const errorCount = results.filter(r => r.error).length
+  const issueCount = results.filter(r => !r.overallMatch && !r.error && !r.skipped && r.confidence).length
+  const errorCount = results.filter(r => !!r.error).length
 
   return (
-    <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-      <div className="px-5 py-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
-        <div>
-          <h2 className="text-sm font-semibold text-gray-700">Document Verification</h2>
-          {pending !== null && !running && (
-            <p className="text-xs text-gray-400 mt-0.5">
-              {totalCount === 0 ? 'All deals verified' : `${totalCount} deal${totalCount !== 1 ? 's' : ''} pending verification`}
-            </p>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          {running ? (
-            <>
-              <span className="text-xs text-gray-400">{doneCount} / {totalCount}</span>
-              <button onClick={stop}
-                className="px-3 py-1 text-xs text-white bg-red-500 rounded hover:bg-red-600">
-                Stop
+    <>
+      <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+        {/* Header */}
+        <div className="px-5 py-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-700">Document Verification</h2>
+            {pending !== null && !running && (
+              <p className="text-xs text-gray-400 mt-0.5">
+                {totalCount === 0 ? 'All deals verified' : `${totalCount} pending`}
+              </p>
+            )}
+          </div>
+          <div className="flex items-center gap-3">
+            {running && (
+              <span className={`text-xs font-mono ${cooldownSecsLeft > 0 ? 'text-amber-500' : 'text-blue-400'}`}>
+                {cooldownSecsLeft > 0 ? `⚠ cooling down ${cooldownSecsLeft}s` : `${currentRpm} RPM`}
+              </span>
+            )}
+            {running ? (
+              <>
+                <span className="text-xs text-gray-400">{runDoneCount} / {runQueue.length}</span>
+                <button onClick={stop}
+                  className="px-3 py-1 text-xs text-white bg-red-500 rounded hover:bg-red-600">
+                  Stop
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={runAll}
+                disabled={!pending || totalCount === 0 || !!loadError}
+                className="px-3 py-1 text-xs text-white bg-gray-900 rounded hover:bg-gray-700 disabled:opacity-40"
+              >
+                {totalCount === 0 ? 'Nothing to verify' : `Verify ${totalCount}`}
               </button>
-            </>
-          ) : (
-            <button
-              onClick={runAll}
-              disabled={!pending || totalCount === 0 || !!loadError}
-              className="px-3 py-1 text-xs text-white bg-gray-900 rounded hover:bg-gray-700 disabled:opacity-40"
-            >
-              {totalCount === 0 ? 'Nothing to verify' : `Verify ${totalCount} deal${totalCount !== 1 ? 's' : ''}`}
-            </button>
-          )}
+            )}
+          </div>
         </div>
+
+        {loadError && <div className="px-5 py-3 text-sm text-red-600">{loadError}</div>}
+
+        {/* Progress bar */}
+        {running && (
+          <div className="px-5 py-2 bg-blue-50 border-b border-blue-100">
+            <div className="flex items-center gap-2">
+              <div className="w-full bg-blue-100 rounded-full h-1.5">
+                <div className="bg-blue-500 h-1.5 rounded-full transition-all"
+                     style={{ width: `${runQueue.length > 0 ? (runDoneCount / runQueue.length) * 100 : 0}%` }} />
+              </div>
+              <span className="text-xs text-blue-600 shrink-0">
+                {Math.round(runQueue.length > 0 ? (runDoneCount / runQueue.length) * 100 : 0)}%
+              </span>
+            </div>
+            {activeDealNames.length > 0 && (
+              <p className="text-xs text-blue-500 mt-1 truncate">
+                {activeDealNames.length > 1
+                  ? `${activeDealNames.length} in parallel: ${activeDealNames.slice(0, 2).join(', ')}${activeDealNames.length > 2 ? ` +${activeDealNames.length - 2} more` : ''}`
+                  : `Verifying: ${activeDealNames[0]}`
+                }
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* Stats — always visible once there are results */}
+        {results.length > 0 && (
+          <div className="px-5 py-2 bg-gray-50 border-b border-gray-100 flex gap-4 text-xs">
+            <span className="text-green-600">{matchCount} matched</span>
+            <span className="text-amber-600">{issueCount} issues</span>
+            {errorCount > 0 && <span className="text-red-600">{errorCount} errors</span>}
+            <span className="text-gray-400 ml-auto">{results.length} total</span>
+          </div>
+        )}
+
+        {/* Results list — persistent, survives Stop and page navigation */}
+        {results.length > 0 && (
+          <div className="divide-y divide-gray-50 max-h-96 overflow-y-auto">
+            {results.map(r => {
+              const isRetrying = retryingSet.has(r.hubspotId)
+              const dealForRetry: BulkVerifyDeal = { hubspotId: r.hubspotId, name: r.name ?? null }
+              return (
+                <div key={r.hubspotId} className="px-5 py-2 flex items-start gap-2 hover:bg-gray-50 group">
+                  <span className={`text-sm shrink-0 mt-0.5 ${isRetrying ? 'text-gray-400' : r.error ? 'text-red-400' : r.skipped ? 'text-gray-300' : r.overallMatch ? 'text-green-500' : 'text-amber-400'}`}>
+                    {isRetrying ? '…' : r.error ? '✗' : r.skipped ? '—' : r.overallMatch ? '✓' : '~'}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <button
+                      onClick={() => setSelectedDealId(r.hubspotId)}
+                      className="text-xs font-medium text-gray-700 hover:text-blue-600 hover:underline truncate block text-left w-full"
+                    >
+                      {r.name ?? r.hubspotId}
+                    </button>
+                    {isRetrying ? (
+                      <p className="text-xs text-gray-400">retrying…</p>
+                    ) : r.error ? (
+                      <p className="text-xs text-red-500 break-words">{r.error}</p>
+                    ) : r.skipped ? (
+                      <p className="text-xs text-gray-400">skipped — no Drive files</p>
+                    ) : (
+                      <p className="text-xs text-gray-400">
+                        {r.confidence} confidence{r.summary ? ` — ${r.summary.slice(0, 80)}${r.summary.length > 80 ? '…' : ''}` : ''}
+                      </p>
+                    )}
+                  </div>
+                  {r.error && !running && (
+                    <button
+                      onClick={() => retryDeal(dealForRetry)}
+                      disabled={isRetrying}
+                      className="text-xs text-gray-400 hover:text-blue-600 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity px-2 py-0.5 rounded border border-gray-200 hover:border-blue-200 disabled:opacity-40"
+                    >
+                      Retry
+                    </button>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
       </div>
 
-      {loadError && (
-        <div className="px-5 py-3 text-sm text-red-600">{loadError}</div>
+      {/* Deal panel overlay — opens inline without navigating away */}
+      {selectedDealId && (
+        <DealPanel
+          hubspotId={selectedDealId}
+          onClose={() => setSelectedDealId(null)}
+        />
       )}
+    </>
+  )
+}
 
-      {running && doneCount < totalCount && (
-        <div className="px-5 py-2 bg-blue-50 border-b border-blue-100">
-          <div className="flex items-center gap-2">
-            <div className="w-full bg-blue-100 rounded-full h-1.5">
-              <div className="bg-blue-500 h-1.5 rounded-full transition-all"
-                   style={{ width: `${totalCount > 0 ? (doneCount / totalCount) * 100 : 0}%` }} />
-            </div>
-            <span className="text-xs text-blue-600 shrink-0">{Math.round(totalCount > 0 ? (doneCount / totalCount) * 100 : 0)}%</span>
+function BulkHubspotCheckPanel() {
+  const {
+    pending, running, results, progress, activeDealName, loadError,
+    uncheckedOnly, setUncheckedOnly, reload, runAll, stop,
+  } = useBulkHubspotCheck()
+
+  const [selectedDealId, setSelectedDealId] = useState<string | null>(null)
+
+  const totalCount = pending?.length ?? 0
+
+  const linkedCount = results.filter(r => r.filesLinked).length
+  const missingCount = results.filter(r => !r.filesLinked && !r.sessionExpired && !r.error && !r.skipped).length
+  const expiredCount = results.filter(r => r.sessionExpired).length
+  const errorCount = results.filter(r => !!r.error).length
+
+  return (
+    <>
+      <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+        {/* Header */}
+        <div className="px-5 py-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-700">HubSpot Check</h2>
+            {!running && (
+              <p className="text-xs text-gray-400 mt-0.5">
+                {totalCount === 0 && pending !== null ? 'All deals checked' : totalCount > 0 ? `${totalCount} to check` : 'Click load to begin'}
+              </p>
+            )}
           </div>
-          <p className="text-xs text-blue-600 mt-1">
-            Verifying: {pending?.[doneCount]?.name ?? '…'}
-          </p>
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={uncheckedOnly}
+                onChange={e => setUncheckedOnly(e.target.checked)}
+                disabled={running}
+                className="rounded border-gray-300"
+              />
+              Unchecked only
+            </label>
+            {!running && pending === null && (
+              <button
+                onClick={reload}
+                className="px-3 py-1 text-xs text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50"
+              >
+                Load
+              </button>
+            )}
+            {running ? (
+              <>
+                <span className="text-xs text-gray-400">{progress} / {totalCount}</span>
+                <button onClick={stop}
+                  className="px-3 py-1 text-xs text-white bg-red-500 rounded hover:bg-red-600">
+                  Stop
+                </button>
+              </>
+            ) : pending !== null && (
+              <button
+                onClick={runAll}
+                disabled={totalCount === 0 || !!loadError}
+                className="px-3 py-1 text-xs text-white bg-gray-900 rounded hover:bg-gray-700 disabled:opacity-40"
+              >
+                {totalCount === 0 ? 'All checked' : `Run ${totalCount}`}
+              </button>
+            )}
+          </div>
         </div>
-      )}
 
-      {results.length > 0 && (
-        <>
-          {(running || doneCount === totalCount) && doneCount > 0 && (
-            <div className="px-5 py-2 bg-gray-50 border-b border-gray-100 flex gap-4 text-xs text-gray-500">
-              <span className="text-green-600">{matchCount} matched</span>
-              <span className="text-amber-600">{doneCount - matchCount - errorCount} issues</span>
-              {errorCount > 0 && <span className="text-red-600">{errorCount} errors</span>}
+        {loadError && <div className="px-5 py-3 text-sm text-red-600">{loadError}</div>}
+
+        {/* Progress bar */}
+        {running && (
+          <div className="px-5 py-2 bg-blue-50 border-b border-blue-100">
+            <div className="flex items-center gap-2">
+              <div className="w-full bg-blue-100 rounded-full h-1.5">
+                <div className="bg-blue-500 h-1.5 rounded-full transition-all"
+                     style={{ width: `${totalCount > 0 ? (progress / totalCount) * 100 : 0}%` }} />
+              </div>
+              <span className="text-xs text-blue-600 shrink-0">
+                {Math.round(totalCount > 0 ? (progress / totalCount) * 100 : 0)}%
+              </span>
             </div>
-          )}
-          <div className="divide-y divide-gray-50 max-h-72 overflow-y-auto">
+            {activeDealName && (
+              <p className="text-xs text-blue-500 mt-1 truncate">Checking: {activeDealName}</p>
+            )}
+            <p className="text-xs text-gray-400 mt-0.5">8–15s between deals to avoid bot detection</p>
+          </div>
+        )}
+
+        {/* Stats */}
+        {results.length > 0 && (
+          <div className="px-5 py-2 bg-gray-50 border-b border-gray-100 flex gap-4 text-xs">
+            <span className="text-green-600">{linkedCount} linked</span>
+            {missingCount > 0 && <span className="text-red-500">{missingCount} not linked</span>}
+            {expiredCount > 0 && <span className="text-gray-400">{expiredCount} expired</span>}
+            {errorCount > 0 && <span className="text-red-600">{errorCount} errors</span>}
+            <span className="text-gray-400 ml-auto">{results.length} total</span>
+          </div>
+        )}
+
+        {/* Results */}
+        {results.length > 0 && (
+          <div className="divide-y divide-gray-50 max-h-96 overflow-y-auto">
             {results.map(r => (
-              <div key={r.hubspotId} className="px-5 py-2 flex items-start gap-2">
-                <span className={`text-sm shrink-0 mt-0.5 ${r.error ? 'text-red-400' : r.skipped ? 'text-gray-300' : r.overallMatch ? 'text-green-500' : 'text-amber-400'}`}>
-                  {r.error ? '✗' : r.skipped ? '—' : r.overallMatch ? '✓' : '~'}
+              <div key={r.hubspotId} className="px-5 py-2 flex items-start gap-2 hover:bg-gray-50">
+                <span className={`text-sm shrink-0 mt-0.5 ${
+                  r.error ? 'text-red-400'
+                  : r.sessionExpired ? 'text-gray-300'
+                  : r.filesLinked ? 'text-green-500'
+                  : 'text-red-400'
+                }`}>
+                  {r.error ? '✗' : r.sessionExpired ? '⚠' : r.filesLinked ? '✓' : '✗'}
                 </span>
-                <div className="min-w-0">
-                  <p className="text-xs font-medium text-gray-700 truncate">{r.name ?? r.hubspotId}</p>
-                  {r.error ? (
-                    <p className="text-xs text-red-500">{r.error}</p>
-                  ) : r.skipped ? (
-                    <p className="text-xs text-gray-400">skipped</p>
-                  ) : (
-                    <p className="text-xs text-gray-400">
-                      {r.confidence} confidence{r.summary ? ` — ${r.summary.slice(0, 80)}${r.summary.length > 80 ? '…' : ''}` : ''}
-                    </p>
-                  )}
+                <div className="min-w-0 flex-1">
+                  <button
+                    onClick={() => setSelectedDealId(r.hubspotId)}
+                    className="text-xs font-medium text-gray-700 hover:text-blue-600 hover:underline truncate block text-left w-full"
+                  >
+                    {r.name ?? r.hubspotId}
+                  </button>
+                  <p className="text-xs text-gray-400">
+                    {r.error ? r.error
+                      : r.sessionExpired ? 'session expired — re-capture cookies'
+                      : r.filesLinked ? 'linked in HubSpot'
+                      : 'not linked in HubSpot'}
+                    {r.checkedAt && !r.error && (
+                      <span className="ml-1">· {relativeDate(r.checkedAt)}</span>
+                    )}
+                  </p>
                 </div>
               </div>
             ))}
           </div>
-        </>
+        )}
+      </div>
+
+      {selectedDealId && (
+        <DealPanel
+          hubspotId={selectedDealId}
+          onClose={() => setSelectedDealId(null)}
+        />
       )}
-    </div>
+    </>
   )
 }
 
@@ -422,6 +563,9 @@ export default function SettingsPage() {
 
           {/* Bulk document verification */}
           <BulkVerifyPanel />
+
+          {/* Bulk HubSpot screenshot check */}
+          <BulkHubspotCheckPanel />
         </div>
       )}
     </div>

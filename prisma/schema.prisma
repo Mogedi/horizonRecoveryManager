@@ -85,6 +85,11 @@ model Deal {
   docVerification     Json?     @map("doc_verification")       // FullVerificationReport — cached AI doc check
   docVerificationAt   DateTime? @map("doc_verification_at")   @db.Timestamptz(6)
 
+  // HubSpot browser screenshot check — populated by hubspot-check route (manual only)
+  hubspotCheck       Json?     @map("hubspot_check")          // HubSpotDriveCheckResult sans screenshotBase64
+  hubspotCheckAt     DateTime? @map("hubspot_check_at")       @db.Timestamptz(6)
+  hubspotScreenshot  String?   @map("hubspot_screenshot")     // JPEG base64, ~100-200KB
+
   activities     DealActivity[]
   contacts       DealContact[]
   snoozes        DealSnooze[]

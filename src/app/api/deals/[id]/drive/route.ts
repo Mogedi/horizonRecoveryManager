@@ -28,6 +28,9 @@ export type DriveApiResponse = {
   docChecklist: DocChecklist
   docVerification: unknown | null       // FullVerificationReport if previously run
   docVerificationAt: string | null
+  hubspotCheck: unknown | null          // HubSpotDriveCheckResult (sans screenshotBase64) if previously run
+  hubspotCheckAt: string | null
+  hubspotScreenshot: string | null      // JPEG base64 from last check
   stale: boolean              // true if cache is >24h old
   cachedAt: string | null     // ISO timestamp of last index
   warning: string | null
@@ -39,7 +42,7 @@ export async function GET(req: NextRequest, { params }: Params) {
   if (!(await isAuthenticated()) && !isCronRequest(req)) return unauthorizedResponse()
 
   if (!isGoogleConfigured()) {
-    return NextResponse.json({ configured: false, files: [], docChecklist: classifyFiles([]), docVerification: null, docVerificationAt: null, matchMethod: null, folderPath: null, folderLink: null, stale: false, cachedAt: null, warning: null } satisfies DriveApiResponse)
+    return NextResponse.json({ configured: false, files: [], docChecklist: classifyFiles([]), docVerification: null, docVerificationAt: null, hubspotCheck: null, hubspotCheckAt: null, hubspotScreenshot: null, matchMethod: null, folderPath: null, folderLink: null, stale: false, cachedAt: null, warning: null } satisfies DriveApiResponse)
   }
 
   const { id } = await params
@@ -65,6 +68,9 @@ export async function GET(req: NextRequest, { params }: Params) {
         docChecklist: classifyFiles(files),
         docVerification: deal.docVerification ?? null,
         docVerificationAt: deal.docVerificationAt?.toISOString() ?? null,
+        hubspotCheck: deal.hubspotCheck ?? null,
+        hubspotCheckAt: deal.hubspotCheckAt?.toISOString() ?? null,
+        hubspotScreenshot: deal.hubspotScreenshot ?? null,
         stale,
         cachedAt: deal.driveCacheUpdatedAt?.toISOString() ?? null,
         warning: stale
@@ -105,6 +111,9 @@ export async function GET(req: NextRequest, { params }: Params) {
           docChecklist: classifyFiles(files),
           docVerification: null,
           docVerificationAt: null,
+          hubspotCheck: deal.hubspotCheck ?? null,
+          hubspotCheckAt: deal.hubspotCheckAt?.toISOString() ?? null,
+          hubspotScreenshot: deal.hubspotScreenshot ?? null,
           stale: false,
           cachedAt: new Date().toISOString(),
           warning: null,
@@ -119,7 +128,9 @@ export async function GET(req: NextRequest, { params }: Params) {
     if (!searchTerm) {
       return NextResponse.json({
         configured: true, matchMethod: 'fulltext_fallback', folderPath: null, folderLink: null,
-        files: [], docChecklist: classifyFiles([]), docVerification: null, docVerificationAt: null, stale: false, cachedAt: null, warning: 'Deal name too short to search.',
+        files: [], docChecklist: classifyFiles([]), docVerification: null, docVerificationAt: null,
+        hubspotCheck: deal.hubspotCheck ?? null, hubspotCheckAt: deal.hubspotCheckAt?.toISOString() ?? null, hubspotScreenshot: deal.hubspotScreenshot ?? null,
+        stale: false, cachedAt: null, warning: 'Deal name too short to search.',
       } satisfies DriveApiResponse)
     }
 
@@ -138,6 +149,9 @@ export async function GET(req: NextRequest, { params }: Params) {
       docChecklist: classifyFiles(fallbackFiles),
       docVerification: null,
       docVerificationAt: null,
+      hubspotCheck: deal.hubspotCheck ?? null,
+      hubspotCheckAt: deal.hubspotCheckAt?.toISOString() ?? null,
+      hubspotScreenshot: deal.hubspotScreenshot ?? null,
       stale: false,
       cachedAt: null,
       warning: `No folder found for this deal in Drive — showing full text search for "${searchTerm}".`,

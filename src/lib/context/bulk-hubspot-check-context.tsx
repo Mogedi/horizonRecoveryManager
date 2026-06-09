@@ -2,7 +2,14 @@
 
 import { createContext, useContext, useState, useRef, useCallback, type ReactNode } from 'react'
 
-export type BulkCheckDeal = { hubspotId: string; name: string | null }
+export type BulkCheckSkipCode = 'NO_FOLDER' | 'NO_SCREENSHOT' | 'SESSION_EXPIRED_PREV'
+
+export type BulkCheckDeal = {
+  hubspotId: string
+  name: string | null
+  hasFolder: boolean
+  hasScreenshot: boolean
+}
 
 export type BulkCheckResult = {
   hubspotId: string
@@ -12,14 +19,16 @@ export type BulkCheckResult = {
   checkedAt?: string
   error?: string
   skipped?: boolean
+  skipCode?: BulkCheckSkipCode
+  skipReason?: string
 }
 
 type BulkHubspotCheckContextValue = {
   pending: BulkCheckDeal[]
   running: boolean
   results: BulkCheckResult[]
-  progress: number                  // number of deals processed so far
-  activeDealName: string | null     // deal currently being checked
+  progress: number
+  activeDealName: string | null
   uncheckedOnly: boolean
   setUncheckedOnly: (v: boolean) => void
   reload: () => Promise<void>
@@ -64,7 +73,6 @@ export function BulkHubspotCheckProvider({ children }: { children: ReactNode }) 
     setProgress(0)
     abortRef.current = false
 
-    // Reload to get fresh list respecting uncheckedOnly flag
     let queue: BulkCheckDeal[] = []
     try {
       const url = `/api/admin/hubspot-check-all${uncheckedOnly ? '?uncheckedOnly=1' : ''}`
@@ -84,13 +92,32 @@ export function BulkHubspotCheckProvider({ children }: { children: ReactNode }) 
       setActiveDealName(deal.name)
 
       let result: BulkCheckResult
+
+      // ── Skip: no Drive folder ────────────────────────────────────────────────
+      if (!deal.hasFolder) {
+        result = {
+          hubspotId: deal.hubspotId, name: deal.name,
+          skipped: true, skipCode: 'NO_FOLDER', skipReason: 'No Drive folder linked',
+        }
+        setResults(prev => [...prev, result])
+        setProgress(prev => prev + 1)
+        setActiveDealName(null)
+        continue
+      }
+
       try {
-        const res = await fetch(`/api/deals/${deal.hubspotId}/drive/hubspot-check`, {
+        // ── Screenshot exists → reanalyze path (no browser) ──────────────────
+        const endpoint = deal.hasScreenshot
+          ? `/api/deals/${deal.hubspotId}/drive/hubspot-check/reanalyze`
+          : `/api/deals/${deal.hubspotId}/drive/hubspot-check`
+
+        const res = await fetch(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({}),
         })
         const json = await res.json()
+
         if (!res.ok || 'error' in json) {
           result = { hubspotId: deal.hubspotId, name: deal.name, error: json?.error ?? `Error ${res.status}` }
         } else {
@@ -101,8 +128,8 @@ export function BulkHubspotCheckProvider({ children }: { children: ReactNode }) 
             sessionExpired: json.sessionExpired,
             checkedAt: json.checkedAt,
           }
-          // If session expired on the first check, stop — all subsequent checks will fail too
-          if (json.sessionExpired) {
+          // Session expired on browser check → stop all subsequent browser checks
+          if (json.sessionExpired && !deal.hasScreenshot) {
             setResults(prev => [...prev, result])
             setProgress(prev => prev + 1)
             setActiveDealName(null)
@@ -116,8 +143,9 @@ export function BulkHubspotCheckProvider({ children }: { children: ReactNode }) 
       setResults(prev => [...prev, result])
       setProgress(prev => prev + 1)
 
-      // Human-like delay between deals (8–15s) to avoid HubSpot/Cloudflare bot detection
-      if (!abortRef.current) {
+      // Human-like delay between deals (8–15s) to avoid HubSpot/Cloudflare bot detection.
+      // Reanalyze path skips the browser but still delays to avoid hammering the API.
+      if (!abortRef.current && !deal.hasScreenshot) {
         await sleep(8000 + Math.random() * 7000)
       }
     }

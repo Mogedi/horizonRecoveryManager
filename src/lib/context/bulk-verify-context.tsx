@@ -11,6 +11,7 @@ export type BulkVerifyResult = {
   summary?: string
   error?: string
   skipped?: boolean
+  skipReason?: string   // human-readable reason from API when skipped is true
 }
 
 type BulkVerifyContextValue = {
@@ -88,8 +89,8 @@ export function BulkVerifyProvider({ children }: { children: ReactNode }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ hubspotId: deal.hubspotId }),
       })
-      const json = await res.json() as BulkVerifyResult
-      return { ...json, name: json.name ?? deal.name }
+      const json = await res.json() as BulkVerifyResult & { reason?: string }
+      return { ...json, name: json.name ?? deal.name, skipReason: json.skipReason ?? json.reason }
     } catch (e) {
       return { hubspotId: deal.hubspotId, name: deal.name, error: e instanceof Error ? e.message : 'Failed' }
     }

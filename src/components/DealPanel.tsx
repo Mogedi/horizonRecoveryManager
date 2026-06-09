@@ -20,10 +20,6 @@ import { SNOOZE_CATEGORY_LABELS } from './deal-panel/types'
 
 type TabId = 'story' | 'tasks' | 'contacts' | 'calls' | 'emails' | 'documents' | 'notes'
 const TAB_IDS: TabId[] = ['story', 'tasks', 'contacts', 'calls', 'emails', 'documents', 'notes']
-const TAB_LABELS: Record<TabId, string> = {
-  story: 'Story', tasks: 'Tasks', contacts: 'Contacts',
-  calls: 'Calls', emails: 'Emails', documents: 'Documents', notes: 'Notes',
-}
 
 export default function DealPanel({
   hubspotId,
@@ -147,6 +143,26 @@ export default function DealPanel({
   }
 
   const { deal, activities, contacts, snooze, snoozeHistory, summaryData, layer2SyncedAt } = data ?? {}
+
+  function tabLabel(tab: TabId): string {
+    if (tab === 'contacts') {
+      const n = contacts?.length ?? (deal?.contactCount ?? 0)
+      return n > 0 ? `Contacts (${n})` : 'Contacts'
+    }
+    if (tab === 'calls') {
+      const n = outreachData?.totalOutboundCalls ?? 0
+      return n > 0 ? `Calls (${n})` : 'Calls'
+    }
+    if (tab === 'notes') {
+      const n = activities?.filter(a => a.type === 'note').length ?? 0
+      return n > 0 ? `Notes (${n})` : 'Notes'
+    }
+    const LABELS: Record<TabId, string> = {
+      story: 'Story', tasks: 'Tasks', contacts: 'Contacts',
+      calls: 'Calls', emails: 'Emails', documents: 'Documents', notes: 'Notes',
+    }
+    return LABELS[tab]
+  }
 
   const panelContent = (
     <div id="deal-panel" className={inline ? 'h-full flex flex-col bg-white overflow-hidden' : 'fixed right-0 top-0 h-full z-50 w-full max-w-xl bg-white shadow-2xl flex flex-col overflow-hidden'}>
@@ -372,7 +388,7 @@ export default function DealPanel({
                   : 'border-transparent text-gray-400 hover:text-gray-600'
               }`}
             >
-              {TAB_LABELS[tab]}
+              {tabLabel(tab)}
             </button>
           ))}
         </div>
@@ -394,8 +410,9 @@ export default function DealPanel({
 
             {activeTab === 'contacts' && (
               <ContactsTab
+                hubspotId={hubspotId}
                 contacts={contacts}
-                layer2State={layer2State}
+                layer2SyncedAt={layer2SyncedAt ?? null}
                 contactCount={deal.contactCount}
               />
             )}
@@ -405,7 +422,7 @@ export default function DealPanel({
                 outreachData={outreachData}
                 outreachError={outreachError}
                 contacts={contacts}
-                layer2State={layer2State}
+                layer2SyncedAt={layer2SyncedAt ?? null}
               />
             )}
 
@@ -418,7 +435,7 @@ export default function DealPanel({
             )}
 
             {activeTab === 'notes' && (
-              <NotesTab activities={activities} layer2State={layer2State} />
+              <NotesTab activities={activities} layer2SyncedAt={layer2SyncedAt ?? null} />
             )}
           </>
         )}

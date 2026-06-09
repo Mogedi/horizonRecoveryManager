@@ -2,6 +2,8 @@
 // All types exported here; sub-components import from here only.
 
 import type { DealEnriched } from '@/lib/db/analytics'
+import type { SummaryJson } from '@/lib/ai/summary'
+export type { SummaryJson }
 
 export type Activity = {
   id: number
@@ -72,16 +74,6 @@ export type DealDetail = {
   contactCount: number
   lastActivityDate: string | null
   syncedAt: string
-}
-
-export type SummaryJson = {
-  current_status: string
-  last_meaningful_activity: string
-  blockers: string[]
-  who_needs_something: string | null
-  suggested_next_step: string
-  mo_action_required: boolean
-  documents_mentioned_missing: string[]
 }
 
 export type PanelData = {

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { formatDate } from '@/lib/utils/format'
 import type { StoryDay, CaseEventCategory } from '@/lib/case/types'
 import { CATEGORY_LABELS } from '@/lib/case/story'
+import { LayerTwoGate } from './LayerTwoGate'
 
 type StoryEvent = {
   id: string
@@ -102,6 +103,7 @@ export function StoryTab({ dealHubspotId, layer2SyncedAt }: StoryTabProps) {
   const [openDate, setOpenDate] = useState<string | null>(null)
 
   useEffect(() => {
+    if (!layer2SyncedAt) { setLoading(false); return }
     setLoading(true)
     setError(null)
     fetch(`/api/deals/${dealHubspotId}/story`)
@@ -109,48 +111,34 @@ export function StoryTab({ dealHubspotId, layer2SyncedAt }: StoryTabProps) {
       .then((json: { days: SerializedStoryDay[] }) => setDays(json.days))
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setLoading(false))
-  }, [dealHubspotId])
-
-  if (!layer2SyncedAt) {
-    return (
-      <div className="px-5 py-6 text-center text-sm text-gray-400">
-        Load full detail to see case story
-      </div>
-    )
-  }
-
-  if (loading) {
-    return (
-      <div className="px-4 py-4 space-y-2">
-        {[1, 2, 3, 4].map(i => (
-          <div key={i} className="h-10 bg-gray-100 rounded animate-pulse" />
-        ))}
-      </div>
-    )
-  }
-
-  if (error) {
-    return <div className="px-5 py-4 text-sm text-red-600">{error}</div>
-  }
-
-  if (days.length === 0) {
-    return (
-      <div className="px-5 py-6 text-center text-sm text-gray-400">
-        No activity recorded yet
-      </div>
-    )
-  }
+  }, [dealHubspotId, layer2SyncedAt])
 
   return (
-    <div>
-      {days.map(day => (
-        <DayRow
-          key={day.date}
-          day={day}
-          isOpen={openDate === day.date}
-          onToggle={() => setOpenDate(openDate === day.date ? null : day.date)}
-        />
-      ))}
-    </div>
+    <LayerTwoGate layer2SyncedAt={layer2SyncedAt} label="case story">
+      {loading ? (
+        <div className="px-4 py-4 space-y-2">
+          {[1, 2, 3, 4].map(i => (
+            <div key={i} className="h-10 bg-gray-100 rounded animate-pulse" />
+          ))}
+        </div>
+      ) : error ? (
+        <div className="px-5 py-4 text-sm text-red-600">{error}</div>
+      ) : days.length === 0 ? (
+        <div className="px-5 py-6 text-center text-sm text-gray-400">
+          No activity recorded yet
+        </div>
+      ) : (
+        <div>
+          {days.map(day => (
+            <DayRow
+              key={day.date}
+              day={day}
+              isOpen={openDate === day.date}
+              onToggle={() => setOpenDate(openDate === day.date ? null : day.date)}
+            />
+          ))}
+        </div>
+      )}
+    </LayerTwoGate>
   )
 }

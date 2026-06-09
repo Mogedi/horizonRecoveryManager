@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { formatAmount, relativeDate, formatDate } from '@/lib/utils/format'
 import { refreshHighlight } from '@/lib/utils/search-highlight'
 import { DealBadges } from '@/components/analytics/DealBadges'
@@ -111,9 +111,18 @@ type DriveResult = {
   hubspotCheck: HubSpotCheckResult | null
   hubspotCheckAt: string | null
   hubspotScreenshot: string | null
+  hubspotDocStatus: HubSpotDocStatusEntry[] | null
   stale: boolean
   cachedAt: string | null
   warning: string | null
+}
+
+// Per-doc-type HubSpot link status — mirrors HubSpotDocStatus from drive-check.ts
+type HubSpotDocStatusEntry = {
+  type: string
+  label: string
+  linked: boolean
+  fileName: string | null
 }
 
 type HubSpotCheckResult = {
@@ -126,6 +135,9 @@ type HubSpotCheckResult = {
   sessionExpired: boolean
   screenshotBase64: string | null
   checkedAt: string
+  // Per-doc-type link status — populated from DB (via drive route) or SSE verdict event.
+  // This is the primary source for HS badges — avoids re-doing string matching at display time.
+  docStatuses: HubSpotDocStatusEntry[] | null
 }
 
 export default function DealPanel({
@@ -164,10 +176,21 @@ export default function DealPanel({
   const [verifyReport, setVerifyReport] = useState<VerifyReport | null>(null)
   const [hubspotCheckState, setHubspotCheckState] = useState<'idle' | 'loading' | 'done' | 'error'>('idle')
   const [hubspotCheckResult, setHubspotCheckResult] = useState<HubSpotCheckResult | null>(null)
+  const [hubspotScreenshotPending, setHubspotScreenshotPending] = useState(false)
   const [showHubspotScreenshot, setShowHubspotScreenshot] = useState(false)
+  const [hubspotCheckStep, setHubspotCheckStep] = useState(0)
+  const hubspotCheckStepRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const [preCheckPrompt, setPreCheckPrompt] = useState<null | 'verify-first' | 'use-screenshot'>(null)
+  const pendingHubspotCheckRef = useRef(false)
   const [verifyError, setVerifyError] = useState<string | null>(null)
   // docType → fileId manually assigned by Mo
   const [manualOverrides, setManualOverrides] = useState<Record<string, string>>({})
+
+  // Link folder flow (used when Drive returns fulltext_fallback)
+  const [linkFolderStep, setLinkFolderStep] = useState<'idle' | 'input' | 'preview' | 'linking' | 'error'>('idle')
+  const [linkFolderUrl, setLinkFolderUrl] = useState('')
+  const [linkFolderPreview, setLinkFolderPreview] = useState<{ id: string; name: string; fileCount: number; webViewLink: string | null } | null>(null)
+  const [linkFolderError, setLinkFolderError] = useState<string | null>(null)
   const fetchGmail = useCallback(async () => {
     const res = await fetch(`/api/deals/${hubspotId}/google`)
     if (res.ok) {
@@ -191,8 +214,13 @@ export default function DealPanel({
       }
       // Hydrate saved HubSpot check — shows last-checked result without re-running
       if (json.hubspotCheck) {
-        setHubspotCheckResult({ ...json.hubspotCheck, screenshotBase64: json.hubspotScreenshot })
+        setHubspotCheckResult({
+          ...json.hubspotCheck,
+          screenshotBase64: json.hubspotScreenshot,
+          docStatuses: json.hubspotDocStatus ?? null,
+        })
         setHubspotCheckState('done')
+        setHubspotScreenshotPending(false)
       }
     } catch (e) {
       setDriveError(e instanceof Error ? e.message : 'Drive unavailable')
@@ -231,6 +259,81 @@ export default function DealPanel({
     runVerify(next)
   }, [manualOverrides, runVerify])
 
+  const runHubspotCheck = useCallback(async () => {
+    setPreCheckPrompt(null)
+    setHubspotCheckState('loading')
+    setHubspotCheckResult(null)
+    setHubspotScreenshotPending(false)
+    setShowHubspotScreenshot(false)
+    setHubspotCheckStep(0)
+    hubspotCheckStepRef.current = setInterval(() => {
+      setHubspotCheckStep(s => Math.min(s + 1, 1))
+    }, 4000)
+    try {
+      const res = await fetch(`/api/deals/${hubspotId}/drive/hubspot-check/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      if (!res.ok || !res.body) { setHubspotCheckState('error'); return }
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buf = ''
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buf += decoder.decode(value, { stream: true })
+        const parts = buf.split('\n\n')
+        buf = parts.pop() ?? ''
+        for (const part of parts) {
+          if (!part.startsWith('data: ')) continue
+          try {
+            const event = JSON.parse(part.slice(6)) as { type: string; [k: string]: unknown }
+            if (event.type === 'verdict') {
+              if (hubspotCheckStepRef.current) clearInterval(hubspotCheckStepRef.current)
+              setHubspotCheckResult({
+                ...(event as unknown as HubSpotCheckResult),
+                screenshotBase64: null,
+                docStatuses: (event as { docStatuses?: HubSpotDocStatusEntry[] }).docStatuses ?? null,
+              })
+              setHubspotCheckState('done')
+              setHubspotScreenshotPending(true)
+            } else if (event.type === 'screenshot') {
+              setHubspotCheckResult(prev => prev ? { ...prev, screenshotBase64: event.base64 as string } : prev)
+              setHubspotScreenshotPending(false)
+            } else if (event.type === 'error') {
+              setHubspotCheckState('error')
+            }
+          } catch { /* ignore malformed event */ }
+        }
+      }
+    } catch {
+      setHubspotCheckState('error')
+    } finally {
+      if (hubspotCheckStepRef.current) clearInterval(hubspotCheckStepRef.current)
+    }
+  }, [hubspotId])
+
+  const runReanalyze = useCallback(async () => {
+    setPreCheckPrompt(null)
+    setHubspotCheckState('loading')
+    setHubspotCheckStep(0)
+    setHubspotScreenshotPending(false)
+    try {
+      const res = await fetch(`/api/deals/${hubspotId}/drive/hubspot-check/reanalyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      const json = await res.json()
+      if (!res.ok || 'error' in json) { setHubspotCheckState('error'); return }
+      setHubspotCheckResult({ ...json, screenshotBase64: json.screenshotBase64 ?? null })
+      setHubspotCheckState('done')
+    } catch {
+      setHubspotCheckState('error')
+    }
+  }, [hubspotId])
+
   const fetchDeal = useCallback(async () => {
     setError(null)
     try {
@@ -262,6 +365,15 @@ export default function DealPanel({
   useEffect(() => { fetchGmail() }, [fetchGmail])
   useEffect(() => { fetchDrive() }, [fetchDrive])
   useEffect(() => { if (!loading && data) refreshHighlight() }, [loading, data])
+
+  // Auto-advance to HubSpot check after "Verify first" prompt verify completes
+  useEffect(() => {
+    if (!pendingHubspotCheckRef.current || verifyState !== 'done') return
+    pendingHubspotCheckRef.current = false
+    const hasShot = !!(driveResult?.hubspotScreenshot || hubspotCheckResult?.screenshotBase64)
+    if (hasShot) setPreCheckPrompt('use-screenshot')
+    else void runHubspotCheck()
+  }, [verifyState, driveResult, hubspotCheckResult, runHubspotCheck])
 
   const startLayer2 = async () => {
     setLayer2State('confirming')
@@ -594,81 +706,159 @@ export default function DealPanel({
             <div className="flex items-center justify-between mb-1">
               <SectionHeader title="Google Drive" />
               {driveResult && (
-                <div className="flex items-center gap-2 shrink-0">
-                  {/* HubSpot linked status badge */}
-                  {hubspotCheckResult && (
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
-                      hubspotCheckResult.sessionExpired
-                        ? 'bg-gray-100 text-gray-500'
-                        : hubspotCheckResult.filesLinked
-                        ? 'bg-green-100 text-green-700'
-                        : 'bg-red-100 text-red-600'
-                    }`}
-                    title={hubspotCheckResult.findings.join(' · ')}
-                    >
-                      {hubspotCheckResult.sessionExpired
-                        ? 'session expired'
-                        : hubspotCheckResult.filesLinked
-                        ? 'linked in HubSpot'
-                        : `${hubspotCheckResult.missingFiles.length} not linked`}
-                    </span>
-                  )}
-                  {/* Last checked timestamp */}
-                  {hubspotCheckResult?.checkedAt && (
-                    <span className="text-[10px] text-gray-400 shrink-0" title={new Date(hubspotCheckResult.checkedAt).toLocaleString()}>
-                      {relativeDate(hubspotCheckResult.checkedAt)}
-                    </span>
-                  )}
-                  {/* Screenshot preview toggle */}
-                  {hubspotCheckResult?.screenshotBase64 && (
-                    <button
-                      onClick={() => setShowHubspotScreenshot(v => !v)}
-                      className="text-[10px] text-gray-400 hover:text-gray-600"
-                      title="Toggle screenshot"
-                    >
-                      {showHubspotScreenshot ? 'hide' : 'screenshot'}
-                    </button>
-                  )}
-                  {/* Check / re-check button */}
-                  <button
-                    onClick={async () => {
-                      setHubspotCheckState('loading')
-                      setHubspotCheckResult(null)
-                      setShowHubspotScreenshot(false)
-                      try {
-                        const res = await fetch(`/api/deals/${hubspotId}/drive/hubspot-check`, {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({}),
-                        })
-                        const json = await res.json() as HubSpotCheckResult | { error: string }
-                        if (!res.ok || 'error' in json) {
-                          setHubspotCheckState('error')
-                        } else {
-                          setHubspotCheckResult(json as HubSpotCheckResult)
-                          setHubspotCheckState('done')
-                        }
-                      } catch {
-                        setHubspotCheckState('error')
-                      }
-                    }}
-                    disabled={hubspotCheckState === 'loading'}
-                    className="text-[10px] text-gray-400 hover:text-blue-600 disabled:opacity-40"
-                    title="Screenshot HubSpot and verify Drive files are linked"
-                  >
-                    {hubspotCheckState === 'loading' ? 'checking…' : hubspotCheckResult ? '↻' : 'check HubSpot'}
-                  </button>
-                </div>
+                <button
+                  onClick={() => {
+                    if (hubspotCheckState === 'loading') return
+                    const hasShot = !!(driveResult.hubspotScreenshot || hubspotCheckResult?.screenshotBase64)
+                    if (!verifyReport) {
+                      setPreCheckPrompt('verify-first')
+                    } else if (hasShot) {
+                      setPreCheckPrompt('use-screenshot')
+                    } else {
+                      void runHubspotCheck()
+                    }
+                  }}
+                  disabled={hubspotCheckState === 'loading'}
+                  className="shrink-0 flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-md bg-white border border-gray-300 text-gray-600 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  title="Screenshot HubSpot deal page and verify Drive files are linked"
+                >
+                  <span>📷</span>
+                  <span>{hubspotCheckState === 'loading' ? 'Checking…' : hubspotCheckResult ? '↻ Recheck HubSpot' : 'Check HubSpot'}</span>
+                </button>
               )}
             </div>
-            {/* Screenshot preview */}
-            {showHubspotScreenshot && hubspotCheckResult?.screenshotBase64 && (
-              <div className="mb-3 border border-gray-200 rounded overflow-hidden">
-                <img
-                  src={`data:image/jpeg;base64,${hubspotCheckResult.screenshotBase64}`}
-                  alt="HubSpot deal page screenshot"
-                  className="w-full"
-                />
+
+            {/* Pre-check prompts — shown before launching browser or reanalyze */}
+            {preCheckPrompt === 'verify-first' && (
+              <div className="mb-3 px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-lg">
+                <p className="text-xs text-amber-800 mb-2">
+                  Documents haven&apos;t been verified — file detection will use the classifier, which may miss matches.
+                </p>
+                <div className="flex gap-2 flex-wrap">
+                  <button
+                    onClick={() => {
+                      pendingHubspotCheckRef.current = true
+                      setPreCheckPrompt(null)
+                      void runVerify()
+                    }}
+                    className="text-[11px] px-2.5 py-1 rounded-md bg-amber-700 text-white hover:bg-amber-800 transition-colors"
+                  >
+                    Verify documents first
+                  </button>
+                  <button
+                    onClick={() => void runHubspotCheck()}
+                    className="text-[11px] px-2.5 py-1 rounded-md bg-white border border-amber-300 text-amber-800 hover:bg-amber-100 transition-colors"
+                  >
+                    Run check anyway
+                  </button>
+                  <button
+                    onClick={() => setPreCheckPrompt(null)}
+                    className="text-[11px] px-2.5 py-1 rounded-md text-gray-500 hover:text-gray-700 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {preCheckPrompt === 'use-screenshot' && (
+              <div className="mb-3 px-3 py-2.5 bg-blue-50 border border-blue-200 rounded-lg">
+                <p className="text-xs text-blue-800 mb-2">
+                  A screenshot already exists for this deal.
+                </p>
+                <div className="flex gap-2 flex-wrap">
+                  <button
+                    onClick={() => void runReanalyze()}
+                    className="text-[11px] px-2.5 py-1 rounded-md bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+                  >
+                    Re-analyze existing screenshot
+                  </button>
+                  <button
+                    onClick={() => void runHubspotCheck()}
+                    className="text-[11px] px-2.5 py-1 rounded-md bg-white border border-blue-300 text-blue-700 hover:bg-blue-100 transition-colors"
+                  >
+                    Take fresh screenshot
+                  </button>
+                  <button
+                    onClick={() => setPreCheckPrompt(null)}
+                    className="text-[11px] px-2.5 py-1 rounded-md text-gray-500 hover:text-gray-700 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* HubSpot check — loading state with step progress */}
+            {hubspotCheckState === 'loading' && (() => {
+              const steps = [
+                'Opening HubSpot deal page…',
+                'Reading file list from sidebar…',
+              ]
+              return (
+                <div className="mb-3 px-3 py-2.5 bg-blue-50 border border-blue-100 rounded-lg">
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin shrink-0" />
+                    <p className="text-xs font-medium text-blue-700">{steps[hubspotCheckStep]}</p>
+                  </div>
+                  <div className="flex gap-1">
+                    {steps.map((_, i) => (
+                      <div key={i} className={`h-1 flex-1 rounded-full transition-colors ${i <= hubspotCheckStep ? 'bg-blue-400' : 'bg-blue-100'}`} />
+                    ))}
+                  </div>
+                </div>
+              )
+            })()}
+
+            {/* HubSpot check — result card: session warning (if any) + screenshot thumbnail */}
+            {hubspotCheckState === 'done' && hubspotCheckResult && (
+              <div className="mb-3 border border-gray-200 rounded-lg overflow-hidden">
+                {/* Session expired warning — only shown when cookies need refreshing */}
+                {hubspotCheckResult.sessionExpired && (
+                  <div className="px-3 py-2 flex items-center gap-2 bg-gray-50">
+                    <span className="text-sm shrink-0 text-gray-400">⚠</span>
+                    <p className="text-[11px] font-medium text-gray-600">Session expired — re-capture cookies</p>
+                  </div>
+                )}
+                {/* Phase 2: screenshot still loading in background */}
+                {hubspotScreenshotPending && !hubspotCheckResult.screenshotBase64 && (
+                  <div className="px-3 py-1.5 border-t border-gray-100 flex items-center gap-2 bg-gray-50/60">
+                    <div className="w-2.5 h-2.5 border-2 border-gray-300 border-t-gray-500 rounded-full animate-spin shrink-0" />
+                    <span className="text-[10px] text-gray-400">Capturing screenshot…</span>
+                  </div>
+                )}
+                {/* Screenshot thumbnail — appears when Phase 2 completes */}
+                {hubspotCheckResult.screenshotBase64 && (
+                  <button
+                    onClick={() => setShowHubspotScreenshot(v => !v)}
+                    className="w-full block text-left focus:outline-none group"
+                    title={showHubspotScreenshot ? 'Click to collapse screenshot' : 'Click to expand screenshot'}
+                  >
+                    {showHubspotScreenshot ? (
+                      <div className="relative">
+                        <img
+                          src={`data:image/jpeg;base64,${hubspotCheckResult.screenshotBase64}`}
+                          alt="HubSpot deal page screenshot"
+                          className="w-full block"
+                        />
+                        <div className="absolute bottom-0 inset-x-0 py-1.5 bg-black/40 text-center">
+                          <span className="text-[10px] text-white">▲ collapse</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="relative overflow-hidden h-24">
+                        <img
+                          src={`data:image/jpeg;base64,${hubspotCheckResult.screenshotBase64}`}
+                          alt="HubSpot deal page screenshot"
+                          className="w-full block"
+                        />
+                        <div className="absolute inset-0 bg-gradient-to-b from-transparent to-white/90 flex items-end justify-center pb-1.5">
+                          <span className="text-[10px] text-gray-500 group-hover:text-blue-600">▼ expand screenshot</span>
+                        </div>
+                      </div>
+                    )}
+                  </button>
+                )}
               </div>
             )}
             {driveLoading && (
@@ -722,12 +912,150 @@ export default function DealPanel({
                   </div>
                 )}
 
+                {/* Link folder — shown only when Drive fell back to fulltext search */}
+                {driveResult.matchMethod === 'fulltext_fallback' && (() => {
+                  function extractFolderId(input: string): string | null {
+                    const m = input.trim().match(/\/folders\/([a-zA-Z0-9_-]+)/)
+                    if (m) return m[1]
+                    if (/^[a-zA-Z0-9_-]{20,}$/.test(input.trim())) return input.trim()
+                    return null
+                  }
+
+                  async function lookupFolder() {
+                    const folderId = extractFolderId(linkFolderUrl)
+                    if (!folderId) {
+                      setLinkFolderError('Paste a Google Drive folder URL or folder ID')
+                      return
+                    }
+                    setLinkFolderStep('preview')
+                    setLinkFolderError(null)
+                    try {
+                      const res = await fetch(`/api/deals/${hubspotId}/drive/link-folder`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ folderId, preview: true }),
+                      })
+                      const json = await res.json()
+                      if (!res.ok) { setLinkFolderError(json.error ?? 'Lookup failed'); setLinkFolderStep('input'); return }
+                      setLinkFolderPreview({ id: folderId, name: json.name, fileCount: json.fileCount, webViewLink: json.webViewLink })
+                    } catch {
+                      setLinkFolderError('Network error — try again')
+                      setLinkFolderStep('input')
+                    }
+                  }
+
+                  async function commitLink() {
+                    if (!linkFolderPreview) return
+                    setLinkFolderStep('linking')
+                    try {
+                      const res = await fetch(`/api/deals/${hubspotId}/drive/link-folder`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ folderId: linkFolderPreview.id, preview: false }),
+                      })
+                      const json = await res.json()
+                      if (!res.ok) { setLinkFolderError(json.error ?? 'Link failed'); setLinkFolderStep('preview'); return }
+                      // Reset state and refresh drive
+                      setLinkFolderStep('idle')
+                      setLinkFolderUrl('')
+                      setLinkFolderPreview(null)
+                      fetchDrive()
+                    } catch {
+                      setLinkFolderError('Network error — try again')
+                      setLinkFolderStep('preview')
+                    }
+                  }
+
+                  if (linkFolderStep === 'idle') {
+                    return (
+                      <div className="mb-2">
+                        <button
+                          onClick={() => setLinkFolderStep('input')}
+                          className="text-[11px] px-2.5 py-1 rounded border border-blue-300 text-blue-600 bg-blue-50 hover:bg-blue-100"
+                        >
+                          📁 Link Drive folder manually
+                        </button>
+                      </div>
+                    )
+                  }
+
+                  if (linkFolderStep === 'input' || linkFolderStep === 'preview') {
+                    const isLoading = linkFolderStep === 'preview' && !linkFolderPreview
+                    return (
+                      <div className="mb-2 p-3 bg-blue-50 border border-blue-200 rounded text-xs">
+                        {linkFolderPreview ? (
+                          <div>
+                            <p className="text-gray-700 mb-1">
+                              Found: <span className="font-medium">{linkFolderPreview.name}</span>
+                              <span className="text-gray-500 ml-1">({linkFolderPreview.fileCount} files)</span>
+                            </p>
+                            <p className="text-amber-700 mb-2">Link this folder to <span className="font-medium">{deal.name ?? 'this deal'}</span>?</p>
+                            <div className="flex gap-2">
+                              <button
+                                onClick={commitLink}
+                                className="px-2.5 py-1 rounded bg-blue-600 text-white hover:bg-blue-700 font-medium"
+                              >
+                                Yes, link it
+                              </button>
+                              <button
+                                onClick={() => { setLinkFolderStep('input'); setLinkFolderPreview(null) }}
+                                className="px-2.5 py-1 rounded border border-gray-300 text-gray-600 hover:bg-gray-100"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div>
+                            <p className="text-gray-600 mb-1.5">Paste a Google Drive folder URL or folder ID:</p>
+                            <div className="flex gap-1.5 items-center">
+                              <input
+                                type="text"
+                                value={linkFolderUrl}
+                                onChange={e => { setLinkFolderUrl(e.target.value); setLinkFolderError(null) }}
+                                onKeyDown={e => { if (e.key === 'Enter') lookupFolder() }}
+                                placeholder="https://drive.google.com/drive/folders/..."
+                                className="flex-1 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:border-blue-400 bg-white"
+                                autoFocus
+                              />
+                              <button
+                                onClick={lookupFolder}
+                                disabled={isLoading || !linkFolderUrl.trim()}
+                                className="px-2.5 py-1 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                {isLoading ? '…' : 'Look up'}
+                              </button>
+                              <button
+                                onClick={() => { setLinkFolderStep('idle'); setLinkFolderUrl(''); setLinkFolderError(null) }}
+                                className="text-gray-400 hover:text-gray-600"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                            {linkFolderError && <p className="mt-1.5 text-red-600">{linkFolderError}</p>}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  }
+
+                  if (linkFolderStep === 'linking') {
+                    return (
+                      <div className="mb-2 p-3 bg-blue-50 border border-blue-200 rounded text-xs text-blue-700">
+                        Linking folder…
+                      </div>
+                    )
+                  }
+
+                  return null
+                })()}
+
                 {/* Document verification panel */}
                 <div className="mb-3 border border-gray-100 rounded-lg overflow-hidden">
 
                   {/* Header */}
                   <div className="flex items-center justify-between px-3 py-1.5 bg-gray-50 border-b border-gray-100">
-                    <div className="flex items-center gap-2 min-w-0">
+                    <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
                       <span className="text-[11px] font-medium text-gray-600 shrink-0">Required Documents</span>
                       {driveResult.docVerificationAt && (
                         <span className="text-[10px] text-gray-400 shrink-0" title={new Date(driveResult.docVerificationAt).toLocaleString()}>
@@ -747,19 +1075,59 @@ export default function DealPanel({
                        new Date(driveResult.cachedAt) > new Date(driveResult.docVerificationAt) && (
                         <span className="text-[10px] text-amber-600 shrink-0" title="Drive files were refreshed after last verification">⚠ files updated</span>
                       )}
+                      {/* HubSpot check timestamp — inline with doc status */}
+                      {hubspotCheckResult && hubspotCheckResult.checkedAt && !hubspotCheckResult.sessionExpired && (
+                        <span
+                          className="shrink-0 text-[9px] px-1.5 py-0.5 rounded-full font-medium bg-orange-50 text-orange-600 border border-orange-200"
+                          title={`HubSpot check: ${new Date(hubspotCheckResult.checkedAt).toLocaleString()}`}
+                        >
+                          HS {hubspotCheckResult.filesLinked ? '✓' : '!'}
+                        </span>
+                      )}
+                      {hubspotCheckResult?.sessionExpired && (
+                        <span className="shrink-0 text-[9px] px-1.5 py-0.5 rounded-full font-medium bg-gray-100 text-gray-500 border border-gray-200">
+                          HS session expired
+                        </span>
+                      )}
                     </div>
-                    <button
-                      onClick={() => runVerify()}
-                      disabled={verifyState === 'loading'}
-                      className="shrink-0 text-[10px] px-2 py-0.5 rounded bg-white border border-gray-200 text-gray-500 hover:text-gray-700 hover:border-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {verifyState === 'loading' ? '…' : verifyReport ? '↻ Re-verify' : '✓ Verify match'}
-                    </button>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        onClick={() => runVerify()}
+                        disabled={verifyState === 'loading' || driveResult.matchMethod === 'fulltext_fallback'}
+                        title={driveResult.matchMethod === 'fulltext_fallback' ? 'No Drive folder linked — index this deal\'s folder first before verifying' : undefined}
+                        className="text-[10px] px-2 py-0.5 rounded bg-white border border-gray-200 text-gray-500 hover:text-gray-700 hover:border-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {verifyState === 'loading' ? '…' : verifyReport ? '↻ Re-verify' : '✓ Verify match'}
+                      </button>
+                    </div>
                   </div>
 
                   {/* Document rows — detailed when verified, name-based preview otherwise */}
                   {(() => {
                     const fileById = new Map(driveResult.files.map(f => [f.id, f]))
+
+                    // Type → linked status map. Built from hubspotDocStatus (pre-computed at
+                    // check time with full context). No string matching here — just a key lookup.
+                    const hsStatusByType = new Map<string, boolean>(
+                      (hubspotCheckResult?.docStatuses ?? [])
+                        .map(d => [d.type, d.linked])
+                    )
+                    const hsCheckDone = !!(hubspotCheckResult && !hubspotCheckResult.sessionExpired && hubspotCheckResult.docStatuses)
+
+                    const HsBadge = ({ type }: { type: string }) => {
+                      if (!hsCheckDone) return null
+                      const linked = hsStatusByType.get(type)
+                      if (linked === undefined) return null  // this doc type wasn't part of the check
+                      return (
+                        <span className={`shrink-0 text-[9px] px-1.5 py-0.5 rounded-full font-medium border ${
+                          linked
+                            ? 'bg-orange-50 text-orange-600 border-orange-200'
+                            : 'bg-red-50 text-red-400 border-red-200'
+                        }`}>
+                          {linked ? 'HS ✓' : 'HS ✗'}
+                        </span>
+                      )
+                    }
 
                     if (verifyReport) {
                       return (
@@ -774,6 +1142,7 @@ export default function DealPanel({
                               <div key={r.type} className="px-3 py-2">
                                 <div className="flex items-center gap-2">
                                   <span className={`text-sm shrink-0 ${statusColor}`}>{statusIcon}</span>
+                                  <HsBadge type={r.type} />
                                   <span className="text-[11px] font-medium text-gray-700 w-32 shrink-0">{r.label}</span>
                                   {file?.webViewLink ? (
                                     <a href={file.webViewLink} target="_blank" rel="noopener noreferrer"
@@ -808,6 +1177,7 @@ export default function DealPanel({
                               <span className={`text-sm shrink-0 ${doc.found ? 'text-green-500' : doc.possibleMatch ? 'text-amber-400' : 'text-red-400'}`}>
                                 {doc.found ? '✓' : doc.possibleMatch ? '?' : '✗'}
                               </span>
+                              <HsBadge type={doc.type} />
                               <span className="text-[11px] text-gray-600 w-32 shrink-0">{doc.label}</span>
                               {doc.file ? (
                                 <a href={doc.file.webViewLink ?? '#'} target="_blank" rel="noopener noreferrer"
@@ -873,9 +1243,13 @@ export default function DealPanel({
 
                       {verifyReport.consolidatedData && (() => {
                         const d = verifyReport.consolidatedData
-                        const kvPairs = [
+                        const topPairs = [
                           ['Address', d.propertyAddress],
-                          ['County', d.county], ['State', d.state], ['ZIP', d.zipCode],
+                          ['County', d.county],
+                        ].filter(([, v]) => v) as [string, string][]
+
+                        const restPairs = [
+                          ['State', d.state], ['ZIP', d.zipCode],
                           ['Parcel', d.parcelId],
                           ['Sale Date', d.taxSaleDate], ['Sale Amount', d.saleAmount],
                           ['Deed Recorded', d.deedRecordedDate], ['Book / Page', d.bookPage],
@@ -889,17 +1263,10 @@ export default function DealPanel({
                         return (
                           <div className="px-3 py-2 bg-white border-t border-gray-100">
                             <p className="text-[10px] font-medium text-gray-500 mb-1.5">Extracted Data</p>
-                            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
-                              {kvPairs.map(([k, v]) => (
-                                <div key={k}>
-                                  <span className="text-[9px] text-gray-400 uppercase tracking-wide">{k}</span>
-                                  <p className="text-[11px] text-gray-800 leading-tight">{v}</p>
-                                </div>
-                              ))}
-                            </div>
 
+                            {/* Tax Lien Against — first */}
                             {hasTaxLien && (
-                              <div className="mt-2 pt-2 border-t border-gray-100">
+                              <div className="mb-2 pb-2 border-b border-gray-100">
                                 <span className="text-[9px] text-gray-400 uppercase tracking-wide">Tax Lien Against</span>
                                 {d.taxLienAgainst ? (
                                   <p className="text-[11px] text-gray-800 leading-tight mt-0.5 italic">&ldquo;{d.taxLienAgainst}&rdquo;</p>
@@ -923,6 +1290,26 @@ export default function DealPanel({
                                 )}
                               </div>
                             )}
+
+                            {/* Address + County */}
+                            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 mb-2">
+                              {topPairs.map(([k, v]) => (
+                                <div key={k}>
+                                  <span className="text-[9px] text-gray-400 uppercase tracking-wide">{k}</span>
+                                  <p className="text-[11px] text-gray-800 leading-tight">{v}</p>
+                                </div>
+                              ))}
+                            </div>
+
+                            {/* Remaining fields */}
+                            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+                              {restPairs.map(([k, v]) => (
+                                <div key={k}>
+                                  <span className="text-[9px] text-gray-400 uppercase tracking-wide">{k}</span>
+                                  <p className="text-[11px] text-gray-800 leading-tight">{v}</p>
+                                </div>
+                              ))}
+                            </div>
                           </div>
                         )
                       })()}

@@ -327,48 +327,53 @@ After full JustCall data is loaded and match rate is acceptable (>80% of calls m
 
 ---
 
-## Milestone 12: Deal Workspace Redesign
+## Milestone 12: Deal Workspace Redesign (Case Intelligence Foundation)
 
-> **AGENT PRECONDITIONS:** M11 complete. Design layout with Mo before building.
+> **AGENT PRECONDITIONS:** M9+ complete. Architecture approved by Mo — see `/Users/mogedi/.claude/plans/parallel-nibbling-hartmanis.md`.
+>
+> **Architecture:** Three-layer model. Layer 1 (raw DB) → Layer 2 (business view models in `src/lib/case/`) → Layer 3 (UI + AI agents). Business objects are view models, not persistence models.
 
-**Goal:** Replace the organically grown DealPanel (800+ lines) with a principled three-pipeline-aware layout. Each pipeline group gets its own section. Call history from JustCall visible per deal.
+**Goal:** Convert DealPanel from a single-scroll data dump into a tabbed case workstation. Primary innovation: business object layer (`CaseEvent`, `StoryDay`, `CurrentState`) that gives humans and AI agents the same structured view of a case.
 
-**Design work first — do not build before Mo approves the layout.**
+### Tab Order
+Story | Tasks | Contacts | Calls | Emails | Documents | Notes
 
-### Layout Concept
+### M12a — Case Object Layer + Story Tab ✅ DONE
+**Commit:** `[M12a] case object layer + story tab — CaseEvent, StoryDay, CurrentState, tabbed DealPanel`
 
-```
-┌─────────────────────────────────────────────────┐
-│  BREVARD - 2671 San Filippo Dr SE ($33K)        │ ← header
-│  Stage: Attempted Contact · Outreach Pipeline   │
-├─────────────────────────────────────────────────┤
-│ PIPELINE STATUS                                  │
-│ [Setup ✅] [Outreach — 3 calls] [Case Mgmt ○]  │ ← pipeline track
-├─────────────────────────────────────────────────┤
-│ PIPELINE-SPECIFIC PANEL                          │
-│ (changes based on current pipeline group)        │
-│                                                  │
-│ Outreach: 3 call attempts | Next call: tomorrow  │
-│ JustCall history: 3 voicemails, 0 answered       │
-│ Kathleen — last call Jun 5 at 2:14pm             │
-├─────────────────────────────────────────────────┤
-│ UNIFIED ACTIVITY TIMELINE                         │
-│ (HubSpot notes + JustCall calls + Google emails) │
-└─────────────────────────────────────────────────┘
-```
+- [x] `src/lib/case/types.ts` — CaseEvent, StoryDay, CurrentState, CaseEventCategory types
+- [x] `src/lib/case/classifier.ts` — `categorizeEvent()` — 7 categories, priority-ordered rules
+- [x] `src/lib/case/events.ts` — `buildCaseEvents()` — merges DealActivity + ActivityEvent
+- [x] `src/lib/case/story.ts` — `buildStoryDays()` — groups by ET calendar day, deduped labels
+- [x] `src/lib/case/state.ts` — `buildCurrentState()` — health inference from status keywords
+- [x] `GET /api/deals/[id]/story` — returns `{ days: StoryDay[], currentState: CurrentState }`
+- [x] `src/components/deal-panel/StoryTab.tsx` — accordion: date | categories | latest event, expand for events
+- [x] `src/components/DealPanel.tsx` — shrink-0 controls (snooze + Layer2 + AI summary) + tab strip + flex-1 tab content
+- [x] TDD: 52 tests for case layer + 7 for story route = 59 tests. Full suite: 583 passing.
 
-### Checklist
+### M12b — Contacts + Calls Tabs (pipeline-aware defaults)
+- [ ] `src/components/deal-panel/ContactsTab.tsx` — lift existing ContactItem list
+- [ ] `src/components/deal-panel/CallsTab.tsx` — lift existing OutreachSection
+- [ ] Default tab by pipeline group: setup→contacts, outreach→calls, case_mgmt→story, terminal→story
+- [ ] `defaultTab.test.ts` — all four pipeline groups map correctly
+- [ ] `npm test` → git commit `[M12b] contacts + calls tabs — pipeline-aware defaults`
 
-- [ ] Design three-panel layout — show Mo mockup, wait for approval
-- [ ] Pipeline status track (top): visual indicator of which pipeline group deal is in
-- [ ] Pipeline 1 (Setup) section: contact count, phone registry status, missing documents
-- [ ] Pipeline 2 (Outreach) section: callAttemptCount, lastCallAttemptAt, cadence status, next call due, JustCall history (from `activity_events WHERE source = JUSTCALL`)
-- [ ] Pipeline 3 (Case Mgmt) section: agreement status, documents, attorney status, blockers
-- [ ] Unified timeline: merge `deal_activities` (HubSpot) + `activity_events` (JustCall, Google), sort newest first
-- [ ] `npm test`
-- [ ] Git commit: `[M12] deal workspace redesign`
+### M12c — Emails + Notes + Documents Tabs
+- [ ] `src/components/deal-panel/NotesTab.tsx` — activity list with date/author/body
+- [ ] `src/components/deal-panel/EmailsTab.tsx` — grouped by counterparty (check `/api/deals/[id]/google` metadata shape first)
+- [ ] `src/components/deal-panel/DocumentsTab.tsx` — lift existing Drive section verbatim
+- [ ] Wire three new tabs in DealPanel; remove Gmail + Drive from main body
+- [ ] `email-grouping.test.ts` — counterparty extraction
+- [ ] `npm test` → git commit `[M12c] emails + notes + documents tabs`
 
-**Done when:** DealPanel shows pipeline-specific information. JustCall call history visible per deal. Unified timeline includes all sources.
+### M12d — CurrentState Typing + Layer 2 Gate + Polish
+- [ ] Replace all `as SummaryJson` casts with `buildCurrentState()` call
+- [ ] `<LayerTwoGate>` component: shown per-tab when `!layer2SyncedAt`
+- [ ] Tab count indicators: `Calls (12)`, `Notes (8)`, `Emails (3)` when data present
+- [ ] CaseSnapshot: collapsed by default when `currentState.status === null`
+- [ ] `npm test` → git commit `[M12d] CurrentState typing + layer 2 gate per tab + polish`
+
+**Done when:** All 7 tabs work, tab content scrolls independently, CaseSnapshot shows current state above tabs.
 
 ---
 

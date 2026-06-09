@@ -21,6 +21,12 @@
 | `src/lib/integrations/justcall/sync.ts` | `syncJustCallSample()`, `syncJustCallFull(since)` (M10+) |
 | `src/lib/integrations/justcall/normalize.ts` | E.164 normalization + NormalizedCallLog conversion (M10+) |
 | `src/lib/integrations/google/client.ts` | Google API scaffold — awaiting credentials (M13) |
+| `src/lib/case/` | Business object layer — view models only, no DB writes (M12+) |
+| `src/lib/case/types.ts` | `CaseEvent`, `StoryDay`, `CurrentState`, `CaseEventCategory` types |
+| `src/lib/case/classifier.ts` | `categorizeEvent()` — 7 categories, priority-ordered, pure function |
+| `src/lib/case/events.ts` | `buildCaseEvents()` — merges DealActivity + ActivityEvent into CaseEvent[] |
+| `src/lib/case/story.ts` | `buildStoryDays()` — ET-timezone day grouping; `CATEGORY_LABELS` map |
+| `src/lib/case/state.ts` | `buildCurrentState()` — health inference from AiSummary JSON |
 | `src/lib/rules/` | Pure rule functions. `index.ts` → `evaluateAll`. |
 | `src/lib/rules/call-cadence.ts` | `checkCallCadence` — outreach pipeline cadence (M11+) |
 | `src/lib/rules/calls-exhausted.ts` | `checkCallsExhausted` — 7+ attempts (M11+) |

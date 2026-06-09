@@ -352,6 +352,144 @@ function BulkVerifyPanel() {
   )
 }
 
+type GoogleSyncStatus = {
+  configured: boolean
+  isActive: boolean
+  lastSyncedAt: string | null
+  totalEmailsStored: number
+}
+
+type SyncReport = {
+  mode: string
+  since: string
+  until: string
+  messagesFetched: number
+  messagesMatched: number
+  messagesUnmatched: number
+  matchRate: string
+  durationMs: number
+}
+
+function GoogleSyncPanel() {
+  const { data, error, mutate } = useSWR<GoogleSyncStatus>('/api/sync/google/gmail', fetcher)
+  const [running, setRunning] = useState(false)
+  const [runError, setRunError] = useState<string | null>(null)
+  const [lastReport, setLastReport] = useState<SyncReport | null>(null)
+  const [confirmingFull, setConfirmingFull] = useState(false)
+
+  const runSync = async (mode: 'sample' | 'full') => {
+    setRunning(true)
+    setRunError(null)
+    setConfirmingFull(false)
+    try {
+      const res = await fetch('/api/sync/google/gmail', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode }),
+      })
+      const json = await res.json()
+      if (!res.ok || !json.ok) throw new Error(json.error ?? 'Sync failed')
+      setLastReport(json.report)
+      await mutate()
+    } catch (e) {
+      setRunError(e instanceof Error ? e.message : 'Sync failed')
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  const sampleAlreadyRun = (data?.totalEmailsStored ?? 0) > 0
+  const fullSyncDone = !!data?.lastSyncedAt
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+      <div className="px-5 py-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+        <div>
+          <h2 className="text-sm font-semibold text-gray-700">Google Workspace — Gmail</h2>
+          {data && (
+            <p className="text-xs text-gray-400 mt-0.5">
+              {data.totalEmailsStored} emails stored
+              {fullSyncDone ? ` · Full sync ${relativeDate(data.lastSyncedAt!)}` : ' · No full sync yet'}
+            </p>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {!data && !error && (
+            <span className="text-xs text-gray-400">Loading…</span>
+          )}
+          {error && (
+            <span className="text-xs text-red-600">Failed to load status</span>
+          )}
+          {data && !data.configured && (
+            <span className="text-xs text-amber-600">Not configured</span>
+          )}
+          {data?.configured && (
+            <>
+              <button
+                onClick={() => runSync('sample')}
+                disabled={running}
+                className="px-3 py-1 text-xs text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-40"
+              >
+                {running ? 'Running…' : 'Sample (7 days)'}
+              </button>
+              {confirmingFull ? (
+                <>
+                  <button
+                    onClick={() => setConfirmingFull(false)}
+                    className="px-3 py-1 text-xs text-gray-500 bg-white border border-gray-300 rounded hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => runSync('full')}
+                    disabled={running}
+                    className="px-3 py-1 text-xs text-white bg-red-600 rounded hover:bg-red-700 disabled:opacity-40"
+                  >
+                    Confirm Full Sync
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={() => setConfirmingFull(true)}
+                  disabled={running || !sampleAlreadyRun}
+                  title={!sampleAlreadyRun ? 'Run a sample sync first' : undefined}
+                  className="px-3 py-1 text-xs text-white bg-gray-900 rounded hover:bg-gray-700 disabled:opacity-40"
+                >
+                  Approve Full Sync
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      {confirmingFull && !running && (
+        <div className="px-5 py-3 bg-amber-50 border-b border-amber-100 text-xs text-amber-800">
+          This will pull all Gmail matching deal contacts from the last 90 days (or since last sync).
+          Click <strong>Confirm Full Sync</strong> to proceed.
+        </div>
+      )}
+
+      {runError && (
+        <div className="px-5 py-3 text-xs text-red-600 border-b border-gray-100">{runError}</div>
+      )}
+
+      {lastReport && (
+        <div className="px-5 py-3 bg-green-50 border-b border-green-100 text-xs text-green-800 space-y-0.5">
+          <p className="font-semibold">{lastReport.mode === 'full' ? 'Full' : 'Sample'} sync complete</p>
+          <p>{lastReport.messagesFetched} fetched · {lastReport.messagesMatched} matched ({lastReport.matchRate}) · {Math.round(lastReport.durationMs / 1000)}s</p>
+          <p className="text-green-600">{new Date(lastReport.since).toLocaleDateString()} – {new Date(lastReport.until).toLocaleDateString()}</p>
+        </div>
+      )}
+
+      <div className="px-5 py-3 text-xs text-gray-400 space-y-1">
+        <p>Sample: last 7 days, max 50 emails. Does not update last-synced timestamp.</p>
+        <p>Full sync: last 90 days on first run; since last sync thereafter. Requires sample review first.</p>
+      </div>
+    </div>
+  )
+}
+
 function BulkHubspotCheckPanel() {
   const {
     pending, running, results, progress, activeDealName, loadError,
@@ -570,6 +708,9 @@ export default function SettingsPage() {
 
           {/* Bulk HubSpot screenshot check */}
           <BulkHubspotCheckPanel />
+
+          {/* Google Workspace sync */}
+          <GoogleSyncPanel />
         </div>
       )}
     </div>

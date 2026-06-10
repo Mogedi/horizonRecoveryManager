@@ -5,13 +5,12 @@
 // The UI shows files immediately; "stale" flag shown if cache is >24h old.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { getDealById } from '@/lib/db/deals'
-import { updateDealDriveCache } from '@/lib/db/deals'
+import { getDealById, updateDealDriveCache, type HubSpotDocStatus } from '@/lib/db/deals'
 import { googleClient } from '@/lib/integrations/google/client'
 import { mapDriveFile } from '@/lib/integrations/google/mapper'
 import { isGoogleConfigured } from '@/lib/integrations/google/auth'
 import { isAuthenticated, isCronRequest, unauthorizedResponse } from '@/lib/auth/require-session'
-import { normalizeFolderName, getCasesFolderIds, type DriveFileEntry } from '@/lib/integrations/google/drive-index'
+import { findBestFolderMatch, getCasesFolderIds, type DriveFileEntry } from '@/lib/integrations/google/drive-index'
 import { classifyFiles, type DocChecklist } from '@/lib/integrations/google/doc-classifier'
 import { log } from '@/lib/logger'
 
@@ -31,6 +30,7 @@ export type DriveApiResponse = {
   hubspotCheck: unknown | null          // HubSpotDriveCheckResult (sans screenshotBase64) if previously run
   hubspotCheckAt: string | null
   hubspotScreenshot: string | null      // JPEG base64 from last check
+  hubspotDocStatus: HubSpotDocStatus[] | null  // per-type linked status — primary source for HS badges
   stale: boolean              // true if cache is >24h old
   cachedAt: string | null     // ISO timestamp of last index
   warning: string | null
@@ -42,7 +42,7 @@ export async function GET(req: NextRequest, { params }: Params) {
   if (!(await isAuthenticated()) && !isCronRequest(req)) return unauthorizedResponse()
 
   if (!isGoogleConfigured()) {
-    return NextResponse.json({ configured: false, files: [], docChecklist: classifyFiles([]), docVerification: null, docVerificationAt: null, hubspotCheck: null, hubspotCheckAt: null, hubspotScreenshot: null, matchMethod: null, folderPath: null, folderLink: null, stale: false, cachedAt: null, warning: null } satisfies DriveApiResponse)
+    return NextResponse.json({ configured: false, files: [], docChecklist: classifyFiles([]), docVerification: null, docVerificationAt: null, hubspotCheck: null, hubspotCheckAt: null, hubspotScreenshot: null, hubspotDocStatus: null, matchMethod: null, folderPath: null, folderLink: null, stale: false, cachedAt: null, warning: null } satisfies DriveApiResponse)
   }
 
   const { id } = await params
@@ -71,6 +71,7 @@ export async function GET(req: NextRequest, { params }: Params) {
         hubspotCheck: deal.hubspotCheck ?? null,
         hubspotCheckAt: deal.hubspotCheckAt?.toISOString() ?? null,
         hubspotScreenshot: deal.hubspotScreenshot ?? null,
+        hubspotDocStatus: (deal.hubspotDocStatus as HubSpotDocStatus[] | null) ?? null,
         stale,
         cachedAt: deal.driveCacheUpdatedAt?.toISOString() ?? null,
         warning: stale
@@ -114,6 +115,7 @@ export async function GET(req: NextRequest, { params }: Params) {
           hubspotCheck: deal.hubspotCheck ?? null,
           hubspotCheckAt: deal.hubspotCheckAt?.toISOString() ?? null,
           hubspotScreenshot: deal.hubspotScreenshot ?? null,
+          hubspotDocStatus: (deal.hubspotDocStatus as HubSpotDocStatus[] | null) ?? null,
           stale: false,
           cachedAt: new Date().toISOString(),
           warning: null,
@@ -129,7 +131,9 @@ export async function GET(req: NextRequest, { params }: Params) {
       return NextResponse.json({
         configured: true, matchMethod: 'fulltext_fallback', folderPath: null, folderLink: null,
         files: [], docChecklist: classifyFiles([]), docVerification: null, docVerificationAt: null,
-        hubspotCheck: deal.hubspotCheck ?? null, hubspotCheckAt: deal.hubspotCheckAt?.toISOString() ?? null, hubspotScreenshot: deal.hubspotScreenshot ?? null,
+        hubspotCheck: deal.hubspotCheck ?? null, hubspotCheckAt: deal.hubspotCheckAt?.toISOString() ?? null,
+        hubspotScreenshot: deal.hubspotScreenshot ?? null,
+        hubspotDocStatus: (deal.hubspotDocStatus as HubSpotDocStatus[] | null) ?? null,
         stale: false, cachedAt: null, warning: 'Deal name too short to search.',
       } satisfies DriveApiResponse)
     }
@@ -152,6 +156,7 @@ export async function GET(req: NextRequest, { params }: Params) {
       hubspotCheck: deal.hubspotCheck ?? null,
       hubspotCheckAt: deal.hubspotCheckAt?.toISOString() ?? null,
       hubspotScreenshot: deal.hubspotScreenshot ?? null,
+      hubspotDocStatus: (deal.hubspotDocStatus as HubSpotDocStatus[] | null) ?? null,
       stale: false,
       cachedAt: null,
       warning: `No folder found for this deal in Drive — showing full text search for "${searchTerm}".`,
@@ -181,11 +186,8 @@ async function findFolderInWorkspace(
   dealName: string,
   driveId: string
 ): Promise<(FolderMatch & { path: string }) | null> {
-  const normalizedDealName = normalizeFolderName(dealName)
-
   const allFolders = await googleClient.listAllFoldersInDrive(driveId)
 
-  // Build parent map for path construction
   const byId = new Map(allFolders.map(f => [f.id, f]))
 
   function buildPath(folder: typeof allFolders[0]): string {
@@ -201,15 +203,11 @@ async function findFolderInWorkspace(
     return parts.join(' > ')
   }
 
-  // Exact match first
-  const exact = allFolders.find(f => f.name === dealName)
-  if (exact) return { ...exact, matchMethod: 'exact_folder', path: buildPath(exact) }
+  const match = findBestFolderMatch(dealName, allFolders)
+  if (!match) return null
 
-  // Fuzzy match
-  const fuzzy = allFolders.find(f => normalizeFolderName(f.name) === normalizedDealName)
-  if (fuzzy) return { ...fuzzy, matchMethod: 'fuzzy_folder', path: buildPath(fuzzy) }
-
-  return null
+  const matchMethod: FolderMatch['matchMethod'] = match.method === 'exact' ? 'exact_folder' : 'fuzzy_folder'
+  return { ...match.folder, matchMethod, path: buildPath(match.folder as typeof allFolders[0]) }
 }
 
 function extractSearchTerm(dealName: string): string | null {

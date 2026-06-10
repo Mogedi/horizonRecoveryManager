@@ -4,11 +4,18 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const mockFindUnique = vi.hoisted(() => vi.fn())
 const mockUpsert = vi.hoisted(() => vi.fn())
+const mockUpdate = vi.hoisted(() => vi.fn())
+const mockFindMany = vi.hoisted(() => vi.fn())
 const mockWithBatchTransaction = vi.hoisted(() => vi.fn())
 
 vi.mock('@/lib/db/client', () => ({
   prisma: {
-    deal: { findUnique: mockFindUnique, upsert: mockUpsert },
+    deal: {
+      findUnique: mockFindUnique,
+      upsert: mockUpsert,
+      update: mockUpdate,
+      findMany: mockFindMany,
+    },
     dealSnooze: { findMany: vi.fn().mockResolvedValue([]) },
     dealContact: { findMany: vi.fn().mockResolvedValue([]) },
   },
@@ -20,7 +27,7 @@ vi.mock('@/lib/db/transaction', () => ({
 
 // --- Imports after mocks -------------------------------------------------
 
-import { getDealById, upsertDeals } from './deals'
+import { getDealById, upsertDeals, updateDealHubspotCheck, getDealsForBulkHubspotCheck } from './deals'
 
 // --- Fixtures ------------------------------------------------------------
 
@@ -155,5 +162,84 @@ describe('upsertDeals', () => {
     const call = mockUpsert.mock.calls[0][0]
     expect(call.create).toHaveProperty('syncedAt')
     expect(call.update).toHaveProperty('syncedAt')
+  })
+})
+
+// ── Step 3: DB persistence ────────────────────────────────────────────────────
+
+const CHECK_RESULT = {
+  checked: true,
+  filesLinked: true,
+  linkedFiles: ['Tax Sale Deed.pdf'],
+  missingFiles: [],
+  confidence: 'high' as const,
+  findings: ['Tax Sale Deed.pdf found in sidebar'],
+  sessionExpired: false,
+  checkedAt: '2026-06-09T03:00:00.000Z',
+  detectionMethod: 'dom' as const,
+  docStatuses: null,
+}
+
+describe('updateDealHubspotCheck', () => {
+  beforeEach(() => {
+    mockUpdate.mockResolvedValue({})
+  })
+
+  it('calls prisma.deal.update with hubspotId as the where clause', async () => {
+    await updateDealHubspotCheck('deal-abc', CHECK_RESULT, 'fakejpeg')
+
+    expect(mockUpdate).toHaveBeenCalledOnce()
+    expect(mockUpdate.mock.calls[0][0].where).toEqual({ hubspotId: 'deal-abc' })
+  })
+
+  it('stores the check result as JSON (safe-cast), checkedAt as Date, and screenshot string', async () => {
+    await updateDealHubspotCheck('deal-abc', CHECK_RESULT, 'fakejpeg')
+
+    const data = mockUpdate.mock.calls[0][0].data
+    expect(data.hubspotCheckAt).toBeInstanceOf(Date)
+    expect(data.hubspotCheckAt.toISOString()).toBe('2026-06-09T03:00:00.000Z')
+    expect(data.hubspotScreenshot).toBe('fakejpeg')
+    expect(data.hubspotCheck).toMatchObject({ checked: true, filesLinked: true })
+  })
+
+  it('stores null screenshot when screenshotBase64 is null', async () => {
+    await updateDealHubspotCheck('deal-abc', CHECK_RESULT, null)
+
+    const data = mockUpdate.mock.calls[0][0].data
+    expect(data.hubspotScreenshot).toBeNull()
+  })
+})
+
+describe('getDealsForBulkHubspotCheck', () => {
+  beforeEach(() => {
+    mockFindMany.mockResolvedValue([
+      { hubspotId: 'a', name: 'Deal A' },
+      { hubspotId: 'b', name: 'Deal B' },
+    ])
+  })
+
+  it('returns hubspotId and name fields', async () => {
+    const deals = await getDealsForBulkHubspotCheck(false)
+    expect(deals).toHaveLength(2)
+    expect(deals[0]).toMatchObject({ hubspotId: 'a', name: 'Deal A' })
+  })
+
+  it('adds a where clause filtering unchecked/stale when uncheckedOnly=true', async () => {
+    await getDealsForBulkHubspotCheck(true)
+
+    const where = mockFindMany.mock.calls[0][0].where
+    expect(where).toBeDefined()
+    expect(where.OR).toHaveLength(2)
+    // First condition: never checked
+    expect(where.OR[0]).toEqual({ hubspotCheckAt: null })
+    // Second condition: checked more than 7 days ago
+    expect(where.OR[1].hubspotCheckAt.lt).toBeInstanceOf(Date)
+  })
+
+  it('passes no where clause when uncheckedOnly=false', async () => {
+    await getDealsForBulkHubspotCheck(false)
+
+    const where = mockFindMany.mock.calls[0][0].where
+    expect(where).toBeUndefined()
   })
 })

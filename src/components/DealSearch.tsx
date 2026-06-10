@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Fuse from 'fuse.js'
-import type { FuseResult, RangeTuple } from 'fuse.js'
+import type { FuseResult, RangeTuple, FuseOptionKey } from 'fuse.js'
 import type { SearchDoc } from '@/app/api/deals/search-index/route'
 import { formatAmount } from '@/lib/utils/format'
 import {
@@ -19,7 +19,7 @@ const highlightText = (text: string, indices: readonly RangeTuple[]) =>
 
 // ─── Fuse config ───────────────────────────────────────────────────────────────
 
-const FUSE_KEYS: Fuse.FuseOptionKey<SearchDoc>[] = [
+const FUSE_KEYS: FuseOptionKey<SearchDoc>[] = [
   { name: 'name', weight: 3 },
   { name: 'contactNames', weight: 3 },
   { name: 'county', weight: 2 },

@@ -696,7 +696,7 @@ export default function SettingsPage() {
 
           {/* Sync schedule note */}
           <div className="px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-500">
-            Sync schedule runs 4× daily (6am, 12pm, 6pm, 12am ET). To change the schedule, update{' '}
+            Automatic sync runs once daily (~9am ET) on the current Vercel plan. Use Sync Now on the dashboard anytime for an immediate refresh. To change the schedule, update{' '}
             <code className="text-xs bg-gray-100 px-1 rounded">vercel.json</code> and redeploy.
           </div>
 

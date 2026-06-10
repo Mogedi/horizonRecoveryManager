@@ -32,6 +32,7 @@ const SYSTEM_PROMPT =
 export async function verifyScreenshot(
   screenshotBase64: string,
   spec: VisualCheckSpec,
+  mimeType: 'image/png' | 'image/jpeg' = 'image/jpeg',
 ): Promise<VisualCheckResult> {
   const expectedSection = spec.expectedItems?.length
     ? `\n\nCheck whether each of these items is clearly visible:\n${spec.expectedItems.map((item, i) => `${i + 1}. "${item}"`).join('\n')}`
@@ -69,12 +70,15 @@ Rules:
   try {
     raw = await callClaudeWithImages(
       prompt,
-      [{ data: screenshotBase64, mimeType: 'image/png' }],
+      [{ data: screenshotBase64, mimeType }],
       SYSTEM_PROMPT,
       1024,
     )
 
-    const parsed = JSON.parse(raw) as Partial<VisualCheckResult>
+    // Claude sometimes wraps JSON in markdown code fences despite instructions.
+    // Strip them before parsing.
+    const jsonStr = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/m, '').trim()
+    const parsed = JSON.parse(jsonStr) as Partial<VisualCheckResult>
 
     return {
       passed: Boolean(parsed.passed),

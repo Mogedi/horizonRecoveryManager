@@ -7,6 +7,7 @@ vi.mock('@/lib/db/client', () => ({
 }))
 
 import { withTransaction, withBatchTransaction } from './transaction'
+import type { Prisma } from '@prisma/client'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -55,7 +56,7 @@ describe('withTransaction', () => {
 
 describe('withBatchTransaction', () => {
   it('calls prisma.$transaction with timeout: 30000', async () => {
-    const ops = [Promise.resolve(1), Promise.resolve(2)]
+    const ops = [Promise.resolve(1), Promise.resolve(2)] as unknown as Prisma.PrismaPromise<number>[]
     mockTransaction.mockResolvedValue([1, 2])
 
     await withBatchTransaction(ops)
@@ -64,7 +65,7 @@ describe('withBatchTransaction', () => {
   })
 
   it('passes custom timeout when provided', async () => {
-    const ops = [Promise.resolve(1)]
+    const ops = [Promise.resolve(1)] as unknown as Prisma.PrismaPromise<number>[]
     mockTransaction.mockResolvedValue([1])
 
     await withBatchTransaction(ops, { timeout: 60000 })
@@ -73,7 +74,7 @@ describe('withBatchTransaction', () => {
   })
 
   it('returns the array of results', async () => {
-    const ops = [Promise.resolve('a'), Promise.resolve('b')]
+    const ops = [Promise.resolve('a'), Promise.resolve('b')] as unknown as Prisma.PrismaPromise<string>[]
     mockTransaction.mockResolvedValue(['a', 'b'])
 
     const result = await withBatchTransaction(ops)

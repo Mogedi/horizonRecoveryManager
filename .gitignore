@@ -46,3 +46,7 @@ docs/research/
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+.env*.local
+
+# Local court-scraping run artifacts (large, not app code)
+gsccca_runs/

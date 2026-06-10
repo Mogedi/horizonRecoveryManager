@@ -14,7 +14,7 @@ HubSpot is the source of truth. The dashboard adds an intelligence layer on top 
 
 ### Phase 1 — Foundation (M0–M8)
 
-Layer 1 sync (all 150 deals, weekdays 4×/day), Layer 2 on-demand, attention queue with 8 flag groups, deal detail panel, per-deal AI summaries, internal task list, daily briefing modal, settings page with configurable staleness thresholds.
+Layer 1 sync (all 150 deals, once daily on the Vercel Hobby plan; manual anytime), Layer 2 on-demand, attention queue with 8 flag groups, deal detail panel, per-deal AI summaries, internal task list, daily briefing modal, settings page with configurable staleness thresholds.
 
 See `docs/archive/milestones-m0-m8.md` for full history.
 

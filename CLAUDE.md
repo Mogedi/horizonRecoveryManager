@@ -21,7 +21,7 @@
 | `src/lib/db/summaries.ts` | AI summary reads/writes |
 | `src/lib/hubspot/client.ts` | HubSpot API — rate limited, retried, HubSpotError |
 | `src/lib/hubspot/mapper.ts` | ONLY file knowing raw HubSpot property names |
-| `src/lib/sync/layer1.ts` | Hourly deal list sync (2 API calls, 150 deals) |
+| `src/lib/sync/layer1.ts` | Daily deal list sync (2 API calls, 150 deals); manual anytime |
 | `src/lib/sync/layer2.ts` | On-demand full detail sync (5–50+ calls, manual only) |
 | `src/lib/integrations/phone-provider.ts` | `PhoneProvider` interface + `NormalizedCallLog` type |
 | `src/lib/integrations/justcall/client.ts` | JustCall API — 18 req/min cap, JustCallError |

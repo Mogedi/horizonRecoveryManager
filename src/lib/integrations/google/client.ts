@@ -192,6 +192,19 @@ export class GoogleClient {
     return res.files ?? []
   }
 
+  async getFolderMetadata(folderId: string): Promise<{ id: string; name: string; webViewLink?: string } | null> {
+    try {
+      const res = await this.request<DriveFile>(
+        'drive', 'GET',
+        `https://www.googleapis.com/drive/v3/files/${folderId}`,
+        { fields: 'id,name,mimeType,webViewLink', supportsAllDrives: 'true' }
+      )
+      return { id: res.id, name: res.name, webViewLink: res.webViewLink }
+    } catch {
+      return null
+    }
+  }
+
   async getDriveName(driveId: string): Promise<string> {
     const res = await this.request<{ name: string }>(
       'drive', 'GET',

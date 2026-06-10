@@ -1,0 +1,5 @@
+# Local artifacts — never deploy these
+gsccca_runs
+.next
+tsconfig.tsbuildinfo
+/tmp

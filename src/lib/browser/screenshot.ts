@@ -6,7 +6,7 @@
 import { openPage, humanizeBeforeScreenshot } from './client'
 import { browserLimiter } from '@/lib/rate-limiters'
 import { BrowserError } from '@/lib/errors'
-import type { Cookie } from 'playwright-core'
+import type { Cookie } from 'patchright'
 
 export type ScreenshotOptions = {
   cookies?: Cookie[]
@@ -17,6 +17,16 @@ export type ScreenshotOptions = {
   type?: 'png' | 'jpeg'
   // JPEG quality 0-100 (ignored for png) — defaults to 80
   quality?: number
+  // CSS selector whose innerText should be extracted alongside the screenshot.
+  // Use 'body' for SPAs where specific selectors are unstable (e.g. HubSpot's obfuscated classes).
+  // Skips elements inside cross-origin iframes — use 'body' to maximise coverage.
+  extractText?: string
+  // Wait until document.body.innerText contains this substring before extracting text.
+  // More reliable than waitForSelector for SPAs with lazy-loaded third-party cards (HubSpot Drive card).
+  waitForText?: string
+  // Fires after text extraction but BEFORE humanize+screenshot.
+  // Use this for two-phase UX: caller gets the DOM verdict fast while screenshot continues in background.
+  onTextExtracted?: (text: string | null) => Promise<void>
 }
 
 export type ScreenshotResult = {
@@ -24,6 +34,8 @@ export type ScreenshotResult = {
   width: number
   height: number
   mimeType: 'image/png' | 'image/jpeg'
+  // innerText of extractText selector, or null if selector not found / not requested
+  extractedText: string | null
 }
 
 const DEFAULT_VIEWPORT = { width: 1440, height: 900 }
@@ -42,9 +54,34 @@ export async function takeScreenshot(
       await page.setViewportSize(viewport)
 
       if (opts.waitForSelector) {
-        await page.waitForSelector(opts.waitForSelector, { timeout: 10_000 }).catch(() => {
-          // Non-fatal — proceed with screenshot even if selector not found
+        await page.waitForSelector(opts.waitForSelector, { timeout: 20_000 }).catch(() => {
+          // Non-fatal — proceed even if selector not found
         })
+      }
+
+      // waitForText: wait until specific text appears in document.body.innerText.
+      // More reliable than waitForSelector for SPAs with lazy-loaded third-party cards,
+      // because it waits for actual content rather than a container element.
+      if (opts.waitForText) {
+        await page.waitForFunction(
+          (text: string) => document.body.innerText.includes(text),
+          opts.waitForText,
+          { timeout: 20_000 },
+        ).catch(() => {
+          // Non-fatal — proceed even if text never appears (Drive card may not be configured)
+        })
+      }
+
+      // Extract text from the specified selector before humanize/screenshot.
+      // Use 'body' for maximum coverage on SPAs where specific selectors are unstable.
+      let extractedText: string | null = null
+      if (opts.extractText) {
+        extractedText = await page.locator(opts.extractText).innerText({ timeout: 5_000 }).catch(() => null)
+      }
+
+      // Phase 1 boundary: fires before humanize+screenshot, enabling two-phase UX.
+      if (opts.onTextExtracted) {
+        await opts.onTextExtracted(extractedText)
       }
 
       await humanizeBeforeScreenshot(page)
@@ -57,6 +94,7 @@ export async function takeScreenshot(
         width: viewport.width,
         height: viewport.height,
         mimeType: type === 'jpeg' ? 'image/jpeg' : 'image/png',
+        extractedText,
       }
     } catch (err) {
       throw new BrowserError(

@@ -44,6 +44,62 @@ export function normalizeFolderName(name: string): string {
     .toLowerCase()
 }
 
+export type FolderMatchMethod = 'exact' | 'normalized' | 'prefix' | 'token'
+
+// Scores token overlap between two pre-normalized strings using the Sørensen–Dice coefficient.
+// Tokens shorter than 2 chars are ignored (strips single-letter noise like "st" abbreviations
+// that appear in one name but not the other).
+function tokenOverlap(a: string, b: string): number {
+  const ta = new Set(a.split(/[\s-]+/).filter(t => t.length > 1))
+  const tb = new Set(b.split(/[\s-]+/).filter(t => t.length > 1))
+  if (ta.size === 0 || tb.size === 0) return 0
+  let shared = 0
+  for (const t of ta) if (tb.has(t)) shared++
+  return (2 * shared) / (ta.size + tb.size)
+}
+
+// Four-tier folder matching: exact → normalized → prefix → token overlap.
+// All tiers after the first run on normalized strings so callers don't need to
+// pre-process inputs. Returns the first match found, or null.
+export function findBestFolderMatch(
+  dealName: string,
+  folders: ReadonlyArray<{ id: string; name: string; webViewLink?: string }>
+): { folder: { id: string; name: string; webViewLink?: string }; method: FolderMatchMethod } | null {
+  if (!dealName || folders.length === 0) return null
+
+  // Tier 1: exact string match
+  const exact = folders.find(f => f.name === dealName)
+  if (exact) return { folder: exact, method: 'exact' }
+
+  const normalizedDeal = normalizeFolderName(dealName)
+
+  // Tier 2: normalized equality (strips trailing $54K, converts dashes, lowercases)
+  const norm = folders.find(f => normalizeFolderName(f.name) === normalizedDeal)
+  if (norm) return { folder: norm, method: 'normalized' }
+
+  // Tier 3: prefix/contains — folder name is a prefix of the deal name or vice versa.
+  // Handles cases like deal = "CHATHAM - 2214 Hanson St - Smith - Addendum" matching
+  // folder = "CHATHAM - 2214 Hanson St - Smith".
+  // Length ratio guard: shorter string must be ≥ 60% of the longer to prevent a bare
+  // county name ("CHATHAM") from matching a full folder name as a trivial prefix.
+  const prefix = folders.find(f => {
+    const nf = normalizeFolderName(f.name)
+    const shorter = normalizedDeal.length < nf.length ? normalizedDeal : nf
+    const longer  = normalizedDeal.length < nf.length ? nf : normalizedDeal
+    if (shorter.length / longer.length < 0.6) return false
+    return normalizedDeal.startsWith(nf) || nf.startsWith(normalizedDeal)
+  })
+  if (prefix) return { folder: prefix, method: 'prefix' }
+
+  // Tier 4: token overlap ≥ 0.75 — handles reordered or extra tokens.
+  // Threshold of 0.75 requires strong overlap to prevent false positives on
+  // short names that share common words like county names alone.
+  const token = folders.find(f => tokenOverlap(normalizedDeal, normalizeFolderName(f.name)) >= 0.75)
+  if (token) return { folder: token, method: 'token' }
+
+  return null
+}
+
 // Parse GOOGLE_DRIVE_CASES_FOLDER_IDS — kept for the per-deal live fallback route.
 // Indexing no longer uses this; it scans the entire workspace instead.
 export function getCasesFolderIds(): string[] {
@@ -118,20 +174,13 @@ export async function indexDriveFolders(): Promise<DriveIndexReport> {
   // Build full-path map for every folder
   const pathMap = buildPathMap(allFolders, sharedDriveName, sharedDriveId)
 
-  // Build lookup maps — exact name and normalized name
-  const exactMap = new Map<string, DriveFile>()
-  const fuzzyMap = new Map<string, DriveFile>()
+  // Warn on duplicate folder names — findBestFolderMatch returns first match
+  const seenNames = new Set<string>()
   for (const folder of allFolders) {
-    // Only index leaf-level folders (deal folders, not state-level like "Georgia Cases")
-    // We'll match by name so duplicates just get logged as warnings
-    if (exactMap.has(folder.name)) {
+    if (seenNames.has(folder.name)) {
       log.warn('drive index: duplicate folder name', { name: folder.name })
     }
-    exactMap.set(folder.name, folder)
-    const normalized = normalizeFolderName(folder.name)
-    if (!fuzzyMap.has(normalized)) {
-      fuzzyMap.set(normalized, folder)
-    }
+    seenNames.add(folder.name)
   }
 
   // Load all deals
@@ -152,15 +201,9 @@ export async function indexDriveFolders(): Promise<DriveIndexReport> {
       continue
     }
 
-    // Tier 1: exact name match
-    let matchedFolder = exactMap.get(deal.name)
-    let isExact = true
-
-    // Tier 2: normalized match
-    if (!matchedFolder) {
-      matchedFolder = fuzzyMap.get(normalizeFolderName(deal.name))
-      isExact = false
-    }
+    const bestMatch = findBestFolderMatch(deal.name, allFolders)
+    const matchedFolder = bestMatch?.folder
+    const isExact = bestMatch?.method === 'exact'
 
     if (matchedFolder) {
       // Fetch and cache the files in this folder

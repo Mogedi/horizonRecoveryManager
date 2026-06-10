@@ -22,6 +22,11 @@ import {
 import { buildExpectedFiles } from '@/lib/integrations/hubspot-browser/expected-files'
 import { log } from '@/lib/logger'
 
+// Browser automation (Playwright screenshot + Claude Vision) is slow — allow up to 60s.
+// Set via route segment config instead of vercel.json `functions`, which doesn't reliably
+// match src/app App Router paths. Memory uses the plan default (raise via Pro plan if needed).
+export const maxDuration = 60
+
 type Params = { params: Promise<{ id: string }> }
 
 export async function POST(req: NextRequest, { params }: Params) {

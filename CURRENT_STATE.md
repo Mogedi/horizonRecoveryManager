@@ -7,7 +7,7 @@
 
 | System | Status |
 |---|---|
-| HubSpot sync | Layer 1 active (4× daily, weekdays); Layer 2 on-demand |
+| HubSpot sync | Layer 1 active (once daily ~9am ET; manual anytime); Layer 2 on-demand |
 | Attention queue | Running — 8 flag groups, snooze system |
 | JustCall integration | Full history loaded; call transcription pipeline active |
 | Google Workspace | Gmail sample complete; full sync available via Settings |

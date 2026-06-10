@@ -2,13 +2,7 @@
   "crons": [
     {
       "path": "/api/sync/layer1",
-      "schedule": "0 13,15,17,19 * * 1-5"
+      "schedule": "0 13 * * *"
     }
-  ],
-  "functions": {
-    "src/app/api/deals/[id]/drive/hubspot-check/route.ts": {
-      "maxDuration": 60,
-      "memory": 3008
-    }
-  }
+  ]
 }

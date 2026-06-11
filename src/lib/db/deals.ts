@@ -8,6 +8,19 @@ import type { HubSpotDriveCheckResult, HubSpotDocStatus } from '@/lib/integratio
 // Re-export so callers that only need the DB layer don't have to import from two places.
 export type { HubSpotDocStatus }
 import { asJson } from '@/lib/utils/json'
+import { getPipelineGroup } from '@/lib/utils/pipeline-group'
+
+// Active (non-terminal) deals that have an indexed Drive folder — the candidate set for the
+// weekly doc-verification job. Terminal/closed cases are excluded (their docs won't change).
+export async function getActiveDealsWithDriveFolder(): Promise<Array<{ hubspotId: string; name: string | null }>> {
+  const rows = await prisma.deal.findMany({
+    where: { driveFolderId: { not: null } },
+    select: { hubspotId: true, name: true, stage: true },
+  })
+  return rows
+    .filter(d => getPipelineGroup(d.stage) !== 'terminal')
+    .map(d => ({ hubspotId: d.hubspotId, name: d.name }))
+}
 
 // Single source for all deal data consumed by the rules pipeline.
 // Converts Prisma Decimal → number so rules never see Decimal objects.

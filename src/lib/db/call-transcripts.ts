@@ -75,3 +75,17 @@ export async function getUnclassifiedAnsweredCallIds(limit = 500): Promise<numbe
   })
   return events.map(e => e.id)
 }
+
+// Count of answered-outbound calls still awaiting transcription. Error rows count as done
+// (they have a CallTranscript), so this monotonically drains — safe as a loop terminator
+// for the nightly transcription job.
+export async function countUnclassifiedAnsweredCalls(): Promise<number> {
+  return prisma.activityEvent.count({
+    where: {
+      source: 'JUSTCALL',
+      direction: 'outbound',
+      outcome: 'answered',
+      transcript: null,
+    },
+  })
+}

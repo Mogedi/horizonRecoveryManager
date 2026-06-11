@@ -11,7 +11,7 @@
 //   HubSpotDriveCheckResult (see src/lib/integrations/hubspot-browser/drive-check.ts)
 
 import { NextRequest, NextResponse } from 'next/server'
-import { isAuthenticated, isCronRequest, unauthorizedResponse } from '@/lib/auth/require-session'
+import { isAuthedOrAgent, unauthorizedResponse } from '@/lib/auth/require-session'
 import { getDealById, updateDealHubspotCheck } from '@/lib/db/deals'
 import {
   checkHubSpotDriveAttachments,
@@ -30,7 +30,7 @@ export const maxDuration = 60
 type Params = { params: Promise<{ id: string }> }
 
 export async function POST(req: NextRequest, { params }: Params) {
-  if (!(await isAuthenticated()) && !isCronRequest(req)) return unauthorizedResponse()
+  if (!(await isAuthedOrAgent(req))) return unauthorizedResponse()
 
   const { id } = await params
 

@@ -57,13 +57,21 @@ export const getDigest = () => req('POST', '/api/digest', {})
 // pipelineStats. The single correct source for outreach planning — no rule logic duplicated.
 export const getAttentionQueue = () => req('GET', '/api/deals', {})
 
-// Google Calendar (read) + Google Tasks (read/write — audited + kill-switchable server-side).
+// Google Calendar + Tasks (read/write — audited + kill-switchable server-side).
+const enc = encodeURIComponent
+// Calendar
 export const getCalendarEvents = (days = 14) => req('GET', `/api/google/calendar?days=${days}`, {})
+export const getCalendarEvent = (id) => req('GET', `/api/google/calendar/${enc(id)}`, {})
+export const addCalendarEvent = (event) => req('POST', '/api/google/calendar', { body: event })
+export const updateCalendarEvent = (id, patch) => req('PATCH', `/api/google/calendar/${enc(id)}`, { body: patch })
+export const removeCalendarEvent = (id) => req('DELETE', `/api/google/calendar/${enc(id)}`, {})
+// Tasks
 export const getGoogleTasks = (completed = false) =>
   req('GET', `/api/google/tasks${completed ? '?completed=1' : ''}`, {})
 export const addGoogleTask = (task) => req('POST', '/api/google/tasks', { body: task })
-export const completeGoogleTask = (id) => req('PATCH', `/api/google/tasks/${encodeURIComponent(id)}`, {})
-export const removeGoogleTask = (id) => req('DELETE', `/api/google/tasks/${encodeURIComponent(id)}`, {})
+export const completeGoogleTask = (id) => req('PATCH', `/api/google/tasks/${enc(id)}`, {})
+export const updateGoogleTask = (id, patch) => req('PATCH', `/api/google/tasks/${enc(id)}`, { body: patch })
+export const removeGoogleTask = (id) => req('DELETE', `/api/google/tasks/${enc(id)}`, {})
 
 // One workflow run = one correlationId across all its writes.
 export function newWorkflow(correlationId = `hermes:${randomUUID()}`) {

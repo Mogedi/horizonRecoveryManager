@@ -1,7 +1,7 @@
 // Skill: task-manager — track Mo's to-do list in Google Tasks (read + write).
 // Writes go through the dashboard's audited, kill-switchable agent API. Tasks are low-risk and
 // undoable, so they write directly; capturing tasks FROM a note is propose-then-confirm.
-import { getGoogleTasks, addGoogleTask, completeGoogleTask, removeGoogleTask } from '../hm-api.js'
+import { getGoogleTasks, addGoogleTask, completeGoogleTask, updateGoogleTask, removeGoogleTask } from '../hm-api.js'
 
 export default {
   name: 'task-manager',
@@ -49,6 +49,21 @@ export default {
       },
     },
     {
+      name: 'update_task',
+      description: 'Edit a task (title/notes/due) or reopen a completed one. Needs the task id from list_tasks.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'the task id' },
+          title: { type: 'string' },
+          notes: { type: 'string' },
+          due: { type: 'string', description: 'YYYY-MM-DD' },
+          reopen: { type: 'boolean', description: 'set true to reopen a completed task' },
+        },
+        required: ['id'],
+      },
+    },
+    {
       name: 'remove_task',
       description: 'Delete a task. Needs the task id from list_tasks.',
       input_schema: {
@@ -72,6 +87,12 @@ export default {
       if (!input.id) return 'a task id is required (get it from list_tasks)'
       const t = await completeGoogleTask(input.id)
       return { completed: { id: t.id, title: t.title } }
+    },
+    update_task: async (input) => {
+      if (!input.id) return 'a task id is required (get it from list_tasks)'
+      const { id, ...patch } = input
+      const t = await updateGoogleTask(id, patch)
+      return { updated: { id: t.id, title: t.title, due: t.due, status: t.status } }
     },
     remove_task: async (input) => {
       if (!input.id) return 'a task id is required (get it from list_tasks)'

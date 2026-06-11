@@ -57,6 +57,11 @@ export const getDigest = () => req('POST', '/api/digest', {})
 // pipelineStats. The single correct source for outreach planning — no rule logic duplicated.
 export const getAttentionQueue = () => req('GET', '/api/deals', {})
 
+// Google Calendar + Tasks (read). Writes come in a later phase.
+export const getCalendarEvents = (days = 14) => req('GET', `/api/google/calendar?days=${days}`, {})
+export const getGoogleTasks = (completed = false) =>
+  req('GET', `/api/google/tasks${completed ? '?completed=1' : ''}`, {})
+
 // One workflow run = one correlationId across all its writes.
 export function newWorkflow(correlationId = `hermes:${randomUUID()}`) {
   return {

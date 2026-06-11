@@ -57,6 +57,31 @@ export type DriveListResponse = {
   nextPageToken?: string
 }
 
+// ─── Calendar / Tasks ───────────────────────────────────────────────────────
+export type CalendarEvent = {
+  id: string
+  status?: string
+  summary?: string
+  description?: string
+  location?: string
+  htmlLink?: string
+  hangoutLink?: string
+  start?: { dateTime?: string; date?: string; timeZone?: string }
+  end?: { dateTime?: string; date?: string; timeZone?: string }
+  attendees?: Array<{ email?: string; responseStatus?: string; organizer?: boolean }>
+}
+
+export type GoogleTaskList = { id: string; title: string }
+export type GoogleTask = {
+  id: string
+  title?: string
+  notes?: string
+  status?: 'needsAction' | 'completed'
+  due?: string
+  completed?: string
+  updated?: string
+}
+
 // ─── Client ───────────────────────────────────────────────────────────────────
 
 export class GoogleClient {
@@ -150,6 +175,51 @@ export class GoogleClient {
       `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}`,
       params
     )
+  }
+
+  // ─── Calendar (events scope) ────────────────────────────────────────────────
+
+  async listCalendarEvents(
+    opts: { timeMin?: string; timeMax?: string; maxResults?: number; q?: string } = {}
+  ): Promise<CalendarEvent[]> {
+    const params: Record<string, string> = {
+      singleEvents: 'true',
+      orderBy: 'startTime',
+      maxResults: String(opts.maxResults ?? 20),
+      timeMin: opts.timeMin ?? new Date().toISOString(),
+    }
+    if (opts.timeMax) params.timeMax = opts.timeMax
+    if (opts.q) params.q = opts.q
+    const res = await this.request<{ items?: CalendarEvent[] }>(
+      'calendar', 'GET',
+      'https://www.googleapis.com/calendar/v3/calendars/primary/events',
+      params
+    )
+    return res.items ?? []
+  }
+
+  // ─── Google Tasks ───────────────────────────────────────────────────────────
+
+  async listTaskLists(): Promise<GoogleTaskList[]> {
+    const res = await this.request<{ items?: GoogleTaskList[] }>(
+      'tasks', 'GET',
+      'https://tasks.googleapis.com/tasks/v1/users/@me/lists'
+    )
+    return res.items ?? []
+  }
+
+  async listTasks(
+    tasklistId = '@default',
+    opts: { showCompleted?: boolean; maxResults?: number } = {}
+  ): Promise<GoogleTask[]> {
+    const params: Record<string, string> = { maxResults: String(opts.maxResults ?? 100) }
+    if (opts.showCompleted) { params.showCompleted = 'true'; params.showHidden = 'true' }
+    const res = await this.request<{ items?: GoogleTask[] }>(
+      'tasks', 'GET',
+      `https://tasks.googleapis.com/tasks/v1/lists/${encodeURIComponent(tasklistId)}/tasks`,
+      params
+    )
+    return res.items ?? []
   }
 
   // ─── Drive ─────────────────────────────────────────────────────────────────

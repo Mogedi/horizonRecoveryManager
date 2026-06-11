@@ -12,7 +12,7 @@ import { listQueue, getCase } from './cases-read.js'
 import { triage } from './triage.js'
 import { newWorkflow } from './hm-api.js'
 import { chat } from './chat.js'
-import { startSchedules } from './schedules.js'
+import { startSchedules, runAllSyncs } from './schedules.js'
 
 const TOKEN = process.env.DISCORD_BOT_TOKEN
 if (!TOKEN) { console.error('DISCORD_BOT_TOKEN not set'); process.exit(1) }
@@ -28,6 +28,8 @@ const commands = [
   new SlashCommandBuilder().setName('triage')
     .setDescription('Propose a triage analysis (dry-run; Apply to write)')
     .addStringOption(o => o.setName('deal').setDescription('HubSpot deal ID').setRequired(true)),
+  new SlashCommandBuilder().setName('sync-all')
+    .setDescription('Run all scheduled syncs now, back-to-back (JustCall, Gmail, Drive, new-case Layer 2)'),
 ]
 
 const client = new Client({
@@ -106,6 +108,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
           new ButtonBuilder().setCustomId(`cancel:${id}`).setLabel('Discard').setStyle(ButtonStyle.Secondary),
         )
         await interaction.editReply({ embeds: [embed], components: [row] })
+      } else if (interaction.commandName === 'sync-all') {
+        await interaction.deferReply()
+        await interaction.editReply('🔄 Running all syncs (JustCall → Gmail → Drive → new-case Layer 2)…')
+        const results = await runAllSyncs()
+        const lines = results.map((r) => {
+          const detail = r.ok ? (typeof r.detail === 'object' ? JSON.stringify(r.detail).slice(0, 180) : String(r.detail)) : r.detail
+          return `${r.ok ? '✅' : '❌'} **${r.name}** — ${detail}`
+        })
+        await interaction.editReply('**Sync complete:**\n' + lines.join('\n'))
       }
 
     } else if (interaction.isButton()) {

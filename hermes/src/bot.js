@@ -202,13 +202,14 @@ client.on(Events.MessageCreate, async (message) => {
       if (!allowed) return
     }
     const text = (message.content ?? '').replace(/<@!?\d+>/g, '').trim()
-    // Image attachments → Hermes sees them natively (vision).
-    const images = [...message.attachments.values()]
-      .filter((a) => (a.contentType || '').startsWith('image/'))
-      .map((a) => a.url)
-    if (!text && !images.length) return
+    // Attachments → images via vision, PDFs read natively.
+    const atts = [...message.attachments.values()]
+    const images = atts.filter((a) => (a.contentType || '').startsWith('image/')).map((a) => a.url)
+    const docs = atts.filter((a) => (a.contentType || '') === 'application/pdf').map((a) => a.url)
+    if (!text && !images.length && !docs.length) return
     await message.channel.sendTyping().catch(() => {})
-    const { text: answer, model, costUSD, searches } = await chat(message.channelId, text || 'Describe / analyze the attached image.', images)
+    const fallback = docs.length ? 'Read and summarize the attached document.' : 'Describe / analyze the attached image.'
+    const { text: answer, model, costUSD, searches } = await chat(message.channelId, text || fallback, images, docs)
     const searchTag = searches ? ` · 🔎 ${searches}` : ''
     const footer = `\n-# 🪙 ${model.replace('claude-', '')} · ~$${costUSD.toFixed(4)}${searchTag}`
     const chunks = answer.match(/[\s\S]{1,1900}/g) ?? ['(no response)']

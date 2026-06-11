@@ -12,11 +12,12 @@ import webResearch from './web-research.js'
 import calendar from './calendar.js'
 import taskManager from './task-manager.js'
 import memory from './memory.js'
+import documents from './documents.js'
 import { loadOverrides, isSkillEnabled, setSkillEnabled } from './state.js'
 
 export const ALL_SKILLS = [
   caseLookup, emailAssistant, outreachPlanner, schedules,
-  dataExplorer, webResearch, calendar, taskManager, memory,
+  dataExplorer, webResearch, calendar, taskManager, memory, documents,
 ]
 
 export function getSkill(name) {

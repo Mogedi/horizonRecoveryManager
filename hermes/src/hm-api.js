@@ -65,6 +65,9 @@ export const getCalendarEvent = (id) => req('GET', `/api/google/calendar/${enc(i
 export const addCalendarEvent = (event) => req('POST', '/api/google/calendar', { body: event })
 export const updateCalendarEvent = (id, patch) => req('PATCH', `/api/google/calendar/${enc(id)}`, { body: patch })
 export const removeCalendarEvent = (id) => req('DELETE', `/api/google/calendar/${enc(id)}`, {})
+// Drive documents (read)
+export const getDealDocuments = (dealId) => req('GET', `/api/deals/${enc(dealId)}/documents`, {})
+export const readDriveDocument = (fileId) => req('GET', `/api/google/drive/${enc(fileId)}`, {})
 // Tasks
 export const getGoogleTasks = (completed = false) =>
   req('GET', `/api/google/tasks${completed ? '?completed=1' : ''}`, {})

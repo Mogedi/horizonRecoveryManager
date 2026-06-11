@@ -105,8 +105,8 @@ function buildSystem(model, activeSkills, loadableSkills, memories) {
 }
 
 // Returns { text, model, usage, costUSD, skills }.
-// images: optional array of public image URLs (e.g. Discord attachments) — Hermes sees them natively.
-export async function chat(channelId, userText, images = []) {
+// images/docs: optional public URLs (Discord attachments) — images seen via vision, PDFs read natively.
+export async function chat(channelId, userText, images = [], docs = []) {
   const model = pickModel(userText)
   // Passive recall: surface relevant long-term memories into context every turn.
   const memories = await recall(userText, 8).catch(() => [])
@@ -132,12 +132,17 @@ export async function chat(channelId, userText, images = []) {
   const loadedNames = new Set(active.map((s) => s.name))
   let searchCount = 0
 
-  // Vision: attach image URLs (Discord attachments) so Claude sees them natively in this turn.
+  // Attachments: images (vision) + PDFs (read natively) from Discord, included in this turn.
   const imageBlocks = (images || [])
     .filter((u) => typeof u === 'string')
     .slice(0, 6)
     .map((url) => ({ type: 'image', source: { type: 'url', url } }))
-  const userContent = imageBlocks.length ? [...imageBlocks, { type: 'text', text: userText }] : userText
+  const docBlocks = (docs || [])
+    .filter((u) => typeof u === 'string')
+    .slice(0, 4)
+    .map((url) => ({ type: 'document', source: { type: 'url', url } }))
+  const attach = [...docBlocks, ...imageBlocks]
+  const userContent = attach.length ? [...attach, { type: 'text', text: userText }] : userText
   const messages = [...getHistory(channelId), { role: 'user', content: userContent }]
   let finalText = '(no response)'
 

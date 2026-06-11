@@ -18,6 +18,52 @@ export async function query(text, params) {
   return res.rows
 }
 
+// ── General read-only query surface (for the data-explorer skill) ──────────────
+// The DATABASE_URL_READONLY role already forbids writes at the DB level; this adds a
+// single-statement SELECT guard (clean errors), a statement timeout, and a row cap.
+export async function runReadOnlySql(sql, { maxRows = 200, timeoutMs = 8000 } = {}) {
+  const cleaned = String(sql || '').trim().replace(/;\s*$/, '')
+  if (!cleaned) throw new Error('empty query')
+  if (cleaned.includes(';')) throw new Error('only a single statement is allowed (no semicolons)')
+  if (!/^(select|with)\b/i.test(cleaned)) throw new Error('only SELECT / WITH queries are allowed')
+
+  const client = await getPool().connect()
+  try {
+    await client.query(`SET statement_timeout = ${Number(timeoutMs) || 8000}`)
+    const res = await client.query(cleaned)
+    const rows = res.rows.slice(0, maxRows)
+    return { rows, rowCount: res.rowCount, truncated: res.rowCount > maxRows }
+  } finally {
+    client.release()
+  }
+}
+
+// Live schema for the data-explorer: domain tables → columns, plus enum types → values.
+export async function describeSchema() {
+  const cols = await query(
+    `SELECT table_name, column_name, data_type, udt_name
+       FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name NOT IN ('_prisma_migrations')
+      ORDER BY table_name, ordinal_position`
+  )
+  const tables = {}
+  for (const c of cols) {
+    const type = c.data_type === 'USER-DEFINED' ? `enum:${c.udt_name}` : c.data_type
+    ;(tables[c.table_name] ||= []).push(`${c.column_name} ${type}`)
+  }
+  const enumRows = await query(
+    `SELECT t.typname AS enum, e.enumlabel AS value
+       FROM pg_type t JOIN pg_enum e ON e.enumtypid = t.oid
+       JOIN pg_namespace n ON n.oid = t.typnamespace
+      WHERE n.nspname = 'public'
+      ORDER BY t.typname, e.enumsortorder`
+  )
+  const enums = {}
+  for (const r of enumRows) (enums[r.enum] ||= []).push(r.value)
+  return { tables, enums }
+}
+
 // Stage ID → human name (from app_settings.stage_map). Cached for the process.
 let stageMapCache
 async function getStageMap() {

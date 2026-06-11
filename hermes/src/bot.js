@@ -204,8 +204,9 @@ client.on(Events.MessageCreate, async (message) => {
     const text = (message.content ?? '').replace(/<@!?\d+>/g, '').trim()
     if (!text) return
     await message.channel.sendTyping().catch(() => {})
-    const { text: answer, model, costUSD } = await chat(message.channelId, text)
-    const footer = `\n-# 🪙 ${model.replace('claude-', '')} · ~$${costUSD.toFixed(4)}`
+    const { text: answer, model, costUSD, searches } = await chat(message.channelId, text)
+    const searchTag = searches ? ` · 🔎 ${searches}` : ''
+    const footer = `\n-# 🪙 ${model.replace('claude-', '')} · ~$${costUSD.toFixed(4)}${searchTag}`
     const chunks = answer.match(/[\s\S]{1,1900}/g) ?? ['(no response)']
     chunks[chunks.length - 1] += footer
     await message.reply(chunks[0])

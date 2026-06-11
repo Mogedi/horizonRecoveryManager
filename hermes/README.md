@@ -28,6 +28,10 @@ Developed inside the HorizonManager repo; deployed to the VPS at `/home/mo/herme
   (resolving fuzzy names like "alberta" → the Albertha deal) and answers — no slash command or deal
   ID needed. Scope is set by `HERMES_CHAT_CHANNELS` (channel name or ID; unset = every channel).
   Chat is read-only; writes stay on `/triage` → Apply.
+- **Cost-aware** — chat defaults to **Haiku 4.5** (cheap); say "use sonnet" in a message to escalate
+  that one, "use haiku" to force back. Default model overridable via `HERMES_CHAT_MODEL`. Every reply
+  ends with a rough cost line (`🪙 haiku-4-5 · ~$0.00xx`); per-call usage is appended to
+  `logs/usage.jsonl` for a future `/usage` total.
 
 ## Environment (`hermes/.env` on the VPS, `600`)
 ```

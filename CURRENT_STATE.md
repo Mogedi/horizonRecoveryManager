@@ -14,7 +14,7 @@
 | AI summaries | On-demand, per deal (human-facing layer) |
 | AI interpretation | `case_analyses` append-only layer drives `CurrentState`; written by Hermes + manual button |
 | Hermes write surface | Phase 1 live: analysis/tasks/snooze via `HERMES_TOKEN`; audited, idempotent, kill-switchable |
-| **Hermes Discord bot** | **LIVE** on the VPS under PM2 (`hermes-bot`). `/queue` `/case` `/triage` (+ Apply-to-write) and @mention/DM chat. Code in `hermes/`; ops in README. |
+| **Hermes Discord bot** | **LIVE** on the VPS under PM2 (`hermes-bot`). `/queue` `/case` `/triage` (+ Apply-to-write) and @mention/DM chat (scoped to `#general`). Cost-aware: Haiku 4.5 default, "use sonnet" to escalate, rough cost line on every reply. Code in `hermes/`; ops in README. |
 | Analytics | Portfolio + contact quality pages live |
 | Deal Workspace | 7-tab DealPanel with case Story, Calls, Emails, Notes, Contacts, Documents, Tasks |
 
@@ -32,6 +32,22 @@
 ## Active Priorities
 
 *Mo fills this in before pointing Hermes at a task.*
+
+---
+
+## Hermes Roadmap (not yet built)
+
+- **Skills system** *(future)* — a registry of optional skills (e.g. `web-search`, `email-draft`,
+  `county-research`, `doc-analysis`). Only **enabled** skills are sent to Claude, so context/token
+  cost scales with what's on. Toggle **per-channel** (a conversation = a "session"). Hermes can
+  recommend which skills a task needs ("which skills do you need to research probate in Chatham?"),
+  and Mo enables just those via `/skills` or chat. Token-optimal "skill store," driven from Discord —
+  no Agent SDK / desktop app needed.
+- **Phase 3 — sync triggers** — let Hermes kick off syncs (layer1/layer2/justcall/gmail/drive) from
+  Discord. Add `|| isAgentRequest(req)` to the sync routes; `kick-sync` tool. Watch Vercel timeout.
+- **Phase 4 — deploy tool** — confirm-gated production deploys from Discord (edit → `npm test` →
+  build → push → Vercel). Hard Discord confirm; never on failing tests.
+- **`/usage`** — total the per-message cost log (`hermes/logs/usage.jsonl`) for daily/weekly spend.
 
 ---
 

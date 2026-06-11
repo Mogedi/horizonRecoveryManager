@@ -55,6 +55,19 @@ export async function completeTask(taskId: string): Promise<NormalizedTask> {
   return normalizeTask(await googleClient.patchTask(LIST, taskId, { status: 'completed' }))
 }
 
+// Edit any of a task's fields (title/notes/due) and/or reopen it (status: needsAction).
+export async function updateTask(
+  taskId: string,
+  patch: { title?: string; notes?: string; due?: string; status?: 'needsAction' | 'completed' }
+): Promise<NormalizedTask> {
+  const body: { title?: string; notes?: string; due?: string; status?: 'needsAction' | 'completed' } = {}
+  if (patch.title !== undefined) body.title = patch.title
+  if (patch.notes !== undefined) body.notes = patch.notes
+  if (patch.due !== undefined) body.due = toRfc3339Date(patch.due)
+  if (patch.status !== undefined) body.status = patch.status
+  return normalizeTask(await googleClient.patchTask(LIST, taskId, body))
+}
+
 export async function removeTask(taskId: string): Promise<void> {
   await googleClient.deleteTask(LIST, taskId)
 }

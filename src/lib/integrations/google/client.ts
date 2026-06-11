@@ -58,6 +58,7 @@ export type DriveListResponse = {
 }
 
 // ─── Calendar / Tasks ───────────────────────────────────────────────────────
+export type CalendarEventTime = { dateTime?: string; date?: string; timeZone?: string }
 export type CalendarEvent = {
   id: string
   status?: string
@@ -66,9 +67,26 @@ export type CalendarEvent = {
   location?: string
   htmlLink?: string
   hangoutLink?: string
-  start?: { dateTime?: string; date?: string; timeZone?: string }
-  end?: { dateTime?: string; date?: string; timeZone?: string }
-  attendees?: Array<{ email?: string; responseStatus?: string; organizer?: boolean }>
+  start?: CalendarEventTime
+  end?: CalendarEventTime
+  attendees?: Array<{ email?: string; displayName?: string; responseStatus?: string; organizer?: boolean }>
+  organizer?: { email?: string; displayName?: string; self?: boolean }
+  creator?: { email?: string; displayName?: string; self?: boolean }
+  recurringEventId?: string
+  conferenceData?: {
+    conferenceId?: string
+    entryPoints?: Array<{ entryPointType?: string; uri?: string; label?: string; meetingCode?: string }>
+  }
+}
+
+// Input for creating/updating an event.
+export type CalendarEventInput = {
+  summary?: string
+  description?: string
+  location?: string
+  start?: CalendarEventTime
+  end?: CalendarEventTime
+  attendees?: Array<{ email: string }>
 }
 
 export type GoogleTaskList = { id: string; title: string }
@@ -199,6 +217,39 @@ export class GoogleClient {
       params
     )
     return res.items ?? []
+  }
+
+  async getCalendarEvent(eventId: string): Promise<CalendarEvent> {
+    return this.request<CalendarEvent>(
+      'calendar', 'GET',
+      `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`
+    )
+  }
+
+  async insertCalendarEvent(event: CalendarEventInput, opts: { sendUpdates?: 'all' | 'none' } = {}): Promise<CalendarEvent> {
+    return this.request<CalendarEvent>(
+      'calendar', 'POST',
+      'https://www.googleapis.com/calendar/v3/calendars/primary/events',
+      { sendUpdates: opts.sendUpdates ?? 'all' },
+      event
+    )
+  }
+
+  async patchCalendarEvent(eventId: string, patch: CalendarEventInput, opts: { sendUpdates?: 'all' | 'none' } = {}): Promise<CalendarEvent> {
+    return this.request<CalendarEvent>(
+      'calendar', 'PATCH',
+      `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`,
+      { sendUpdates: opts.sendUpdates ?? 'all' },
+      patch
+    )
+  }
+
+  async deleteCalendarEvent(eventId: string, opts: { sendUpdates?: 'all' | 'none' } = {}): Promise<void> {
+    await this.request<void>(
+      'calendar', 'DELETE',
+      `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`,
+      { sendUpdates: opts.sendUpdates ?? 'all' }
+    )
   }
 
   // ─── Google Tasks ───────────────────────────────────────────────────────────

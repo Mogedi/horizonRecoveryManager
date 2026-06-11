@@ -123,10 +123,25 @@ export async function updateEvent(eventId: string, patch: Partial<CreateEventInp
   if (patch.title !== undefined) body.summary = patch.title
   if (patch.description !== undefined) body.description = patch.description
   if (patch.location !== undefined) body.location = patch.location
-  const allDay = !!patch.allDay || (patch.start ? /^\d{4}-\d{2}-\d{2}$/.test(patch.start) : false)
-  if (patch.start) body.start = toEventTime(patch.start, allDay)
-  if (patch.end) body.end = toEventTime(patch.end, allDay)
   if (patch.attendees) body.attendees = patch.attendees.map((email) => ({ email }))
+
+  if (patch.start) {
+    const allDay = !!patch.allDay || /^\d{4}-\d{2}-\d{2}$/.test(patch.start)
+    body.start = toEventTime(patch.start, allDay)
+    if (patch.end) {
+      body.end = toEventTime(patch.end, allDay)
+    } else if (!allDay) {
+      // Moving start without an end: preserve the event's existing duration so start never
+      // ends up after end (Google rejects that with a 400).
+      const current = await googleClient.getCalendarEvent(eventId)
+      const cs = current.start?.dateTime, ce = current.end?.dateTime
+      const durMs = cs && ce ? new Date(ce).getTime() - new Date(cs).getTime() : 60 * 60_000
+      body.end = { dateTime: new Date(new Date(patch.start).getTime() + durMs).toISOString(), timeZone: DEFAULT_TZ }
+    }
+  } else if (patch.end) {
+    body.end = toEventTime(patch.end, /^\d{4}-\d{2}-\d{2}$/.test(patch.end))
+  }
+
   const ev = await googleClient.patchCalendarEvent(eventId, body)
   return normalizeEvent(ev)
 }

@@ -53,3 +53,5 @@ gsccca_runs/
 
 # Hermes tools — local deps (its own package on the VPS)
 hermes/node_modules
+# Hermes local runtime state (skill on/off overrides) — lives on the VPS, not in git
+hermes/data/

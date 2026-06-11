@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { isAuthenticated, unauthorizedResponse } from '@/lib/auth/require-session'
+import { isAuthedOrAgent, unauthorizedResponse } from '@/lib/auth/require-session'
 import { runLayer2Sync } from '@/lib/sync/layer2'
 import { log } from '@/lib/logger'
 
@@ -14,7 +14,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
 // POST /api/sync/layer2/[id] — Mo clicked "Load Full Detail" and confirmed the call count
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  if (!(await isAuthenticated())) return unauthorizedResponse()
+  if (!(await isAuthedOrAgent(req))) return unauthorizedResponse()
 
   const { id } = await params
 

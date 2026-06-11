@@ -32,6 +32,10 @@ function isAuthenticated(req: NextRequest): boolean {
     if (auth === `Bearer ${cronSecret}`) return true
   }
 
+  // Hermes agent token (server-side requests from the VPS scheduler)
+  const hermesToken = process.env.HERMES_TOKEN
+  if (hermesToken && req.headers.get('authorization') === `Bearer ${hermesToken}`) return true
+
   return false
 }
 

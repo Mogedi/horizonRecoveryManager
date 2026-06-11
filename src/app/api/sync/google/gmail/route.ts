@@ -9,6 +9,8 @@ function isAuthenticated(req: NextRequest): boolean {
   if (cookieHeader.includes('auth=')) return true
   const cronSecret = process.env.CRON_SECRET
   if (cronSecret && req.headers.get('authorization') === `Bearer ${cronSecret}`) return true
+  const hermesToken = process.env.HERMES_TOKEN
+  if (hermesToken && req.headers.get('authorization') === `Bearer ${hermesToken}`) return true
   return false
 }
 

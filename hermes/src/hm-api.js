@@ -32,6 +32,14 @@ async function req(method, path, { body, idem, corr } = {}) {
   return json
 }
 
+// Sync triggers — no idempotency/correlation (these aren't case_analyses writes). The dashboard
+// sync routes accept HERMES_TOKEN. 'full' = incremental since last sync (per the sync code).
+export const syncJustCall = () => req('POST', '/api/sync/justcall', { body: { mode: 'full' } })
+export const syncGmail = () => req('POST', '/api/sync/google/gmail', { body: { mode: 'full' } })
+export const syncDrive = () => req('POST', '/api/sync/google/drive', {})
+export const triggerLayer1 = () => req('POST', '/api/sync/layer1', {})
+export const triggerLayer2 = (dealId) => req('POST', `/api/sync/layer2/${dealId}`, {})
+
 // One workflow run = one correlationId across all its writes.
 export function newWorkflow(correlationId = `hermes:${randomUUID()}`) {
   return {

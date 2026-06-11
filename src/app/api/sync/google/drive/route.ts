@@ -5,12 +5,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { indexDriveFolders, getCasesFolderIds } from '@/lib/integrations/google/drive-index'
 import { isGoogleConfigured } from '@/lib/integrations/google/auth'
-import { isAuthenticated, isCronRequest, unauthorizedResponse } from '@/lib/auth/require-session'
+import { isAuthenticated, isCronRequest, isAgentRequest, unauthorizedResponse } from '@/lib/auth/require-session'
 import { prisma } from '@/lib/db/client'
 import { log } from '@/lib/logger'
 
 export async function GET(req: NextRequest) {
-  if (!(await isAuthenticated()) && !isCronRequest(req)) return unauthorizedResponse()
+  if (!(await isAuthenticated()) && !isCronRequest(req) && !isAgentRequest(req)) return unauthorizedResponse()
 
   if (!isGoogleConfigured()) {
     return NextResponse.json({ configured: false })
@@ -32,7 +32,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  if (!(await isAuthenticated()) && !isCronRequest(req)) return unauthorizedResponse()
+  if (!(await isAuthenticated()) && !isCronRequest(req) && !isAgentRequest(req)) return unauthorizedResponse()
 
   if (!isGoogleConfigured()) {
     return NextResponse.json({ error: 'Google credentials not configured' }, { status: 400 })

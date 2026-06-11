@@ -115,25 +115,33 @@ export async function chat(channelId, userText) {
   const activeNames = new Set(active.map((s) => s.name))
   const loadable = enabled.filter((s) => !activeNames.has(s.name))
 
-  let { tools, handlers } = assembleTools(active)
+  let { tools, handlers, serverTools } = assembleTools(active)
   const loadedNames = new Set(active.map((s) => s.name))
+  let searchCount = 0
 
   const messages = [...getHistory(channelId), { role: 'user', content: userText }]
   let finalText = '(no response)'
 
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 8; i++) {
     const loadableNow = enabled.filter((s) => !loadedNames.has(s.name))
-    const allTools = loadableNow.length ? [...tools, LOAD_SKILL_TOOL] : tools
+    const allTools = [...tools, ...serverTools, ...(loadableNow.length ? [LOAD_SKILL_TOOL] : [])]
     const system = buildSystem(model, active, loadableNow)
 
     const res = await anthropic().messages.create({ model, max_tokens: 1500, system, tools: allTools, messages })
     addUsage(res.usage)
+    searchCount += res.usage?.server_tool_use?.web_search_requests || 0
+
+    // Server tool (web_search) is mid-flight — echo the content back to let Claude continue.
+    if (res.stop_reason === 'pause_turn') {
+      messages.push({ role: 'assistant', content: res.content })
+      continue
+    }
 
     if (res.stop_reason === 'tool_use') {
       messages.push({ role: 'assistant', content: res.content })
       const results = []
       for (const block of res.content) {
-        if (block.type !== 'tool_use') continue
+        if (block.type !== 'tool_use') continue // skips text + server_tool_use + web_search_tool_result
         let out
         try {
           if (block.name === 'load_skill') {
@@ -141,10 +149,12 @@ export async function chat(channelId, userText) {
             if (skill && enabled.includes(skill) && !loadedNames.has(skill.name)) {
               const merged = assembleTools([skill])
               tools = [...tools, ...merged.tools]
+              serverTools = [...serverTools, ...merged.serverTools]
               Object.assign(handlers, merged.handlers)
               active.push(skill)
               loadedNames.add(skill.name)
-              out = `loaded skill "${skill.name}" — now available: ${merged.tools.map((t) => t.name).join(', ')}`
+              const added = [...merged.tools.map((t) => t.name), ...merged.serverTools.map((t) => t.name)]
+              out = `loaded skill "${skill.name}" — now available: ${added.join(', ')}`
             } else {
               out = `cannot load skill "${block.input?.skill}" (unknown or disabled)`
             }
@@ -173,13 +183,14 @@ export async function chat(channelId, userText) {
   pushHistory(channelId, 'user', userText)
   pushHistory(channelId, 'assistant', finalText)
 
-  const costUSD = estimateCostUSD(model, usage)
+  // Token cost + web-search server-tool cost (~$0.01/search).
+  const costUSD = estimateCostUSD(model, usage) + searchCount * 0.01
   const skillsUsed = [...loadedNames]
   await logUsage({
     ts: new Date().toISOString(), channel: channelId, model, skills: skillsUsed,
     in: usage.input_tokens, out: usage.output_tokens,
-    cache_read: usage.cache_read_input_tokens, cost: costUSD,
+    cache_read: usage.cache_read_input_tokens, searches: searchCount, cost: costUSD,
   })
 
-  return { text: finalText, model, usage, costUSD, skills: skillsUsed }
+  return { text: finalText, model, usage, costUSD, skills: skillsUsed, searches: searchCount }
 }

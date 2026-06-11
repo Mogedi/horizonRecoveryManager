@@ -40,6 +40,18 @@ export const syncDrive = () => req('POST', '/api/sync/google/drive', {})
 export const triggerLayer1 = () => req('POST', '/api/sync/layer1', {})
 export const triggerLayer2 = (dealId) => req('POST', `/api/sync/layer2/${dealId}`, {})
 
+// Heavy nightly/weekly jobs. Each call is one chunk so it stays under the Vercel 60s budget;
+// the scheduler loops until `done`.
+// Transcribe a chunk of un-transcribed answered calls (Whisper + Claude). Small limit so the
+// batch finishes inside 60s (each call ~10s). Returns { processed, failed, remaining, done, classifications }.
+export const classifyCalls = (limit = 4) => req('POST', '/api/calls/classify', { body: { limit } })
+// Active (non-terminal) deals with a Drive folder — the weekly doc-verify candidate set.
+export const activeDealsWithDocs = () => req('GET', '/api/deals/active-with-docs', {})
+// Doc verification for one deal (Playwright screenshot + Claude Vision). One per request (~25s).
+export const verifyDealDocs = (dealId) => req('POST', `/api/deals/${dealId}/drive/hubspot-check`, { body: {} })
+// Morning briefing as plain text (non-streamed) for posting to Discord.
+export const getDigest = () => req('POST', '/api/digest', {})
+
 // One workflow run = one correlationId across all its writes.
 export function newWorkflow(correlationId = `hermes:${randomUUID()}`) {
   return {

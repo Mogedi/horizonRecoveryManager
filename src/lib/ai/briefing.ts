@@ -4,7 +4,7 @@ import { getDealsForQueue } from '@/lib/db/deals'
 import { getEmployeeActivitySummary } from '@/lib/db/activities'
 import { evaluateAll, buildRuleCtx } from '@/lib/rules'
 import { getMoActionDealIds } from '@/lib/db/summaries'
-import { callClaudeStreaming } from './client'
+import { callClaude, callClaudeStreaming } from './client'
 import { AIError } from './errors'
 import { log } from '@/lib/logger'
 
@@ -120,4 +120,11 @@ export async function streamBriefingGeneration(): Promise<ReadableStream<Uint8Ar
       }
     },
   })
+}
+
+// Non-streaming variant — returns the full briefing as a single string. Used by the Hermes
+// morning-digest job, which posts the text to Discord (no streaming consumer on that path).
+export async function generateBriefingText(maxTokens = 1024): Promise<string> {
+  const prompt = await buildBriefingPrompt()
+  return callClaude(prompt, BRIEFING_SYSTEM, maxTokens)
 }

@@ -29,3 +29,38 @@ export async function getTasks(opts: { showCompleted?: boolean } = {}): Promise<
   })
   return tasks.map(normalizeTask)
 }
+
+const LIST = '@default'
+
+// `due` accepts a date (YYYY-MM-DD) or RFC3339 timestamp; Tasks stores it as a date.
+// A task with a due date shows on Google Calendar automatically.
+export async function createTask(input: {
+  title: string
+  notes?: string | null
+  due?: string | null
+}): Promise<NormalizedTask> {
+  const task = await googleClient.insertTask(LIST, {
+    title: input.title,
+    ...(input.notes ? { notes: input.notes } : {}),
+    ...(input.due ? { due: toRfc3339Date(input.due) } : {}),
+  })
+  return normalizeTask(task)
+}
+
+export async function getTask(taskId: string): Promise<NormalizedTask> {
+  return normalizeTask(await googleClient.getTask(LIST, taskId))
+}
+
+export async function completeTask(taskId: string): Promise<NormalizedTask> {
+  return normalizeTask(await googleClient.patchTask(LIST, taskId, { status: 'completed' }))
+}
+
+export async function removeTask(taskId: string): Promise<void> {
+  await googleClient.deleteTask(LIST, taskId)
+}
+
+// Google Tasks wants RFC3339. Accept a bare date (YYYY-MM-DD) or a full timestamp.
+function toRfc3339Date(s: string): string {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return `${s}T00:00:00.000Z`
+  return new Date(s).toISOString()
+}

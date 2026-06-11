@@ -10,6 +10,9 @@ export type AgentAction =
   | 'delete_task'
   | 'snooze'
   | 'unsnooze'
+  | 'create_google_task'
+  | 'complete_google_task'
+  | 'delete_google_task'
 
 export type LogAgentActionInput = {
   actor: string

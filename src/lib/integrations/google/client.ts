@@ -105,7 +105,7 @@ export class GoogleClient {
 
   private async request<T>(
     service: string,
-    method: 'GET' | 'POST',
+    method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
     url: string,
     params?: Record<string, string | string[]>,
     body?: unknown,
@@ -139,7 +139,10 @@ export class GoogleClient {
         throw new GoogleError(`Google ${service} error ${res.status}`, res.status, text)
       }
 
-      return res.json() as Promise<T>
+      // DELETE (and some PATCH) return 204 No Content — don't try to parse an empty body.
+      if (res.status === 204) return undefined as T
+      const text = await res.text()
+      return (text ? JSON.parse(text) : undefined) as T
     })
   }
 
@@ -220,6 +223,45 @@ export class GoogleClient {
       params
     )
     return res.items ?? []
+  }
+
+  async getTask(tasklistId: string, taskId: string): Promise<GoogleTask> {
+    return this.request<GoogleTask>(
+      'tasks', 'GET',
+      `https://tasks.googleapis.com/tasks/v1/lists/${encodeURIComponent(tasklistId)}/tasks/${encodeURIComponent(taskId)}`
+    )
+  }
+
+  async insertTask(
+    tasklistId: string,
+    task: { title: string; notes?: string; due?: string }
+  ): Promise<GoogleTask> {
+    return this.request<GoogleTask>(
+      'tasks', 'POST',
+      `https://tasks.googleapis.com/tasks/v1/lists/${encodeURIComponent(tasklistId)}/tasks`,
+      undefined,
+      task
+    )
+  }
+
+  async patchTask(
+    tasklistId: string,
+    taskId: string,
+    patch: Partial<{ title: string; notes: string; due: string; status: 'needsAction' | 'completed' }>
+  ): Promise<GoogleTask> {
+    return this.request<GoogleTask>(
+      'tasks', 'PATCH',
+      `https://tasks.googleapis.com/tasks/v1/lists/${encodeURIComponent(tasklistId)}/tasks/${encodeURIComponent(taskId)}`,
+      undefined,
+      patch
+    )
+  }
+
+  async deleteTask(tasklistId: string, taskId: string): Promise<void> {
+    await this.request<void>(
+      'tasks', 'DELETE',
+      `https://tasks.googleapis.com/tasks/v1/lists/${encodeURIComponent(tasklistId)}/tasks/${encodeURIComponent(taskId)}`
+    )
   }
 
   // ─── Drive ─────────────────────────────────────────────────────────────────

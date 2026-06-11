@@ -6,9 +6,10 @@
 import caseLookup from './case-lookup.js'
 import emailAssistant from './email-assistant.js'
 import outreachPlanner from './outreach-planner.js'
+import schedules from './scheduler.js'
 import { loadOverrides, isSkillEnabled, setSkillEnabled } from './state.js'
 
-export const ALL_SKILLS = [caseLookup, emailAssistant, outreachPlanner]
+export const ALL_SKILLS = [caseLookup, emailAssistant, outreachPlanner, schedules]
 
 export function getSkill(name) {
   return ALL_SKILLS.find((s) => s.name === name) ?? null

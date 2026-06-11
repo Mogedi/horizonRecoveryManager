@@ -82,20 +82,30 @@ async function jobMorningDigest() {
   return { post: text ? `☀️ **Morning briefing**\n${text}` : null }
 }
 
-// name → cron expr + handler. Shared by the scheduler and /sync-all.
+// name → cron expr + handler + human description. Shared by the scheduler and /sync-all.
 const JOBS = [
-  { name: 'justcall-sync', expr: '0 8-20 * * *', fn: () => syncJustCall() }, // hourly, 8a–8p
-  { name: 'gmail-sync', expr: '0 8-20/2 * * *', fn: () => syncGmail() }, // every 2h, 8a–8p
-  { name: 'drive-index', expr: '0 8,14 * * *', fn: () => syncDrive() }, // 8a + 2p
-  { name: 'layer2-new-cases', expr: '30 8 * * *', fn: () => jobLayer2New() }, // 8:30a
+  { name: 'justcall-sync', expr: '0 8-20 * * *', when: 'hourly, 8am–8pm ET', what: 'pull new JustCall logs', fn: () => syncJustCall() },
+  { name: 'gmail-sync', expr: '0 8-20/2 * * *', when: 'every 2 hours, 8am–8pm ET', what: 'pull new Gmail', fn: () => syncGmail() },
+  { name: 'drive-index', expr: '0 8,14 * * *', when: '8am & 2pm ET', what: 'index Drive folders', fn: () => syncDrive() },
+  { name: 'layer2-new-cases', expr: '30 8 * * *', when: '8:30am ET daily', what: 'pull Layer 2 detail for new cases', fn: () => jobLayer2New() },
 ]
 
 // Heavy jobs — off-hours, separate cadence. NOT part of /sync-all (which is the work-window syncs).
 const HEAVY_JOBS = [
-  { name: 'morning-digest', expr: '45 7 * * *', fn: () => jobMorningDigest() }, // 7:45a daily
-  { name: 'transcribe-calls', expr: '0 2 * * *', fn: () => jobTranscribeCalls() }, // 2a daily
-  { name: 'verify-docs', expr: '0 3 * * 0', fn: () => jobVerifyDocs() }, // 3a Sundays (weekly)
+  { name: 'morning-digest', expr: '45 7 * * *', when: '7:45am ET daily', what: 'post the morning briefing', fn: () => jobMorningDigest() },
+  { name: 'transcribe-calls', expr: '0 2 * * *', when: '2am ET daily', what: 'transcribe + classify new calls', fn: () => jobTranscribeCalls() },
+  { name: 'verify-docs', expr: '0 3 * * 0', when: 'Sundays 3am ET (weekly)', what: 'verify case docs are linked in HubSpot', fn: () => jobVerifyDocs() },
 ]
+
+// In-memory record of the most recent run per job (for "did the digest run?" questions).
+// Resets on restart — durable history lives in the PM2 logs.
+const lastRuns = {}
+export function getSchedules() {
+  return [...JOBS, ...HEAVY_JOBS].map((j) => ({ name: j.name, when: j.when, what: j.what, expr: j.expr }))
+}
+export function getLastRuns() {
+  return lastRuns
+}
 
 // Resolve HERMES_SCHEDULE_CHANNEL as a channel ID OR a channel name (e.g. "hermes_schedule_channel").
 // Returns the channel or null. Name resolution avoids the "hunt the snowflake ID" trap.
@@ -134,6 +144,7 @@ function wrap(name, client, fn) {
     try {
       const r = await fn()
       console.log(`[schedule] ${name} ok (${Date.now() - t0}ms)`, r ? JSON.stringify(r).slice(0, 200) : '')
+      lastRuns[name] = { at: new Date().toISOString(), ok: true, ms: Date.now() - t0, summary: r?.post ?? JSON.stringify(r ?? {}).slice(0, 160) }
       // Jobs that want to announce a result return a `post` string; post it if present.
       if (r?.post) await postLine(client, r.post)
       else if (name === 'layer2-new-cases' && r?.newCasesFilled > 0) {
@@ -141,6 +152,7 @@ function wrap(name, client, fn) {
       }
     } catch (e) {
       console.error(`[schedule] ${name} FAILED: ${e.message}`)
+      lastRuns[name] = { at: new Date().toISOString(), ok: false, ms: Date.now() - t0, summary: `FAILED: ${e.message}` }
       await postLine(client, `⚠️ scheduled job **${name}** failed: ${e.message}`)
     }
   }

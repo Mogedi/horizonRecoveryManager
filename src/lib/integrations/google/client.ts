@@ -380,6 +380,18 @@ export class GoogleClient {
     }
   }
 
+  async getDriveFileMetadata(fileId: string): Promise<{ id: string; name: string; mimeType: string; size?: string } | null> {
+    try {
+      return await this.request<{ id: string; name: string; mimeType: string; size?: string }>(
+        'drive', 'GET',
+        `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}`,
+        { fields: 'id,name,mimeType,size', supportsAllDrives: 'true' }
+      )
+    } catch {
+      return null
+    }
+  }
+
   async getDriveName(driveId: string): Promise<string> {
     const res = await this.request<{ name: string }>(
       'drive', 'GET',

@@ -1,9 +1,13 @@
-// Conversational Hermes — free-text chat backed by Claude with READ-ONLY tools, so it answers
-// questions from real case data (resolving fuzzy names) instead of deferring to slash commands.
+// Conversational Hermes — free-text chat backed by Claude with READ-ONLY skill tools.
+// Skills are loaded progressively: a cheap Haiku router picks the relevant (enabled) skills for
+// each message and only their tools are loaded; the model can load_skill(...) more mid-turn.
 // Cost-aware: defaults to Haiku (cheap); escalates to Sonnet on request. Reports per-message cost.
 import Anthropic from '@anthropic-ai/sdk'
 import { appendFile } from 'node:fs/promises'
-import { searchDeals, getCase, listQueue, getSentEmails } from './cases-read.js'
+import {
+  getEnabledSkills, alwaysOnSkills, assembleTools, skillMenu, getSkill,
+} from './skills/registry.js'
+import { routeSkills } from './skills/router.js'
 
 // $ per 1M tokens (input / output). Used for rough per-message cost estimates.
 const PRICING = {
@@ -37,101 +41,25 @@ function anthropic() {
   return client
 }
 
-const SYSTEM =
+const SYSTEM_BASE =
   'You are Hermes, the operations assistant for Horizon Recovery LLC, a surplus-funds recovery firm. ' +
   'You help Mo (the owner) manage cases and operations.\n\n' +
-  'You have tools to look up real data — USE them to answer directly. Resolve partial or misspelled ' +
-  'names yourself with search_deals (e.g. "alberta" → the Albertha deal); if several match, summarize ' +
-  'the top candidates or ask which one. NEVER tell Mo to run a slash command to get information — fetch ' +
-  'it with your tools. Be concise and practical.\n\n' +
-  'You CAN read the emails Mo has sent — use get_sent_emails to study his writing style/tone or to ' +
-  'see how he phrases things (e.g. for drafting in his voice). Never claim you lack email access.\n\n' +
+  'You work through SKILLS — bundles of tools. Use the tools you have to answer directly from real data; ' +
+  'NEVER tell Mo to run a slash command to get information. Be concise and practical.\n\n' +
   'You read facts and AI interpretation; you never touch HubSpot or business facts directly and never ' +
-  'move money. To WRITE a triage analysis, Mo uses /triage (which has an Apply-to-confirm button) — you ' +
-  'can summarize a case and what you would conclude, but you do not write.'
+  'move money. To WRITE a triage analysis, Mo uses /triage (Apply-to-confirm) — you can summarize a case ' +
+  'and what you would conclude, but you do not write.'
 
-const tools = [
-  {
-    name: 'search_deals',
-    description:
-      'Find deals by a partial, fuzzy, or misspelled name/owner/county/address. Returns candidate deals with their hubspot_id. Use this first whenever Mo names a case by anything other than an exact id.',
-    input_schema: {
-      type: 'object',
-      properties: { query: { type: 'string', description: 'name, owner, county, or address fragment' } },
-      required: ['query'],
-    },
+const LOAD_SKILL_TOOL = {
+  name: 'load_skill',
+  description:
+    'Load another skill\'s tools when the current ones can\'t answer the message. Pass a skill name from the ' +
+    '"Other skills you can load" menu. After loading, its tools become available to call.',
+  input_schema: {
+    type: 'object',
+    properties: { skill: { type: 'string', description: 'the skill name to load' } },
+    required: ['skill'],
   },
-  {
-    name: 'get_case',
-    description:
-      'Full detail for one deal: stage, amount, contacts, recent activity, and latest AI analysis. Needs the hubspot_id from search_deals or list_active_deals.',
-    input_schema: {
-      type: 'object',
-      properties: { deal_id: { type: 'string', description: 'the deal hubspot_id' } },
-      required: ['deal_id'],
-    },
-  },
-  {
-    name: 'list_active_deals',
-    description: 'List the active deal queue (most recently touched first).',
-    input_schema: { type: 'object', properties: {} },
-  },
-  {
-    name: 'get_sent_emails',
-    description:
-      "Emails Mo SENT (his own outbound mail, with full text). Use this to study or infer his writing " +
-      "style and tone, or to see how he phrases things. Returns date, subject, recipient, and body.",
-    input_schema: {
-      type: 'object',
-      properties: { limit: { type: 'number', description: 'how many recent sent emails (default 20, max 40)' } },
-    },
-  },
-]
-
-function compactCase(c) {
-  return {
-    deal: {
-      hubspot_id: c.deal.hubspot_id, name: c.deal.name, stage: c.deal.stage_name ?? c.deal.stage,
-      amount: c.deal.amount, last_activity_date: c.deal.last_activity_date,
-    },
-    contacts: c.contacts.map((ct) => ({ name: ct.name, type: ct.contact_type, status: ct.ownership_status })),
-    recent_activity: c.activity.slice(0, 12).map((a) => ({
-      ts: a.ts, source: a.source, type: a.type, outcome: a.outcome,
-      note: (a.body || '').replace(/\s+/g, ' ').slice(0, 160),
-    })),
-    latest_analysis: c.latestAnalysis
-      ? {
-          health: c.latestAnalysis.health, priority: c.latestAnalysis.priority,
-          status: c.latestAnalysis.status_label, blockers: c.latestAnalysis.blockers,
-          next_action: c.latestAnalysis.next_action, at: c.latestAnalysis.created_at,
-        }
-      : null,
-  }
-}
-
-async function runTool(name, input) {
-  if (name === 'search_deals') {
-    const rows = await searchDeals(String(input.query ?? ''))
-    return rows.length ? rows : 'no matching deals — try a different spelling or list_active_deals'
-  }
-  if (name === 'list_active_deals') {
-    const rows = await listQueue(40)
-    return rows.map((r) => ({ hubspot_id: r.hubspot_id, name: r.name, stage: r.stage, amount: r.amount }))
-  }
-  if (name === 'get_case') {
-    return compactCase(await getCase(String(input.deal_id ?? '')))
-  }
-  if (name === 'get_sent_emails') {
-    const lim = Math.min(Math.max(Number(input.limit) || 20, 1), 40)
-    const rows = await getSentEmails(lim)
-    return rows.length
-      ? rows.map((r) => ({
-          date: r.ts, subject: r.subject, to: r.recipient,
-          body: (r.body || '').replace(/\s+/g, ' ').trim(),
-        }))
-      : 'no sent emails with full body stored yet'
-  }
-  return `unknown tool: ${name}`
 }
 
 // Per-channel rolling history (final text only) for continuity. In-memory; resets on restart.
@@ -155,17 +83,51 @@ async function logUsage(entry) {
   }
 }
 
-// Returns { text, model, usage, costUSD }.
+function buildSystem(model, activeSkills, loadableSkills) {
+  const playbooks = activeSkills.flatMap((s) => (s.playbook ? [`[${s.name}] ${s.playbook}`] : []))
+  const parts = [SYSTEM_BASE]
+  if (playbooks.length) parts.push('Active skill playbooks:\n' + playbooks.join('\n'))
+  if (loadableSkills.length) {
+    parts.push('Other skills you can load with load_skill if needed:\n' + skillMenu(loadableSkills))
+  }
+  parts.push(`You are currently running on the ${model} model. If Mo asks what model you're using, tell him honestly.`)
+  return parts.join('\n\n')
+}
+
+// Returns { text, model, usage, costUSD, skills }.
 export async function chat(channelId, userText) {
   const model = pickModel(userText)
-  const system = `${SYSTEM}\n\nYou are currently running on the ${model} model. If Mo asks what model you're using, tell him honestly.`
-  const messages = [...getHistory(channelId), { role: 'user', content: userText }]
   const usage = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 }
+  const addUsage = (u) => { if (u) for (const k of Object.keys(usage)) usage[k] += u[k] || 0 }
+
+  // 1. Which skills are enabled (Mo's persisted on/off), split into always-on + routable.
+  const enabled = await getEnabledSkills()
+  const alwaysOn = alwaysOnSkills(enabled)
+  const routable = enabled.filter((s) => !s.alwaysOn)
+
+  // 2. Cheap router picks the relevant routable skills for this message.
+  const routed = await routeSkills(userText, routable)
+  addUsage(routed.usage)
+  const selectedNames = new Set(routed.names)
+
+  // 3. Active set = always-on + router-selected. The rest stay loadable via load_skill.
+  const active = [...alwaysOn, ...routable.filter((s) => selectedNames.has(s.name))]
+  const activeNames = new Set(active.map((s) => s.name))
+  const loadable = enabled.filter((s) => !activeNames.has(s.name))
+
+  let { tools, handlers } = assembleTools(active)
+  const loadedNames = new Set(active.map((s) => s.name))
+
+  const messages = [...getHistory(channelId), { role: 'user', content: userText }]
   let finalText = '(no response)'
 
   for (let i = 0; i < 6; i++) {
-    const res = await anthropic().messages.create({ model, max_tokens: 1500, system, tools, messages })
-    for (const k of Object.keys(usage)) usage[k] += res.usage?.[k] || 0
+    const loadableNow = enabled.filter((s) => !loadedNames.has(s.name))
+    const allTools = loadableNow.length ? [...tools, LOAD_SKILL_TOOL] : tools
+    const system = buildSystem(model, active, loadableNow)
+
+    const res = await anthropic().messages.create({ model, max_tokens: 1500, system, tools: allTools, messages })
+    addUsage(res.usage)
 
     if (res.stop_reason === 'tool_use') {
       messages.push({ role: 'assistant', content: res.content })
@@ -174,7 +136,23 @@ export async function chat(channelId, userText) {
         if (block.type !== 'tool_use') continue
         let out
         try {
-          out = await runTool(block.name, block.input || {})
+          if (block.name === 'load_skill') {
+            const skill = getSkill(String(block.input?.skill ?? ''))
+            if (skill && enabled.includes(skill) && !loadedNames.has(skill.name)) {
+              const merged = assembleTools([skill])
+              tools = [...tools, ...merged.tools]
+              Object.assign(handlers, merged.handlers)
+              active.push(skill)
+              loadedNames.add(skill.name)
+              out = `loaded skill "${skill.name}" — now available: ${merged.tools.map((t) => t.name).join(', ')}`
+            } else {
+              out = `cannot load skill "${block.input?.skill}" (unknown or disabled)`
+            }
+          } else if (handlers[block.name]) {
+            out = await handlers[block.name](block.input || {})
+          } else {
+            out = `unknown tool: ${block.name}`
+          }
         } catch (e) {
           out = `error: ${e.message}`
         }
@@ -196,11 +174,12 @@ export async function chat(channelId, userText) {
   pushHistory(channelId, 'assistant', finalText)
 
   const costUSD = estimateCostUSD(model, usage)
+  const skillsUsed = [...loadedNames]
   await logUsage({
-    ts: new Date().toISOString(), channel: channelId, model,
+    ts: new Date().toISOString(), channel: channelId, model, skills: skillsUsed,
     in: usage.input_tokens, out: usage.output_tokens,
     cache_read: usage.cache_read_input_tokens, cost: costUSD,
   })
 
-  return { text: finalText, model, usage, costUSD }
+  return { text: finalText, model, usage, costUSD, skills: skillsUsed }
 }

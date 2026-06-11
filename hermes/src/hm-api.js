@@ -52,6 +52,11 @@ export const verifyDealDocs = (dealId) => req('POST', `/api/deals/${dealId}/driv
 // Morning briefing as plain text (non-streamed) for posting to Discord.
 export const getDigest = () => req('POST', '/api/digest', {})
 
+// Full attention queue (the dashboard's rules engine output): action buckets
+// (follow_up / move_close / call_today / ready_work / snoozed), per-deal flags, stageMap,
+// pipelineStats. The single correct source for outreach planning — no rule logic duplicated.
+export const getAttentionQueue = () => req('GET', '/api/deals', {})
+
 // One workflow run = one correlationId across all its writes.
 export function newWorkflow(correlationId = `hermes:${randomUUID()}`) {
   return {

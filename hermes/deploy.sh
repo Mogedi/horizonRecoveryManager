@@ -7,6 +7,8 @@ HOST="${HERMES_VPS:?set HERMES_VPS=mo@<vps-ip>}"
 KEY="${HERMES_SSH_KEY:-$HOME/.ssh/hermes_vps}"
 DIR="$(cd "$(dirname "$0")" && pwd)"
 
-rsync -az --exclude node_modules --exclude .env -e "ssh -i $KEY" "$DIR/" "$HOST:hermes/"
+# Exclude data/ — Hermes's local runtime state (skill on/off) lives on the VPS and must not be
+# clobbered by a deploy from a dev machine.
+rsync -az --exclude node_modules --exclude .env --exclude data -e "ssh -i $KEY" "$DIR/" "$HOST:hermes/"
 ssh -i "$KEY" "$HOST" 'cd ~/hermes && npm install --no-audit --no-fund >/dev/null && pm2 restart hermes-bot --update-env'
 echo "✓ deployed to $HOST and restarted hermes-bot"

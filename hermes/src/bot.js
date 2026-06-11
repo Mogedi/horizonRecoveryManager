@@ -13,6 +13,7 @@ import { triage } from './triage.js'
 import { newWorkflow } from './hm-api.js'
 import { chat } from './chat.js'
 import { startSchedules, runAllSyncs } from './schedules.js'
+import { skillStatus, setSkillEnabled, getSkill } from './skills/registry.js'
 
 const TOKEN = process.env.DISCORD_BOT_TOKEN
 if (!TOKEN) { console.error('DISCORD_BOT_TOKEN not set'); process.exit(1) }
@@ -30,6 +31,13 @@ const commands = [
     .addStringOption(o => o.setName('deal').setDescription('HubSpot deal ID').setRequired(true)),
   new SlashCommandBuilder().setName('sync-all')
     .setDescription('Run all scheduled syncs now, back-to-back (JustCall, Gmail, Drive, new-case Layer 2)'),
+  new SlashCommandBuilder().setName('skills')
+    .setDescription('List Hermes skills and whether each is on or off'),
+  new SlashCommandBuilder().setName('skill').setDescription('Turn a Hermes skill on or off')
+    .addSubcommand(sc => sc.setName('enable').setDescription('Turn a skill on')
+      .addStringOption(o => o.setName('name').setDescription('skill name (see /skills)').setRequired(true)))
+    .addSubcommand(sc => sc.setName('disable').setDescription('Turn a skill off')
+      .addStringOption(o => o.setName('name').setDescription('skill name (see /skills)').setRequired(true))),
 ]
 
 const client = new Client({
@@ -117,6 +125,26 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return `${r.ok ? '✅' : '❌'} **${r.name}** — ${detail}`
         })
         await interaction.editReply('**Sync complete:**\n' + lines.join('\n'))
+
+      } else if (interaction.commandName === 'skills') {
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral })
+        const list = await skillStatus()
+        const body = list.map(s =>
+          `${s.enabled ? '🟢' : '⚪'} **${s.name}**${s.writes ? ' ✍️' : ''} — ${s.description}`
+        ).join('\n')
+        await interaction.editReply({ embeds: [new EmbedBuilder()
+          .setTitle('Hermes skills').setDescription(body.slice(0, 4000))
+          .setFooter({ text: '🟢 on · ⚪ off · ✍️ can write. Toggle with /skill enable|disable.' })] })
+
+      } else if (interaction.commandName === 'skill') {
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral })
+        const sub = interaction.options.getSubcommand()
+        const name = interaction.options.getString('name', true)
+        if (!getSkill(name)) {
+          await interaction.editReply(`Unknown skill \`${name}\`. Run /skills to see names.`); return
+        }
+        await setSkillEnabled(name, sub === 'enable')
+        await interaction.editReply(`${sub === 'enable' ? '🟢 Enabled' : '⚪ Disabled'} **${name}**.`)
       }
 
     } else if (interaction.isButton()) {

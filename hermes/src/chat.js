@@ -8,6 +8,7 @@ import {
   getEnabledSkills, alwaysOnSkills, assembleTools, skillMenu, getSkill,
 } from './skills/registry.js'
 import { routeSkills } from './skills/router.js'
+import { recall } from './memory.js'
 
 // $ per 1M tokens (input / output). Used for rough per-message cost estimates.
 const PRICING = {
@@ -48,6 +49,10 @@ const SYSTEM_BASE =
   'NEVER tell Mo to run a slash command to get information. Be concise and practical.\n\n' +
   'If a message from Mo contains action items or things he needs to do, proactively offer to capture them ' +
   'as tasks (load the task-manager skill if it isn\'t active) — list what you\'d add and let him confirm.\n\n' +
+  'If a request is ambiguous, underspecified, or could be destructive/irreversible, ask ONE brief ' +
+  'clarifying question before acting rather than guessing.\n\n' +
+  'You have long-term memory: when Mo states a durable preference or fact worth keeping, save it with the ' +
+  'memory skill. Relevant memories are provided to you automatically below.\n\n' +
   'You read facts and AI interpretation; you never touch HubSpot or business facts directly and never ' +
   'move money. To WRITE a triage analysis, Mo uses /triage (Apply-to-confirm) — you can summarize a case ' +
   'and what you would conclude, but you do not write.'
@@ -85,9 +90,12 @@ async function logUsage(entry) {
   }
 }
 
-function buildSystem(model, activeSkills, loadableSkills) {
+function buildSystem(model, activeSkills, loadableSkills, memories) {
   const playbooks = activeSkills.flatMap((s) => (s.playbook ? [`[${s.name}] ${s.playbook}`] : []))
   const parts = [SYSTEM_BASE]
+  if (memories?.length) {
+    parts.push('What you remember about Mo (long-term memory):\n' + memories.map((m) => `- ${m.content}`).join('\n'))
+  }
   if (playbooks.length) parts.push('Active skill playbooks:\n' + playbooks.join('\n'))
   if (loadableSkills.length) {
     parts.push('Other skills you can load with load_skill if needed:\n' + skillMenu(loadableSkills))
@@ -97,8 +105,11 @@ function buildSystem(model, activeSkills, loadableSkills) {
 }
 
 // Returns { text, model, usage, costUSD, skills }.
-export async function chat(channelId, userText) {
+// images: optional array of public image URLs (e.g. Discord attachments) — Hermes sees them natively.
+export async function chat(channelId, userText, images = []) {
   const model = pickModel(userText)
+  // Passive recall: surface relevant long-term memories into context every turn.
+  const memories = await recall(userText, 8).catch(() => [])
   const usage = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 }
   const addUsage = (u) => { if (u) for (const k of Object.keys(usage)) usage[k] += u[k] || 0 }
 
@@ -121,13 +132,19 @@ export async function chat(channelId, userText) {
   const loadedNames = new Set(active.map((s) => s.name))
   let searchCount = 0
 
-  const messages = [...getHistory(channelId), { role: 'user', content: userText }]
+  // Vision: attach image URLs (Discord attachments) so Claude sees them natively in this turn.
+  const imageBlocks = (images || [])
+    .filter((u) => typeof u === 'string')
+    .slice(0, 6)
+    .map((url) => ({ type: 'image', source: { type: 'url', url } }))
+  const userContent = imageBlocks.length ? [...imageBlocks, { type: 'text', text: userText }] : userText
+  const messages = [...getHistory(channelId), { role: 'user', content: userContent }]
   let finalText = '(no response)'
 
   for (let i = 0; i < 8; i++) {
     const loadableNow = enabled.filter((s) => !loadedNames.has(s.name))
     const allTools = [...tools, ...serverTools, ...(loadableNow.length ? [LOAD_SKILL_TOOL] : [])]
-    const system = buildSystem(model, active, loadableNow)
+    const system = buildSystem(model, active, loadableNow, memories)
 
     const res = await anthropic().messages.create({ model, max_tokens: 1500, system, tools: allTools, messages })
     addUsage(res.usage)

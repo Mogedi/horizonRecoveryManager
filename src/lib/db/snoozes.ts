@@ -22,11 +22,16 @@ export async function getSnoozeHistory(hubspotId: string) {
   })
 }
 
+export async function getSnoozeByIdempotencyKey(idempotencyKey: string) {
+  return prisma.dealSnooze.findUnique({ where: { idempotencyKey } })
+}
+
 export async function createSnooze(
   hubspotId: string,
   category: SnoozeCategory,
   snoozeUntil: Date,
-  freeformNote?: string
+  freeformNote?: string,
+  idempotencyKey?: string | null
 ) {
   const today = new Date()
   // Deactivate any existing active snooze
@@ -35,7 +40,13 @@ export async function createSnooze(
     data: { wokeAt: new Date() },
   })
   return prisma.dealSnooze.create({
-    data: { dealHubspotId: hubspotId, category, snoozeUntil, freeformNote: freeformNote ?? null },
+    data: {
+      dealHubspotId: hubspotId,
+      category,
+      snoozeUntil,
+      freeformNote: freeformNote ?? null,
+      idempotencyKey: idempotencyKey ?? null,
+    },
   })
 }
 

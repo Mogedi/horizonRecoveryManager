@@ -9,6 +9,7 @@ vi.mock('@/lib/db/activities', () => ({ getActivitiesForDeal: vi.fn().mockResolv
 vi.mock('@/lib/db/activity-events', () => ({ getActivityEvents: vi.fn().mockResolvedValue([]) }))
 vi.mock('@/lib/db/contacts', () => ({ getContactsForDeal: vi.fn().mockResolvedValue([]) }))
 vi.mock('@/lib/db/summaries', () => ({ getLatestSummary: vi.fn().mockResolvedValue(null) }))
+vi.mock('@/lib/db/case-analysis', () => ({ getLatestAnalysis: vi.fn().mockResolvedValue(null) }))
 vi.mock('@/lib/db/tasks', () => ({ getOpenTaskCountForDeal: vi.fn().mockResolvedValue(0) }))
 vi.mock('@/lib/db/settings', () => ({ loadOwnerMap: vi.fn().mockResolvedValue({}) }))
 vi.mock('@/lib/logger', () => ({ log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }))
@@ -16,10 +17,12 @@ vi.mock('@/lib/logger', () => ({ log: { info: vi.fn(), warn: vi.fn(), error: vi.
 import { GET } from './route'
 import { getActivitiesForDeal } from '@/lib/db/activities'
 import { getLatestSummary } from '@/lib/db/summaries'
+import { getLatestAnalysis } from '@/lib/db/case-analysis'
 import { getOpenTaskCountForDeal } from '@/lib/db/tasks'
 
 const mockGetActivities = vi.mocked(getActivitiesForDeal)
 const mockGetSummary = vi.mocked(getLatestSummary)
+const mockGetAnalysis = vi.mocked(getLatestAnalysis)
 const mockGetTaskCount = vi.mocked(getOpenTaskCountForDeal)
 
 function makeRequest(dealId = 'deal-123') {
@@ -81,6 +84,28 @@ describe('GET /api/deals/[id]/story', () => {
     expect(json.currentState.health).toBe('waiting')
     expect(json.currentState.blocker).toBe('Attorney not yet responded')
     expect(json.currentState.nextAction).toBe('Follow up Thursday')
+  })
+
+  it('prefers the latest case_analysis over the summary for currentState', async () => {
+    mockGetSummary.mockResolvedValue({
+      summaryJson: { current_status: 'STALE summary', last_meaningful_activity: '', blockers: ['old'], suggested_next_step: 'old step', who_needs_something: null, mo_action_required: false, documents_mentioned_missing: [] },
+      generatedAt: new Date('2026-01-01T00:00:00Z'),
+    } as Awaited<ReturnType<typeof mockGetSummary>>)
+    mockGetAnalysis.mockResolvedValue({
+      health: 'blocked',
+      statusLabel: 'Blocked on probate',
+      blockers: ['Estate not opened'],
+      nextAction: 'Open estate',
+      lastMeaningfulActivity: 'Attorney call Jun 9',
+      createdAt: new Date('2026-06-09T12:00:00Z'),
+      source: 'agent',
+    } as Awaited<ReturnType<typeof mockGetAnalysis>>)
+    const res = await GET(makeRequest(), { params: Promise.resolve({ id: 'deal-123' }) })
+    const json = await res.json()
+    expect(json.currentState.status).toBe('Blocked on probate')
+    expect(json.currentState.health).toBe('blocked')
+    expect(json.currentState.blocker).toBe('Estate not opened')
+    expect(json.currentState.source).toBe('ai')
   })
 
   it('reflects openTaskCount in currentState', async () => {

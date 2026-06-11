@@ -49,6 +49,37 @@ enum TaskStatus {
   done
 }
 
+// Phase 1 (Hermes): AI-interpretation layer enums.
+// case_analysis is append-only; agents INSERT rows, never overwrite.
+enum AnalysisType {
+  triage
+  priority
+  legal_review
+  document_review
+  attorney_recommendation
+}
+
+enum AnalysisSource {
+  agent // produced by an automated agent (Hermes, the manual summary button, future Opus/Qwen/Gemini)
+  human // produced/edited by Mo
+}
+
+// Mirrors CaseHealthStatus in src/lib/case/types.ts — keep the two in sync.
+enum CaseHealth {
+  active
+  waiting
+  blocked
+  on_track
+  unknown
+}
+
+enum CasePriority {
+  urgent
+  high
+  normal
+  low
+}
+
 // Layer 1 cache — all deals in the pipeline
 model Deal {
   id               Int       @id @default(autoincrement())
@@ -100,6 +131,7 @@ model Deal {
   contacts       DealContact[]
   snoozes        DealSnooze[]
   aiSummary      AiSummary?
+  caseAnalyses   CaseAnalysis[]   // Phase 1 (Hermes) — append-only AI interpretation
   tasks          InternalTask[]
   activityEvents ActivityEvent[]  // M9+
   phoneNumbers   PhoneNumber[]    // M9+
@@ -159,6 +191,7 @@ model DealSnooze {
   snoozeUntil   DateTime       @map("snooze_until") @db.Date
   createdAt     DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
   wokeAt        DateTime?      @map("woke_at") @db.Timestamptz(6)
+  idempotencyKey String?       @unique @map("idempotency_key") // agent retry-dedup; null for UI snoozes
 
   deal Deal @relation(fields: [dealHubspotId], references: [hubspotId])
 
@@ -190,6 +223,65 @@ model AiSummary {
   @@map("ai_summaries")
 }
 
+// Phase 1 (Hermes): append-only AI-interpretation layer.
+// Every agent run INSERTs a new row — never an update. CurrentState derives from the latest
+// `triage` row (with ai_summaries fallback). Business facts are NEVER written here.
+// source/actor/provider/model are split so future agents (Opus, Qwen, Gemini) stay distinguishable.
+model CaseAnalysis {
+  id                   Int            @id @default(autoincrement())
+  dealHubspotId        String         @map("deal_hubspot_id")
+  analysisType         AnalysisType   @default(triage) @map("analysis_type")
+  source               AnalysisSource
+  actor                String         // 'hermes' | 'manual-button' | 'mo'
+  provider             String?        // 'anthropic' | 'ollama' | null
+  model                String?        // 'claude-sonnet-4-6', etc.
+  health               CaseHealth     @default(unknown)
+  priority             CasePriority   @default(normal)
+  statusLabel          String?        @map("status_label")        // freeform "Waiting on County Attorney" → CurrentState.status
+  blockers             Json           @default("[]")              // string[]
+  recommendations      Json           @default("[]")              // string[]
+  risks                Json           @default("[]")              // string[]
+  nextAction           String?        @map("next_action")
+  lastMeaningfulActivity String?      @map("last_meaningful_activity")
+  moActionRequired     Boolean        @default(false) @map("mo_action_required")
+  confidence           Float?         // 0..1
+  reasoning            String?        @db.Text
+  generatedFrom        String?        @map("generated_from")      // what inputs fed the analysis
+  inputHash            String?        @map("input_hash")          // hash of the facts — skip-if-unchanged
+  supersedesAnalysisId Int?           @map("supersedes_analysis_id") // future approved-analysis chains (soft pointer)
+  correlationId        String?        @map("correlation_id")      // ties one workflow's writes together
+  idempotencyKey       String?        @unique @map("idempotency_key")
+  rawPayload           Json?          @map("raw_payload")         // full agent output
+  createdAt            DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  deal Deal @relation(fields: [dealHubspotId], references: [hubspotId], onDelete: Cascade)
+
+  @@index([dealHubspotId, analysisType, createdAt])
+  @@index([correlationId])
+  @@map("case_analyses")
+}
+
+// Phase 1 (Hermes): audit trail for agent-originated writes — the safety net that replaces
+// the per-write manual review. One row per agent mutation, with full before/after payloads.
+model AgentAuditLog {
+  id             Int      @id @default(autoincrement())
+  actor          String   // 'hermes'
+  action         String   // 'create_analysis' | 'create_task' | 'complete_task' | 'delete_task' | 'snooze' | 'unsnooze'
+  target         String?  // dealHubspotId or task id
+  route          String?
+  method         String?
+  correlationId  String?  @map("correlation_id")
+  idempotencyKey String?  @map("idempotency_key")
+  requestMeta    Json?    @map("request_meta") // { ip, userAgent, requestId }
+  before         Json?
+  after          Json?
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([actor, createdAt])
+  @@index([correlationId])
+  @@map("agent_audit_log")
+}
+
 // Internal tasks — replaces Trello; case-linked or general business tasks
 model InternalTask {
   id            Int          @id @default(autoincrement())
@@ -199,7 +291,8 @@ model InternalTask {
   status        TaskStatus   @default(open)
   dueDate       DateTime?    @map("due_date") @db.Date
   category      TaskCategory
-  source        String       @default("manual") @map("source") // always 'manual' in v1
+  source        String       @default("manual") @map("source") // 'manual' (UI) | 'hermes' (agent)
+  idempotencyKey String?     @unique @map("idempotency_key") // agent retry-dedup; null for UI tasks
   createdAt     DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   completedAt   DateTime?    @map("completed_at") @db.Timestamptz(6)
 

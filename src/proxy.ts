@@ -18,6 +18,16 @@ export async function proxy(request: NextRequest) {
     }
   }
 
+  // Hermes agent requests carry Authorization: Bearer <HERMES_TOKEN> (no session cookie).
+  // Same pattern — the route handler re-verifies and enforces the kill switch before writing.
+  const hermesToken = process.env.HERMES_TOKEN
+  if (hermesToken) {
+    const authHeader = request.headers.get('authorization')
+    if (authHeader === `Bearer ${hermesToken}`) {
+      return NextResponse.next()
+    }
+  }
+
   const sessionToken = request.cookies.get(SESSION_COOKIE)?.value
   if (!sessionToken || !(await verifySessionToken(sessionToken))) {
     return NextResponse.redirect(new URL('/login', request.url))

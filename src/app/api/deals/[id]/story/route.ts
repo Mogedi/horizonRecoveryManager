@@ -4,11 +4,14 @@ import { getActivitiesForDeal } from '@/lib/db/activities'
 import { getActivityEvents } from '@/lib/db/activity-events'
 import { getContactsForDeal } from '@/lib/db/contacts'
 import { getLatestSummary } from '@/lib/db/summaries'
+import { getLatestAnalysis } from '@/lib/db/case-analysis'
 import { getOpenTaskCountForDeal } from '@/lib/db/tasks'
 import { loadOwnerMap } from '@/lib/db/settings'
 import { buildCaseEvents } from '@/lib/case/events'
 import { buildStoryDays } from '@/lib/case/story'
 import { buildCurrentState } from '@/lib/case/state'
+import type { AnalysisStateInput } from '@/lib/case/state'
+import type { CaseHealthStatus } from '@/lib/case/types'
 
 export async function GET(
   _req: NextRequest,
@@ -18,19 +21,33 @@ export async function GET(
 
   const { id } = await params
 
-  const [activities, activityEvents, contacts, summary, ownerMap, openTaskCount] =
+  const [activities, activityEvents, contacts, summary, latestAnalysis, ownerMap, openTaskCount] =
     await Promise.all([
       getActivitiesForDeal(id),
       getActivityEvents(id),
       getContactsForDeal(id),
       getLatestSummary(id),
+      getLatestAnalysis(id),
       loadOwnerMap(),
       getOpenTaskCountForDeal(id),
     ])
 
+  // Prefer the latest triage analysis (AI-interpretation layer); fall back to ai_summaries.
+  const analysisState: AnalysisStateInput = latestAnalysis
+    ? {
+        health: latestAnalysis.health as CaseHealthStatus,
+        statusLabel: latestAnalysis.statusLabel,
+        blockers: latestAnalysis.blockers,
+        nextAction: latestAnalysis.nextAction,
+        lastMeaningfulActivity: latestAnalysis.lastMeaningfulActivity,
+        createdAt: latestAnalysis.createdAt,
+        source: latestAnalysis.source,
+      }
+    : null
+
   const events = buildCaseEvents(activities, activityEvents, contacts, ownerMap)
   const days = buildStoryDays(events)
-  const currentState = buildCurrentState(summary, openTaskCount)
+  const currentState = buildCurrentState(analysisState, summary, openTaskCount)
 
   return NextResponse.json({
     days: days.map(day => ({

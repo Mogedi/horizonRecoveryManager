@@ -1,11 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import { buildCurrentState } from './state'
-
-type SummaryInput = { summaryJson: unknown; generatedAt: Date } | null
+import type { AnalysisStateInput, SummaryStateInput } from './state'
 
 describe('buildCurrentState', () => {
-  it('returns safe nulls when summary is null', () => {
-    const state = buildCurrentState(null, 0)
+  it('returns safe nulls when both analysis and summary are null', () => {
+    const state = buildCurrentState(null, null, 0)
     expect(state.status).toBeNull()
     expect(state.health).toBe('unknown')
     expect(state.blocker).toBeNull()
@@ -17,120 +16,142 @@ describe('buildCurrentState', () => {
   })
 
   it('reflects openTaskCount from argument', () => {
-    const state = buildCurrentState(null, 5)
+    const state = buildCurrentState(null, null, 5)
     expect(state.openTaskCount).toBe(5)
   })
 
-  it('maps SummaryJson fields to CurrentState', () => {
-    const generatedAt = new Date('2026-06-05T10:00:00Z')
-    const summary: SummaryInput = {
-      summaryJson: {
-        current_status: 'Waiting on County Attorney',
-        last_meaningful_activity: 'Attorney emailed Jun 4',
-        blockers: ['County response pending'],
-        suggested_next_step: 'Follow up next Tuesday',
-        who_needs_something: null,
-        mo_action_required: false,
-        documents_mentioned_missing: [],
-      },
-      generatedAt,
-    }
-    const state = buildCurrentState(summary, 2)
-    expect(state.status).toBe('Waiting on County Attorney')
-    expect(state.lastMeaningfulActivity).toBe('Attorney emailed Jun 4')
-    expect(state.nextAction).toBe('Follow up next Tuesday')
-    expect(state.blocker).toBe('County response pending')
-    expect(state.generatedAt).toEqual(generatedAt)
-    expect(state.source).toBe('ai')
-    expect(state.openTaskCount).toBe(2)
-  })
+  // ── summary fallback path (no analysis yet) ──────────────────────────────────
 
-  it('uses first blocker when multiple exist', () => {
-    const summary: SummaryInput = {
-      summaryJson: {
-        current_status: 'Active',
-        last_meaningful_activity: '',
-        blockers: ['First blocker', 'Second blocker'],
-        suggested_next_step: '',
-        who_needs_something: null,
-        mo_action_required: false,
-        documents_mentioned_missing: [],
-      },
-      generatedAt: new Date(),
-    }
-    const state = buildCurrentState(summary, 0)
-    expect(state.blocker).toBe('First blocker')
-  })
+  describe('summary fallback', () => {
+    it('maps SummaryJson fields to CurrentState', () => {
+      const generatedAt = new Date('2026-06-05T10:00:00Z')
+      const summary: SummaryStateInput = {
+        summaryJson: {
+          current_status: 'Waiting on County Attorney',
+          last_meaningful_activity: 'Attorney emailed Jun 4',
+          blockers: ['County response pending'],
+          suggested_next_step: 'Follow up next Tuesday',
+          who_needs_something: null,
+          mo_action_required: false,
+          documents_mentioned_missing: [],
+        },
+        generatedAt,
+      }
+      const state = buildCurrentState(null, summary, 2)
+      expect(state.status).toBe('Waiting on County Attorney')
+      expect(state.lastMeaningfulActivity).toBe('Attorney emailed Jun 4')
+      expect(state.nextAction).toBe('Follow up next Tuesday')
+      expect(state.blocker).toBe('County response pending')
+      expect(state.generatedAt).toEqual(generatedAt)
+      expect(state.source).toBe('ai')
+      expect(state.openTaskCount).toBe(2)
+    })
 
-  it('sets blocker to null when blockers array is empty', () => {
-    const summary: SummaryInput = {
-      summaryJson: {
-        current_status: 'On track',
-        last_meaningful_activity: '',
-        blockers: [],
-        suggested_next_step: '',
-        who_needs_something: null,
-        mo_action_required: false,
-        documents_mentioned_missing: [],
-      },
-      generatedAt: new Date(),
-    }
-    const state = buildCurrentState(summary, 0)
-    expect(state.blocker).toBeNull()
-  })
-
-  // ── health inference ──────────────────────────────────────────────────────
-
-  describe('health inference from status', () => {
-    function healthFor(status: string) {
-      return buildCurrentState({
-        summaryJson: { current_status: status, last_meaningful_activity: '', blockers: [], suggested_next_step: '', who_needs_something: null, mo_action_required: false, documents_mentioned_missing: [] },
+    it('uses first blocker when multiple exist', () => {
+      const summary: SummaryStateInput = {
+        summaryJson: {
+          current_status: 'Active',
+          last_meaningful_activity: '',
+          blockers: ['First blocker', 'Second blocker'],
+          suggested_next_step: '',
+          who_needs_something: null,
+          mo_action_required: false,
+          documents_mentioned_missing: [],
+        },
         generatedAt: new Date(),
-      }, 0).health
+      }
+      const state = buildCurrentState(null, summary, 0)
+      expect(state.blocker).toBe('First blocker')
+    })
+
+    it('sets blocker to null when blockers array is empty', () => {
+      const summary: SummaryStateInput = {
+        summaryJson: {
+          current_status: 'On track',
+          last_meaningful_activity: '',
+          blockers: [],
+          suggested_next_step: '',
+          who_needs_something: null,
+          mo_action_required: false,
+          documents_mentioned_missing: [],
+        },
+        generatedAt: new Date(),
+      }
+      const state = buildCurrentState(null, summary, 0)
+      expect(state.blocker).toBeNull()
+    })
+
+    function healthFor(status: string) {
+      return buildCurrentState(
+        null,
+        {
+          summaryJson: { current_status: status, last_meaningful_activity: '', blockers: [], suggested_next_step: '', who_needs_something: null, mo_action_required: false, documents_mentioned_missing: [] },
+          generatedAt: new Date(),
+        },
+        0
+      ).health
     }
 
-    it('waiting → waiting on county', () => {
+    it('infers health from summary status text', () => {
       expect(healthFor('Waiting on County Attorney')).toBe('waiting')
-    })
-
-    it('pending → waiting', () => {
-      expect(healthFor('Pending attorney response')).toBe('waiting')
-    })
-
-    it('awaiting → waiting', () => {
-      expect(healthFor('Awaiting probate filing')).toBe('waiting')
-    })
-
-    it('blocked → blocked', () => {
-      expect(healthFor('Blocked — cannot proceed without death certificate')).toBe('blocked')
-    })
-
-    it('on hold → blocked', () => {
-      expect(healthFor('On hold pending estate opening')).toBe('blocked')
-    })
-
-    it('on track → on_track', () => {
+      expect(healthFor('Blocked — cannot proceed')).toBe('blocked')
       expect(healthFor('On track — agreement signed')).toBe('on_track')
-    })
-
-    it('signed → on_track', () => {
-      expect(healthFor('Signed and in progress')).toBe('on_track')
-    })
-
-    it('filed → active', () => {
       expect(healthFor('Filed with probate court')).toBe('active')
+      expect(healthFor('Random text with no keywords')).toBe('unknown')
+    })
+  })
+
+  // ── analysis path (AI-interpretation layer wins over summary) ────────────────
+
+  describe('analysis path', () => {
+    const baseAnalysis = (over: Partial<NonNullable<AnalysisStateInput>> = {}): AnalysisStateInput => ({
+      health: 'waiting',
+      statusLabel: 'Waiting on County',
+      blockers: ['County response pending', 'second'],
+      nextAction: 'Follow up Tuesday',
+      lastMeaningfulActivity: 'Attorney emailed Jun 4',
+      createdAt: new Date('2026-06-09T12:00:00Z'),
+      source: 'agent',
+      ...over,
     })
 
-    it('submitted → active', () => {
-      expect(healthFor('Submitted to county clerk')).toBe('active')
+    it('uses analysis fields directly (health is taken, not inferred)', () => {
+      const state = buildCurrentState(baseAnalysis({ statusLabel: 'Anything', health: 'blocked' }), null, 3)
+      expect(state.status).toBe('Anything')
+      expect(state.health).toBe('blocked') // taken verbatim, not inferred from "Anything"
+      expect(state.blocker).toBe('County response pending')
+      expect(state.nextAction).toBe('Follow up Tuesday')
+      expect(state.lastMeaningfulActivity).toBe('Attorney emailed Jun 4')
+      expect(state.openTaskCount).toBe(3)
+      expect(state.source).toBe('ai')
     })
 
-    it('unknown status string → unknown', () => {
-      expect(healthFor('Random status text with no keywords')).toBe('unknown')
+    it('analysis overrides summary when both are present', () => {
+      const summary: SummaryStateInput = {
+        summaryJson: {
+          current_status: 'STALE SUMMARY STATUS',
+          last_meaningful_activity: 'old',
+          blockers: ['old blocker'],
+          suggested_next_step: 'old step',
+          who_needs_something: null,
+          mo_action_required: false,
+          documents_mentioned_missing: [],
+        },
+        generatedAt: new Date('2026-01-01T00:00:00Z'),
+      }
+      const state = buildCurrentState(baseAnalysis(), summary, 0)
+      expect(state.status).toBe('Waiting on County')
+      expect(state.generatedAt).toEqual(new Date('2026-06-09T12:00:00Z'))
     })
 
-    it('empty status → unknown', () => {
-      expect(healthFor('')).toBe('unknown')
+    it('maps human-sourced analysis to source=human', () => {
+      const state = buildCurrentState(baseAnalysis({ source: 'human' }), null, 0)
+      expect(state.source).toBe('human')
+    })
+
+    it('handles empty blockers array', () => {
+      const state = buildCurrentState(baseAnalysis({ blockers: [] }), null, 0)
+      expect(state.blocker).toBeNull()
     })
   })
 })

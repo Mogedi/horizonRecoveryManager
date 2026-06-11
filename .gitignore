@@ -50,3 +50,6 @@ next-env.d.ts
 
 # Local court-scraping run artifacts (large, not app code)
 gsccca_runs/
+
+# Hermes tools — local deps (its own package on the VPS)
+hermes/node_modules

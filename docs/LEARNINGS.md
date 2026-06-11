@@ -215,3 +215,21 @@ Next.js processes `.env.local` through `@next/env` which uses `[\w]+` (includes 
 
 **"Follow-Up Needed" has a trailing space in `pipeline-stages.json`.**
 The raw HubSpot API response for stage label `3477730038` is `"Follow-Up Needed "` (trailing space). The seed script correctly calls `.trim()` before storing to `app_settings`, so the DB has clean values. Direct readers of the raw fixture will see the space — don't compare against raw fixture data without trimming. Verified by test in `settings.test.ts`.
+
+---
+
+## Phase 1 (Hermes): Agent Integration
+
+**Facts vs. interpretation are now separate layers.**
+Business facts (deals, contacts, activities, calls, emails, tasks, snoozes) are owned by sync and are NEVER written by any AI agent. AI interpretation (status, health, priority, blockers, next actions, risks) lives in a new **append-only `case_analyses` table**. Every agent run INSERTs a new, source-tagged row — no overwrites. `CurrentState` (`src/lib/case/state.ts`) derives from the latest `triage` analysis, falling back to `ai_summaries` when none exists. `ai_summaries` is demoted to a human-facing rendered summary; it is no longer the operational source of truth. This enables regenerate / compare-agents / rollback without ever touching business data.
+
+**`prisma migrate dev` wants to RESET this database — never run it. Use `db push`.**
+The Neon dev DB was built with `prisma db push`, so the `_prisma_migrations` table is stale (4 migrations show "not yet applied" though their changes are already live). `migrate dev` therefore detects drift and proposes a destructive reset (drops all 150 deals + history). The real workflow is `npm run db:push`. Adding a `@unique` on a new nullable column (e.g. `idempotency_key`) makes `db push` warn about data loss — it is a false alarm (Postgres allows multiple NULLs in a unique index), but it requires `--accept-data-loss`. That flag is gated to Mo.
+
+**Relaxed invariants (Hermes only), documented so a future session does not "fix" them.**
+- AI interpretation may now be agent-written (was "summaries never auto-generated, manual button only"). The manual button still works and now also appends a `case_analyses` row.
+- Triage write endpoints (`/api/deals/[id]/analysis`, `/api/tasks`, `/api/deals/[id]/snooze`) accept a scoped `HERMES_TOKEN` bearer in addition to the session cookie.
+- Still hard rules: HubSpot read-only (no `src/lib/hubspot/actions.ts`), Layer 2 manual-only, code deploys / outbound email behind a Discord confirm, `case_analyses` append-only.
+
+**Every agent write is audited and idempotent.**
+`agent_audit_log` stores actor/action/target/route/method, request metadata (ip, userAgent, requestId), a `correlationId` tying one workflow together, and full before/after JSON. Agent writes carry an `Idempotency-Key` header; a repeat returns the existing row instead of duplicating. The kill switch is `app_settings.agent_writes_enabled` (default-on); set to `false` to make every agent write return 423 Locked (reads unaffected).

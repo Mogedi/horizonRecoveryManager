@@ -17,7 +17,7 @@ vi.mock('@/lib/auth/session', () => ({
 
 import { cookies } from 'next/headers'
 import { verifySessionToken } from '@/lib/auth/session'
-import { isAuthenticated, isCronRequest, unauthorizedResponse } from './require-session'
+import { isAuthenticated, isCronRequest, isAgentRequest, isAuthedOrAgent, unauthorizedResponse } from './require-session'
 
 const mockCookies = vi.mocked(cookies)
 const mockVerify = vi.mocked(verifySessionToken)
@@ -40,6 +40,7 @@ function makeRequest(authHeader?: string): NextRequest {
 beforeEach(() => {
   vi.clearAllMocks()
   process.env.CRON_SECRET = 'test-cron-secret'
+  process.env.HERMES_TOKEN = 'test-hermes-token'
 })
 
 // ---------------------------------------------------------------------------
@@ -102,6 +103,60 @@ describe('isCronRequest', () => {
   it('is not fooled by a prefix match — "Bearer test-cron-secretEXTRA" fails', () => {
     const req = makeRequest('Bearer test-cron-secretEXTRA')
     expect(isCronRequest(req)).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// isAgentRequest
+// ---------------------------------------------------------------------------
+
+describe('isAgentRequest', () => {
+  it('returns true when Authorization matches HERMES_TOKEN', () => {
+    expect(isAgentRequest(makeRequest('Bearer test-hermes-token'))).toBe(true)
+  })
+
+  it('returns false for the cron secret (separate token)', () => {
+    expect(isAgentRequest(makeRequest('Bearer test-cron-secret'))).toBe(false)
+  })
+
+  it('returns false when header missing', () => {
+    expect(isAgentRequest(makeRequest())).toBe(false)
+  })
+
+  it('returns false when HERMES_TOKEN is not set', () => {
+    delete process.env.HERMES_TOKEN
+    expect(isAgentRequest(makeRequest('Bearer test-hermes-token'))).toBe(false)
+  })
+
+  it('is not fooled by a prefix match', () => {
+    expect(isAgentRequest(makeRequest('Bearer test-hermes-tokenEXTRA'))).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// isAuthedOrAgent
+// ---------------------------------------------------------------------------
+
+describe('isAuthedOrAgent', () => {
+  it('true via valid session cookie even with no bearer', async () => {
+    mockCookies.mockResolvedValue(makeCookieStore('valid-jwt') as never)
+    mockVerify.mockResolvedValue(true)
+    expect(await isAuthedOrAgent(makeRequest())).toBe(true)
+  })
+
+  it('true via cron bearer with no session', async () => {
+    mockCookies.mockResolvedValue(makeCookieStore(undefined) as never)
+    expect(await isAuthedOrAgent(makeRequest('Bearer test-cron-secret'))).toBe(true)
+  })
+
+  it('true via agent bearer with no session', async () => {
+    mockCookies.mockResolvedValue(makeCookieStore(undefined) as never)
+    expect(await isAuthedOrAgent(makeRequest('Bearer test-hermes-token'))).toBe(true)
+  })
+
+  it('false when neither session nor a valid bearer is present', async () => {
+    mockCookies.mockResolvedValue(makeCookieStore(undefined) as never)
+    expect(await isAuthedOrAgent(makeRequest('Bearer nope'))).toBe(false)
   })
 })
 

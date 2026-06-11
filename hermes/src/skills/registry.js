@@ -9,9 +9,14 @@ import outreachPlanner from './outreach-planner.js'
 import schedules from './scheduler.js'
 import dataExplorer from './data-explorer.js'
 import webResearch from './web-research.js'
+import calendar from './calendar.js'
+import taskManager from './task-manager.js'
 import { loadOverrides, isSkillEnabled, setSkillEnabled } from './state.js'
 
-export const ALL_SKILLS = [caseLookup, emailAssistant, outreachPlanner, schedules, dataExplorer, webResearch]
+export const ALL_SKILLS = [
+  caseLookup, emailAssistant, outreachPlanner, schedules,
+  dataExplorer, webResearch, calendar, taskManager,
+]
 
 export function getSkill(name) {
   return ALL_SKILLS.find((s) => s.name === name) ?? null

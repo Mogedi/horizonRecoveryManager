@@ -27,6 +27,8 @@ const REDIRECT_URI = `http://localhost:${PORT}`
 const SCOPES = [
   'https://www.googleapis.com/auth/gmail.readonly',
   'https://www.googleapis.com/auth/drive.readonly',
+  'https://www.googleapis.com/auth/calendar.events', // read/write Calendar EVENTS (least-privilege; not full calendar)
+  'https://www.googleapis.com/auth/tasks',           // read/write Google Tasks
 ]
 
 const authUrl =

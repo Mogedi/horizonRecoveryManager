@@ -97,12 +97,32 @@ const HEAVY_JOBS = [
   { name: 'verify-docs', expr: '0 3 * * 0', fn: () => jobVerifyDocs() }, // 3a Sundays (weekly)
 ]
 
-async function postLine(client, text) {
-  const channelId = process.env.HERMES_SCHEDULE_CHANNEL
-  if (!channelId) return
+// Resolve HERMES_SCHEDULE_CHANNEL as a channel ID OR a channel name (e.g. "hermes_schedule_channel").
+// Returns the channel or null. Name resolution avoids the "hunt the snowflake ID" trap.
+async function resolveScheduleChannel(client) {
+  const ref = process.env.HERMES_SCHEDULE_CHANNEL
+  if (!ref) return null
   try {
-    const ch = await client.channels.fetch(channelId)
-    if (ch?.isTextBased?.()) await ch.send(text)
+    const byId = await client.channels.fetch(ref)
+    if (byId?.isTextBased?.()) return byId
+  } catch {
+    /* not an id — try by name */
+  }
+  for (const guild of client.guilds.cache.values()) {
+    const ch = guild.channels.cache.find((c) => c.name === ref && c.isTextBased?.())
+    if (ch) return ch
+  }
+  return null
+}
+
+async function postLine(client, text) {
+  const ch = await resolveScheduleChannel(client)
+  if (!ch) {
+    console.warn(`[schedule] no schedule channel — dropping message: ${String(text).slice(0, 80)}`)
+    return
+  }
+  try {
+    await ch.send(text)
   } catch (e) {
     console.error(`[schedule] could not post to Discord: ${e.message}`)
   }
@@ -132,10 +152,30 @@ export function startSchedules(client) {
     console.log(`[schedule] registered ${j.name} (${j.expr} ${TZ})`)
   }
   console.log(`[schedule] ${JOBS.length + HEAVY_JOBS.length} jobs scheduled (TZ ${TZ})`)
+
+  // Startup diagnostic: confirm posts will actually land, so a missing channel can't fail silently.
+  resolveScheduleChannel(client).then((ch) => {
+    if (ch) console.log(`[schedule] posting notifications to #${ch.name} (${ch.id})`)
+    else {
+      const ref = process.env.HERMES_SCHEDULE_CHANNEL
+      console.warn(
+        `[schedule] HERMES_SCHEDULE_CHANNEL ${ref ? `"${ref}" did not resolve to a channel` : 'is NOT set'} — ` +
+        `jobs will run but notifications won't post to Discord.`
+      )
+    }
+  })
 }
 
 // Expose heavy-job handlers for manual triggering (e.g. a Discord command or /sync-all variant).
 export const heavyJobs = HEAVY_JOBS
+
+// Run the morning digest on demand and post it to the schedule channel. Returns the text (or null).
+// Backs the /digest command — also serves as a live check that channel posting works.
+export async function postDigestNow(client) {
+  const r = await jobMorningDigest()
+  if (r?.post) await postLine(client, r.post)
+  return r?.post ?? null
+}
 
 // Run every sync job back-to-back, in order. Returns [{name, ok, detail}].
 export async function runAllSyncs() {

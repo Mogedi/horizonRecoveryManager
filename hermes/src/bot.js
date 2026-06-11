@@ -12,7 +12,7 @@ import { listQueue, getCase } from './cases-read.js'
 import { triage } from './triage.js'
 import { newWorkflow } from './hm-api.js'
 import { chat } from './chat.js'
-import { startSchedules, runAllSyncs } from './schedules.js'
+import { startSchedules, runAllSyncs, postDigestNow } from './schedules.js'
 import { skillStatus, setSkillEnabled, getSkill } from './skills/registry.js'
 
 const TOKEN = process.env.DISCORD_BOT_TOKEN
@@ -31,6 +31,8 @@ const commands = [
     .addStringOption(o => o.setName('deal').setDescription('HubSpot deal ID').setRequired(true)),
   new SlashCommandBuilder().setName('sync-all')
     .setDescription('Run all scheduled syncs now, back-to-back (JustCall, Gmail, Drive, new-case Layer 2)'),
+  new SlashCommandBuilder().setName('digest')
+    .setDescription('Generate the morning briefing now and post it to the schedule channel'),
   new SlashCommandBuilder().setName('skills')
     .setDescription('List Hermes skills and whether each is on or off'),
   new SlashCommandBuilder().setName('skill').setDescription('Turn a Hermes skill on or off')
@@ -125,6 +127,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return `${r.ok ? '✅' : '❌'} **${r.name}** — ${detail}`
         })
         await interaction.editReply('**Sync complete:**\n' + lines.join('\n'))
+
+      } else if (interaction.commandName === 'digest') {
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral })
+        const text = await postDigestNow(client)
+        await interaction.editReply(
+          text ? '☀️ Posted the morning briefing to the schedule channel.'
+               : '⚠️ Briefing generated empty, or the schedule channel did not resolve (check HERMES_SCHEDULE_CHANNEL).'
+        )
 
       } else if (interaction.commandName === 'skills') {
         await interaction.deferReply({ flags: MessageFlags.Ephemeral })

@@ -25,6 +25,19 @@ export async function listDealDocuments(dealHubspotId: string): Promise<{ folder
   }
 }
 
+// If the model wrapped the transcription in {"document_text": "..."} (or similar), unwrap it.
+function unwrapJson(s: string): string {
+  const t = s.trim()
+  if (t.startsWith('{') && t.endsWith('}')) {
+    try {
+      const obj = JSON.parse(t)
+      const vals = Object.values(obj)
+      if (vals.length === 1 && typeof vals[0] === 'string') return vals[0] as string
+    } catch { /* not JSON — return as-is */ }
+  }
+  return s
+}
+
 const GOOGLE_TEXT_MIME = new Set([
   'application/vnd.google-apps.document',
   'application/vnd.google-apps.presentation',
@@ -43,12 +56,14 @@ export async function readDriveDocument(fileId: string, maxChars = 12000): Promi
     text = await googleClient.exportFileAsText(fileId) // exports as plain text
   } else if (mimeType === 'application/pdf') {
     const { data } = await googleClient.downloadFileAsBase64(fileId)
-    text = await callClaudeWithDocuments(
+    const raw = await callClaudeWithDocuments(
       [{ data, mimeType: 'application/pdf', label: name }],
-      'Transcribe the full text of this document verbatim. Preserve headings and structure. Output ONLY the document text, no commentary.',
+      'Transcribe the full text of this document verbatim. Preserve headings and structure. ' +
+        'Return the raw text ONLY — do not wrap it in JSON, markdown, quotes, or any commentary.',
       undefined,
       8000
     )
+    text = unwrapJson(raw)
   } else if (mimeType.startsWith('text/')) {
     const { buffer } = await googleClient.downloadFileAsBuffer(fileId)
     text = buffer.toString('utf8')

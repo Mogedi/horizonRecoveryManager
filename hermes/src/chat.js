@@ -1,6 +1,7 @@
-// Conversational Hermes — free-text chat backed by Claude, with short per-channel memory.
-// Used by the bot for @mentions and DMs (structured actions stay on the slash commands).
+// Conversational Hermes — free-text chat backed by Claude with READ-ONLY tools, so it answers
+// questions from real case data (resolving fuzzy names) instead of deferring to slash commands.
 import Anthropic from '@anthropic-ai/sdk'
+import { searchDeals, getCase, listQueue } from './cases-read.js'
 
 const MODEL = 'claude-sonnet-4-6'
 
@@ -15,12 +16,80 @@ function anthropic() {
 
 const SYSTEM =
   'You are Hermes, the operations assistant for Horizon Recovery LLC, a surplus-funds recovery firm. ' +
-  'You help Mo (the owner) think through cases and day-to-day operations. Be concise, direct, and practical. ' +
-  'You can read case data and write AI interpretation through the Horizon Manager app; you never touch HubSpot ' +
-  'or business facts directly, and you never move money. For structured actions, point Mo to the slash commands: ' +
-  '/queue (list active deals), /case deal:<id> (case summary), /triage deal:<id> (AI triage with an Apply-to-write button).'
+  'You help Mo (the owner) manage cases and operations.\n\n' +
+  'You have tools to look up real data — USE them to answer directly. Resolve partial or misspelled ' +
+  'names yourself with search_deals (e.g. "alberta" → the Albertha deal); if several match, summarize ' +
+  'the top candidates or ask which one. NEVER tell Mo to run a slash command to get information — fetch ' +
+  'it with your tools. Be concise and practical.\n\n' +
+  'You read facts and AI interpretation; you never touch HubSpot or business facts directly and never ' +
+  'move money. To WRITE a triage analysis, Mo uses /triage (which has an Apply-to-confirm button) — you ' +
+  'can summarize a case and what you would conclude, but you do not write.'
 
-// Per-channel rolling history so a conversation has continuity. In-memory (resets on bot restart).
+const tools = [
+  {
+    name: 'search_deals',
+    description:
+      'Find deals by a partial, fuzzy, or misspelled name/owner/county/address. Returns candidate deals with their hubspot_id. Use this first whenever Mo names a case by anything other than an exact id.',
+    input_schema: {
+      type: 'object',
+      properties: { query: { type: 'string', description: 'name, owner, county, or address fragment' } },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'get_case',
+    description:
+      'Full detail for one deal: stage, amount, contacts, recent activity, and latest AI analysis. Needs the hubspot_id from search_deals or list_active_deals.',
+    input_schema: {
+      type: 'object',
+      properties: { deal_id: { type: 'string', description: 'the deal hubspot_id' } },
+      required: ['deal_id'],
+    },
+  },
+  {
+    name: 'list_active_deals',
+    description: 'List the active deal queue (most recently touched first).',
+    input_schema: { type: 'object', properties: {} },
+  },
+]
+
+function compactCase(c) {
+  return {
+    deal: {
+      hubspot_id: c.deal.hubspot_id, name: c.deal.name, stage: c.deal.stage_name ?? c.deal.stage,
+      amount: c.deal.amount, last_activity_date: c.deal.last_activity_date,
+    },
+    contacts: c.contacts.map((ct) => ({ name: ct.name, type: ct.contact_type, status: ct.ownership_status })),
+    recent_activity: c.activity.slice(0, 12).map((a) => ({
+      ts: a.ts, source: a.source, type: a.type, outcome: a.outcome,
+      note: (a.body || '').replace(/\s+/g, ' ').slice(0, 160),
+    })),
+    latest_analysis: c.latestAnalysis
+      ? {
+          health: c.latestAnalysis.health, priority: c.latestAnalysis.priority,
+          status: c.latestAnalysis.status_label, blockers: c.latestAnalysis.blockers,
+          next_action: c.latestAnalysis.next_action, at: c.latestAnalysis.created_at,
+        }
+      : null,
+  }
+}
+
+async function runTool(name, input) {
+  if (name === 'search_deals') {
+    const rows = await searchDeals(String(input.query ?? ''))
+    return rows.length ? rows : 'no matching deals — try a different spelling or list_active_deals'
+  }
+  if (name === 'list_active_deals') {
+    const rows = await listQueue(40)
+    return rows.map((r) => ({ hubspot_id: r.hubspot_id, name: r.name, stage: r.stage, amount: r.amount }))
+  }
+  if (name === 'get_case') {
+    return compactCase(await getCase(String(input.deal_id ?? '')))
+  }
+  return `unknown tool: ${name}`
+}
+
+// Per-channel rolling history (final text only) for continuity. In-memory; resets on restart.
 const histories = new Map()
 function getHistory(channelId) {
   return histories.get(channelId) ?? []
@@ -28,15 +97,43 @@ function getHistory(channelId) {
 function pushHistory(channelId, role, content) {
   const h = getHistory(channelId)
   h.push({ role, content })
-  while (h.length > 12) h.shift() // keep the last ~6 exchanges
+  while (h.length > 10) h.shift()
   histories.set(channelId, h)
 }
 
 export async function chat(channelId, userText) {
   const messages = [...getHistory(channelId), { role: 'user', content: userText }]
-  const res = await anthropic().messages.create({ model: MODEL, max_tokens: 1024, system: SYSTEM, messages })
-  const text = res.content.find((b) => b.type === 'text')?.text ?? '(no response)'
+  let finalText = '(no response)'
+
+  for (let i = 0; i < 6; i++) {
+    const res = await anthropic().messages.create({ model: MODEL, max_tokens: 1500, system: SYSTEM, tools, messages })
+
+    if (res.stop_reason === 'tool_use') {
+      messages.push({ role: 'assistant', content: res.content })
+      const results = []
+      for (const block of res.content) {
+        if (block.type !== 'tool_use') continue
+        let out
+        try {
+          out = await runTool(block.name, block.input || {})
+        } catch (e) {
+          out = `error: ${e.message}`
+        }
+        results.push({
+          type: 'tool_result',
+          tool_use_id: block.id,
+          content: typeof out === 'string' ? out : JSON.stringify(out),
+        })
+      }
+      messages.push({ role: 'user', content: results })
+      continue
+    }
+
+    finalText = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n').trim() || '(no response)'
+    break
+  }
+
   pushHistory(channelId, 'user', userText)
-  pushHistory(channelId, 'assistant', text)
-  return text
+  pushHistory(channelId, 'assistant', finalText)
+  return finalText
 }

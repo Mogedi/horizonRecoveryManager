@@ -24,8 +24,10 @@ Developed inside the HorizonManager repo; deployed to the VPS at `/home/mo/herme
 - `/queue` — list active deals
 - `/case deal:<id>` — case summary
 - `/triage deal:<id>` — propose an analysis (dry-run) → **Apply** button writes it (audited)
-- **Chat** — @mention the bot or DM it to talk to Hermes in plain language
-  (works without the privileged Message Content intent; mentions and DMs deliver content)
+- **Chat** — talk to Hermes in plain language in `#general` (or DM). It **looks up the data itself**
+  (resolving fuzzy names like "alberta" → the Albertha deal) and answers — no slash command or deal
+  ID needed. Scope is set by `HERMES_CHAT_CHANNELS` (channel name or ID; unset = every channel).
+  Chat is read-only; writes stay on `/triage` → Apply.
 
 ## Environment (`hermes/.env` on the VPS, `600`)
 ```
@@ -35,6 +37,7 @@ DATABASE_URL_READONLY=...                 # SELECT-only Neon role
 ANTHROPIC_API_KEY=...                     # triage + chat
 DISCORD_BOT_TOKEN=...                     # the bot login token
 DISCORD_OWNER_ID=...                      # optional — restricts who can click "Apply"
+HERMES_CHAT_CHANNELS=general              # optional — channel name(s)/id(s) chat replies in (CSV); unset = all
 ```
 
 ## Operations (on the VPS)
@@ -50,11 +53,14 @@ pm2 startup systemd -u mo --hp /home/mo
 #   → paste & run the "sudo env PATH=… pm2 startup …" line it prints
 ```
 
-## Deploy an update (from the repo on your Mac)
+## Deploy an update (the "edit a tool → it's live" loop)
+From `hermes/` on your Mac, after editing any tool:
 ```bash
-rsync -az --exclude node_modules --exclude .env -e "ssh -i ~/.ssh/hermes_vps" hermes/ mo@<VPS_IP>:hermes/
-ssh -i ~/.ssh/hermes_vps mo@<VPS_IP> 'cd ~/hermes && npm install && pm2 restart hermes-bot'
+export HERMES_VPS=mo@<VPS_IP>   # once, e.g. in your shell profile
+npm run deploy                  # rsync → npm install → pm2 restart hermes-bot
 ```
+That's how you add tooling: write a new tool (a function in `src/`, a slash command, or a `chat.js`
+tool entry), then `npm run deploy` — the remote agent picks it up on restart.
 
 ## Local dev (against the repo's node_modules)
 ```bash

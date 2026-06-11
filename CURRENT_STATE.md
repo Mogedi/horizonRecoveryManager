@@ -14,6 +14,7 @@
 | AI summaries | On-demand, per deal (human-facing layer) |
 | AI interpretation | `case_analyses` append-only layer drives `CurrentState`; written by Hermes + manual button |
 | Hermes write surface | Phase 1 live: analysis/tasks/snooze via `HERMES_TOKEN`; audited, idempotent, kill-switchable |
+| **Hermes Discord bot** | **LIVE** on the VPS under PM2 (`hermes-bot`). `/queue` `/case` `/triage` (+ Apply-to-write) and @mention/DM chat. Code in `hermes/`; ops in README. |
 | Analytics | Portfolio + contact quality pages live |
 | Deal Workspace | 7-tab DealPanel with case Story, Calls, Emails, Notes, Contacts, Documents, Tasks |
 

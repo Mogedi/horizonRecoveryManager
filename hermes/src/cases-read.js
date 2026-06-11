@@ -153,6 +153,14 @@ export async function getCase(dealHubspotId) {
   return { deal, contacts, activity, latestAnalysis }
 }
 
+// Deals with no Layer 2 data yet (no contacts) — i.e. new cases needing a Layer 2 pull.
+export async function dealsWithoutLayer2() {
+  return query(
+    `SELECT hubspot_id, name FROM deals
+     WHERE hubspot_id NOT IN (SELECT DISTINCT deal_hubspot_id FROM deal_contacts WHERE deal_hubspot_id IS NOT NULL)`
+  )
+}
+
 export async function close() {
   if (pool) {
     await pool.end()

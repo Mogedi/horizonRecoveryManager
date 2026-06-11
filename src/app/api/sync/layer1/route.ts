@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { isAuthenticated, isCronRequest, unauthorizedResponse } from '@/lib/auth/require-session'
+import { isAuthenticated, isCronRequest, isAgentRequest, unauthorizedResponse } from '@/lib/auth/require-session'
 import { runLayer1Sync } from '@/lib/sync/layer1'
 import { log } from '@/lib/logger'
 
 // Called by Vercel Cron (see vercel.json) and by the manual sync button in the dashboard.
 export async function POST(req: NextRequest) {
-  if (!isCronRequest(req) && !(await isAuthenticated())) {
+  if (!isCronRequest(req) && !isAgentRequest(req) && !(await isAuthenticated())) {
     return unauthorizedResponse()
   }
 

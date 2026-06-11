@@ -12,6 +12,7 @@ import { listQueue, getCase } from './cases-read.js'
 import { triage } from './triage.js'
 import { newWorkflow } from './hm-api.js'
 import { chat } from './chat.js'
+import { startSchedules } from './schedules.js'
 
 const TOKEN = process.env.DISCORD_BOT_TOKEN
 if (!TOKEN) { console.error('DISCORD_BOT_TOKEN not set'); process.exit(1) }
@@ -56,6 +57,7 @@ client.once(Events.ClientReady, async (c) => {
     try { await guild.commands.set(commands); console.log(`commands registered in "${guild.name}"`) }
     catch (e) { console.error(`command register failed in ${guild.id}: ${e.message}`) }
   }
+  startSchedules(c)
 })
 client.on(Events.GuildCreate, async (g) => {
   try { await g.commands.set(commands); console.log(`commands registered in new guild "${g.name}"`) }

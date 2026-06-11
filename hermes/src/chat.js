@@ -3,7 +3,7 @@
 // Cost-aware: defaults to Haiku (cheap); escalates to Sonnet on request. Reports per-message cost.
 import Anthropic from '@anthropic-ai/sdk'
 import { appendFile } from 'node:fs/promises'
-import { searchDeals, getCase, listQueue } from './cases-read.js'
+import { searchDeals, getCase, listQueue, getSentEmails } from './cases-read.js'
 
 // $ per 1M tokens (input / output). Used for rough per-message cost estimates.
 const PRICING = {
@@ -44,6 +44,8 @@ const SYSTEM =
   'names yourself with search_deals (e.g. "alberta" → the Albertha deal); if several match, summarize ' +
   'the top candidates or ask which one. NEVER tell Mo to run a slash command to get information — fetch ' +
   'it with your tools. Be concise and practical.\n\n' +
+  'You CAN read the emails Mo has sent — use get_sent_emails to study his writing style/tone or to ' +
+  'see how he phrases things (e.g. for drafting in his voice). Never claim you lack email access.\n\n' +
   'You read facts and AI interpretation; you never touch HubSpot or business facts directly and never ' +
   'move money. To WRITE a triage analysis, Mo uses /triage (which has an Apply-to-confirm button) — you ' +
   'can summarize a case and what you would conclude, but you do not write.'
@@ -73,6 +75,16 @@ const tools = [
     name: 'list_active_deals',
     description: 'List the active deal queue (most recently touched first).',
     input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'get_sent_emails',
+    description:
+      "Emails Mo SENT (his own outbound mail, with full text). Use this to study or infer his writing " +
+      "style and tone, or to see how he phrases things. Returns date, subject, recipient, and body.",
+    input_schema: {
+      type: 'object',
+      properties: { limit: { type: 'number', description: 'how many recent sent emails (default 20, max 40)' } },
+    },
   },
 ]
 
@@ -108,6 +120,16 @@ async function runTool(name, input) {
   }
   if (name === 'get_case') {
     return compactCase(await getCase(String(input.deal_id ?? '')))
+  }
+  if (name === 'get_sent_emails') {
+    const lim = Math.min(Math.max(Number(input.limit) || 20, 1), 40)
+    const rows = await getSentEmails(lim)
+    return rows.length
+      ? rows.map((r) => ({
+          date: r.ts, subject: r.subject, to: r.recipient,
+          body: (r.body || '').replace(/\s+/g, ' ').trim(),
+        }))
+      : 'no sent emails with full body stored yet'
   }
   return `unknown tool: ${name}`
 }

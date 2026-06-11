@@ -153,6 +153,23 @@ export async function getCase(dealHubspotId) {
   return { deal, contacts, activity, latestAnalysis }
 }
 
+// Emails Mo SENT (outbound Gmail with a full body stored) — the tone-of-voice corpus.
+// Body is truncated so a batch fits comfortably in the chat context window.
+export async function getSentEmails(limit = 20) {
+  return query(
+    `SELECT happened_at AS ts,
+            metadata->>'subject' AS subject,
+            metadata->>'to'      AS recipient,
+            LEFT(body, 1500)     AS body
+     FROM activity_events
+     WHERE source::text = 'GOOGLE' AND type = 'email' AND direction = 'outbound'
+       AND (metadata->>'hasFullBody') = 'true' AND body IS NOT NULL
+     ORDER BY happened_at DESC
+     LIMIT $1`,
+    [limit]
+  )
+}
+
 // Deals with no Layer 2 data yet (no contacts) — i.e. new cases needing a Layer 2 pull.
 export async function dealsWithoutLayer2() {
   return query(

@@ -9,7 +9,8 @@
     "queue": "node --env-file=.env src/cli.js queue",
     "read": "node --env-file=.env src/cli.js read",
     "triage": "node --env-file=.env src/cli.js triage",
-    "bot": "node --env-file=.env src/bot.js"
+    "bot": "node --env-file=.env src/bot.js",
+    "deploy": "bash deploy.sh"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.102.0",

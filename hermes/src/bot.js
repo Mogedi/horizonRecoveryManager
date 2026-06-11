@@ -17,6 +17,8 @@ const TOKEN = process.env.DISCORD_BOT_TOKEN
 if (!TOKEN) { console.error('DISCORD_BOT_TOKEN not set'); process.exit(1) }
 // Optional: restrict who may click "Apply". If unset, only the user who ran /triage can apply.
 const OWNER_ID = process.env.DISCORD_OWNER_ID || null
+// Optional: comma-separated channel IDs Hermes chats in. If unset, it replies in every channel it sees.
+const CHAT_CHANNELS = (process.env.HERMES_CHAT_CHANNELS || '').split(',').map((s) => s.trim()).filter(Boolean)
 
 const commands = [
   new SlashCommandBuilder().setName('queue').setDescription('List active deals (read-only)'),
@@ -28,7 +30,12 @@ const commands = [
 ]
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.DirectMessages],
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.DirectMessages,
+    GatewayIntentBits.MessageContent, // privileged — must be enabled in the Discord Developer Portal
+  ],
   partials: [Partials.Channel], // required to receive DM events
 })
 
@@ -131,17 +138,20 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 })
 
-// Free-text chat — replies to @mentions and DMs. Discord delivers message content for those
-// without the privileged Message Content intent, so no portal toggle is needed. Structured
-// actions stay on the slash commands.
+// Free-text chat — replies to every human message (Message Content intent is enabled). DMs always
+// work; in guild channels, an optional HERMES_CHAT_CHANNELS allowlist can scope where it talks.
+// Structured actions stay on the slash commands.
 client.on(Events.MessageCreate, async (message) => {
   try {
     if (message.author.bot) return
     const isDM = !message.guildId
-    const mentioned = message.mentions?.has?.(client.user) ?? false
-    if (!isDM && !mentioned) return
+    if (!isDM && CHAT_CHANNELS.length) {
+      const chName = message.channel?.name
+      const allowed = CHAT_CHANNELS.includes(message.channelId) || (chName && CHAT_CHANNELS.includes(chName))
+      if (!allowed) return
+    }
     const text = (message.content ?? '').replace(/<@!?\d+>/g, '').trim()
-    if (!text) { await message.reply('Hey — ask me about a case, or use `/triage`, `/queue`, `/case`.'); return }
+    if (!text) return
     await message.channel.sendTyping().catch(() => {})
     const answer = await chat(message.channelId, text)
     const chunks = answer.match(/[\s\S]{1,1900}/g) ?? ['(no response)']

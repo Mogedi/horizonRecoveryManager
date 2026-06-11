@@ -15,12 +15,13 @@ const DEFAULT_SYSTEM =
 export async function callClaude(
   prompt: string,
   systemPrompt?: string,
-  maxTokens = 1024
+  maxTokens = 1024,
+  model = 'claude-sonnet-4-6'
 ): Promise<string> {
   try {
     return await anthropicLimiter.schedule(async () => {
       const response = await anthropic.messages.create({
-        model: 'claude-sonnet-4-6',
+        model,
         max_tokens: maxTokens,
         system: systemPrompt ?? DEFAULT_SYSTEM,
         messages: [{ role: 'user', content: prompt }],

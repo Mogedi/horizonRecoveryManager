@@ -310,6 +310,22 @@ model AppSetting {
   @@map("app_settings")
 }
 
+// Learned per-sender rule for Gmail body-pulling — keeps token/storage cost down by deciding,
+// once per sender, whether their email is case-related (pull full body) or noise (headers only).
+model EmailSenderRule {
+  id             Int      @id @default(autoincrement())
+  sender         String   @unique // lowercased email address (or domain)
+  pullBody       Boolean  @map("pull_body")
+  classification String?  // 'case_related' | 'noise' | 'unknown'
+  reason         String?
+  confidence     Float?
+  source         String   @default("auto") // 'auto' (Haiku) | 'heuristic' | 'manual'
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("email_sender_rules")
+}
+
 // M9+: Unified multi-source event log — JustCall calls, Google emails, HubSpot (future), etc.
 // deal_activities stays for HubSpot Layer 2 data; new sources write here.
 model ActivityEvent {

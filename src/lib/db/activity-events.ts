@@ -51,6 +51,10 @@ export async function upsertActivityEvent(event: ActivityEventInput): Promise<vo
       toNumber: event.toNumber ?? null,
       agentId: event.agentId ?? null,
       body: event.body ?? null,
+      // Refresh metadata/rawPayload on re-sync — otherwise a re-pull (e.g. Gmail rematch +
+      // full-body backfill) can never overwrite stale headers written by an earlier run.
+      metadata: event.metadata ? JSON.parse(JSON.stringify(event.metadata)) : undefined,
+      rawPayload: event.rawPayload ? JSON.parse(JSON.stringify(event.rawPayload)) : undefined,
     },
   })
 }

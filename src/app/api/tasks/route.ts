@@ -1,6 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { isAuthenticated, unauthorizedResponse } from '@/lib/auth/require-session'
-import { getOpenTasks, getRecentCompletedTasks, createTask } from '@/lib/db/tasks'
+import { isAuthenticated, isAuthedOrAgent, isAgentRequest, unauthorizedResponse } from '@/lib/auth/require-session'
+import {
+  assertAgentWritesEnabled,
+  agentWritesDisabledResponse,
+  extractRequestMeta,
+  getCorrelationId,
+  getIdempotencyKey,
+} from '@/lib/agent/guard'
+import { getOpenTasks, getRecentCompletedTasks, createTask, getTaskByIdempotencyKey } from '@/lib/db/tasks'
+import { logAgentAction } from '@/lib/db/agent-audit'
 import { TaskCategory } from '@prisma/client'
 
 export async function GET() {
@@ -11,7 +19,9 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  if (!(await isAuthenticated())) return unauthorizedResponse()
+  const isAgent = isAgentRequest(req)
+  if (!(await isAuthedOrAgent(req))) return unauthorizedResponse()
+  if (isAgent && !(await assertAgentWritesEnabled())) return agentWritesDisabledResponse()
 
   let body: unknown
   try {
@@ -29,13 +39,37 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'valid category is required' }, { status: 400 })
   }
 
+  // Idempotency — a repeat with the same key returns the existing task instead of duplicating.
+  const idempotencyKey = getIdempotencyKey(req)
+  if (idempotencyKey) {
+    const existing = await getTaskByIdempotencyKey(idempotencyKey)
+    if (existing) return NextResponse.json(existing, { status: 200 })
+  }
+
   const task = await createTask({
     dealHubspotId: typeof b.dealHubspotId === 'string' ? b.dealHubspotId : null,
     title: (b.title as string).trim(),
     notes: typeof b.notes === 'string' ? b.notes.trim() || null : null,
     dueDate: typeof b.dueDate === 'string' ? new Date(b.dueDate) : null,
     category: b.category as TaskCategory,
+    source: isAgent ? 'hermes' : 'manual',
+    idempotencyKey,
   })
+
+  if (isAgent) {
+    await logAgentAction({
+      actor: 'hermes',
+      action: 'create_task',
+      target: task.dealHubspotId ?? String(task.id),
+      route: req.nextUrl.pathname,
+      method: 'POST',
+      correlationId: getCorrelationId(req),
+      idempotencyKey,
+      requestMeta: extractRequestMeta(req),
+      before: null,
+      after: task,
+    })
+  }
 
   return NextResponse.json(task, { status: 201 })
 }

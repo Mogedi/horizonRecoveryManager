@@ -1,10 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { isAuthenticated, unauthorizedResponse } from '@/lib/auth/require-session'
-import { createSnooze, removeActiveSnooze, isValidSnoozeCategory } from '@/lib/db/snoozes'
+import { isAuthedOrAgent, isAgentRequest, unauthorizedResponse } from '@/lib/auth/require-session'
+import {
+  assertAgentWritesEnabled,
+  agentWritesDisabledResponse,
+  extractRequestMeta,
+  getCorrelationId,
+  getIdempotencyKey,
+} from '@/lib/agent/guard'
+import {
+  createSnooze,
+  removeActiveSnooze,
+  getActiveSnooze,
+  getSnoozeByIdempotencyKey,
+  isValidSnoozeCategory,
+} from '@/lib/db/snoozes'
+import { logAgentAction } from '@/lib/db/agent-audit'
 import { SnoozeCategory } from '@prisma/client'
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  if (!(await isAuthenticated())) return unauthorizedResponse()
+  const isAgent = isAgentRequest(req)
+  if (!(await isAuthedOrAgent(req))) return unauthorizedResponse()
+  if (isAgent && !(await assertAgentWritesEnabled())) return agentWritesDisabledResponse()
 
   const { id } = await params
   let body: { category?: unknown; snoozeUntil?: unknown; freeformNote?: unknown }
@@ -31,19 +47,62 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: 'Snooze date must be in the future' }, { status: 400 })
   }
 
-  await createSnooze(
+  // Idempotency — a repeat with the same key returns the existing snooze instead of duplicating.
+  const idempotencyKey = getIdempotencyKey(req)
+  if (idempotencyKey) {
+    const existing = await getSnoozeByIdempotencyKey(idempotencyKey)
+    if (existing) return NextResponse.json({ ok: true, snooze: existing }, { status: 200 })
+  }
+
+  const snooze = await createSnooze(
     id,
     category as SnoozeCategory,
     snoozeDate,
-    typeof freeformNote === 'string' ? freeformNote : undefined
+    typeof freeformNote === 'string' ? freeformNote : undefined,
+    idempotencyKey
   )
+
+  if (isAgent) {
+    await logAgentAction({
+      actor: 'hermes',
+      action: 'snooze',
+      target: id,
+      route: req.nextUrl.pathname,
+      method: 'POST',
+      correlationId: getCorrelationId(req),
+      idempotencyKey,
+      requestMeta: extractRequestMeta(req),
+      before: null,
+      after: snooze,
+    })
+  }
 
   return NextResponse.json({ ok: true })
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  if (!(await isAuthenticated())) return unauthorizedResponse()
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const isAgent = isAgentRequest(req)
+  if (!(await isAuthedOrAgent(req))) return unauthorizedResponse()
+  if (isAgent && !(await assertAgentWritesEnabled())) return agentWritesDisabledResponse()
+
   const { id } = await params
+  const before = isAgent ? await getActiveSnooze(id) : null
   await removeActiveSnooze(id)
+
+  if (isAgent) {
+    await logAgentAction({
+      actor: 'hermes',
+      action: 'unsnooze',
+      target: id,
+      route: req.nextUrl.pathname,
+      method: 'DELETE',
+      correlationId: getCorrelationId(req),
+      idempotencyKey: getIdempotencyKey(req),
+      requestMeta: extractRequestMeta(req),
+      before,
+      after: null,
+    })
+  }
+
   return NextResponse.json({ ok: true })
 }

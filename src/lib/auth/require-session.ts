@@ -16,6 +16,19 @@ export function isCronRequest(req: NextRequest): boolean {
   return req.headers.get('authorization') === `Bearer ${cronSecret}`
 }
 
+// Hermes agent token — scoped separately from CRON_SECRET so it can be revoked independently
+// and so agent-originated writes are attributable in the audit log.
+export function isAgentRequest(req: NextRequest): boolean {
+  const token = process.env.HERMES_TOKEN
+  if (!token) return false
+  return req.headers.get('authorization') === `Bearer ${token}`
+}
+
+// True for a logged-in browser session, a Vercel cron call, or the Hermes agent.
+export async function isAuthedOrAgent(req: NextRequest): Promise<boolean> {
+  return (await isAuthenticated()) || isCronRequest(req) || isAgentRequest(req)
+}
+
 export function unauthorizedResponse(): NextResponse {
   return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 }

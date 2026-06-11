@@ -1,0 +1,17 @@
+{
+  "name": "hermes-tools",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Hermes agent tools for HorizonManager — read-only case reads (direct Neon) + scoped HTTP writes (HERMES_TOKEN)",
+  "bin": { "hermes": "src/cli.js" },
+  "scripts": {
+    "queue": "node src/cli.js queue",
+    "read": "node src/cli.js read",
+    "triage": "node src/cli.js triage"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.102.0",
+    "pg": "^8.21.0"
+  }
+}

@@ -65,6 +65,7 @@ When data conflicts between systems, trust these:
 | Unified case timeline | Horizon Manager DB (`activity_events` + `deal_activities`) |
 | Call transcripts and classifications | Horizon Manager DB (`call_transcripts` table) |
 | Mo's tasks and snoozes | Horizon Manager DB (internal — not in HubSpot) |
+| Case operational state (status, health, blockers, next action) | Horizon Manager DB (`case_analyses` — append-only AI-interpretation layer; latest `triage` row wins) |
 
 ---
 
@@ -80,21 +81,27 @@ When data conflicts between systems, trust these:
 
 ## Hermes — Agentic Layer
 
-**Hermes can:**
-- Research probate requirements and county-specific filing rules
-- Draft attorney outreach emails
-- Recommend attorneys for specific counties
-- Review case files and summarize status
-- Suggest next actions for stuck cases
-- Create internal tasks
-- Update Horizon Manager's internal records (tasks, notes)
+External Discord-driven agent on a separate VPS. **Hybrid access:** read-only Neon role for reads;
+HTTP API with a scoped `HERMES_TOKEN` for writes. Every agent write is audited (before/after),
+idempotent (`Idempotency-Key` header), and revocable via a kill switch
+(`app_settings.agent_writes_enabled` → 423 when off).
 
-**Hermes cannot:**
-- Write to HubSpot (read-only permanently)
-- Send emails or messages without Mo's approval
-- Modify legal documents without review
+**Hermes can (Phase 1, wired):**
+- Read all case data (direct read-only DB)
+- Write AI **interpretation** to the append-only `case_analyses` layer (drives `CurrentState`)
+- Create/complete/delete internal tasks; snooze/unsnooze cases
+- Trigger the server-side summary regeneration
+
+**Hermes can (later phases):**
+- Trigger syncs / cron jobs (Phase 3 — sync routes not agent-enabled yet)
+- Make code/UI changes shipped to Vercel via git push (Phase 4 — behind a Discord confirm)
+
+**Hermes cannot (hard boundaries):**
+- Write to HubSpot (read-only permanently — no `src/lib/hubspot/actions.ts`)
+- Write business facts (deals, contacts, activities) — interpretation only
+- Overwrite a prior analysis (`case_analyses` is append-only)
+- Send emails or deploy code without Mo's Discord confirm
 - Move money or initiate financial transactions
-- Change case status without approval
 
 ---
 

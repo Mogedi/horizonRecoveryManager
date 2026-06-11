@@ -45,6 +45,8 @@ export type CreateTaskInput = {
   notes?: string | null
   dueDate?: Date | null
   category: TaskCategory
+  source?: string                 // 'manual' (UI) | 'hermes' (agent)
+  idempotencyKey?: string | null  // agent retry-dedup
 }
 
 export async function createTask(input: CreateTaskInput): Promise<TaskRow> {
@@ -55,8 +57,23 @@ export async function createTask(input: CreateTaskInput): Promise<TaskRow> {
       notes: input.notes ?? null,
       dueDate: input.dueDate ?? null,
       category: input.category,
-      source: 'manual',
+      source: input.source ?? 'manual',
+      idempotencyKey: input.idempotencyKey ?? null,
     },
+    include: { deal: { select: { name: true, hubspotId: true } } },
+  })
+}
+
+export async function getTaskById(id: number): Promise<TaskRow | null> {
+  return prisma.internalTask.findUnique({
+    where: { id },
+    include: { deal: { select: { name: true, hubspotId: true } } },
+  })
+}
+
+export async function getTaskByIdempotencyKey(idempotencyKey: string): Promise<TaskRow | null> {
+  return prisma.internalTask.findUnique({
+    where: { idempotencyKey },
     include: { deal: { select: { name: true, hubspotId: true } } },
   })
 }

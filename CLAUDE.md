@@ -18,7 +18,10 @@
 | `src/lib/db/outreach.ts` | outreach matrix builder |
 | `src/lib/db/call-transcripts.ts` | transcript queries, upsert |
 | `src/lib/db/snoozes.ts` | snooze reads/writes |
-| `src/lib/db/summaries.ts` | AI summary reads/writes |
+| `src/lib/db/summaries.ts` | AI summary reads/writes (human-facing layer) |
+| `src/lib/db/case-analysis.ts` | append-only AI-interpretation layer (Hermes + manual button) |
+| `src/lib/db/agent-audit.ts` | agent write audit log — before/after, correlationId |
+| `src/lib/agent/guard.ts` | agent kill switch + request-meta / idempotency / correlation helpers |
 | `src/lib/hubspot/client.ts` | HubSpot API — rate limited, retried, HubSpotError |
 | `src/lib/hubspot/mapper.ts` | ONLY file knowing raw HubSpot property names |
 | `src/lib/sync/layer1.ts` | Daily deal list sync (2 API calls, 150 deals); manual anytime |
@@ -40,7 +43,7 @@
 | `src/lib/case/classifier.ts` | `categorizeEvent()` — 7 categories, priority-ordered, pure function |
 | `src/lib/case/events.ts` | `buildCaseEvents()` — merges DealActivity + ActivityEvent into CaseEvent[] |
 | `src/lib/case/story.ts` | `buildStoryDays()` — ET-timezone day grouping; `CATEGORY_LABELS` map |
-| `src/lib/case/state.ts` | `buildCurrentState()` — health inference from AiSummary JSON |
+| `src/lib/case/state.ts` | `buildCurrentState()` — from latest `case_analyses` triage row (AiSummary fallback); `inferHealth()` |
 | `src/lib/rules/` | Pure rule functions. `index.ts` → `evaluateAll`. |
 | `src/lib/rules/staleness.ts` | `checkStaleness` — stage stale by business days |
 | `src/lib/rules/agreement.ts` | `checkAgreement` — Agreement Sent no follow-up |
@@ -235,7 +238,40 @@ Layer 2 is NEVER pulled automatically. Only triggered by Mo clicking "Load Full 
 
 ## AI Rule
 
-AI summaries are NEVER auto-generated. Manual button only. No scheduled regeneration.
+AI **summaries** (`ai_summaries`) are NEVER auto-generated on a schedule. Manual button only.
+
+**Exception (Phase 1 — Hermes):** AI **interpretation** is a separate, append-only layer
+(`case_analyses`) that the Hermes agent and the manual button may write. `CurrentState` derives from
+the latest `triage` analysis (summary fallback). See "Hermes Agent Layer" below. HubSpot stays
+read-only; Layer 2 stays manual; deploys stay gated.
+
+## Hermes Agent Layer — Phase 1
+
+Hermes is an external Discord-driven agent (separate VPS) that triages cases and reflects state on
+the dashboard. It reaches this app two ways (hybrid): **direct read-only Neon role** for reads, and
+the **HTTP API with `HERMES_TOKEN`** for writes.
+
+- **Facts vs. interpretation — the core boundary.** Business facts (deals, contacts, activities,
+  calls, emails, tasks, snoozes) are NEVER written by any agent. AI interpretation lives in the
+  append-only `case_analyses` table (`src/lib/db/case-analysis.ts`). One INSERT per run, source-tagged
+  (`source`/`actor`/`provider`/`model`), never an UPDATE. Do not add an update/overwrite path.
+- **Auth.** `HERMES_TOKEN` is separate from `CRON_SECRET` (revoke independently). Use
+  `isAuthedOrAgent(req)` to gate agent-capable write endpoints; `isAgentRequest(req)` to branch
+  agent-only behavior (audit, source tags). Both in `src/lib/auth/require-session.ts`.
+- **Kill switch.** `app_settings.agent_writes_enabled` (default-on). Every agent write checks
+  `assertAgentWritesEnabled()`; when off, return **423** via `agentWritesDisabledResponse()`. Reads
+  unaffected. Helpers in `src/lib/agent/guard.ts`.
+- **Audit + idempotency.** Every agent write logs to `agent_audit_log` with before/after, request
+  metadata, and `correlationId` (`src/lib/db/agent-audit.ts`). Agent writes carry an `Idempotency-Key`
+  header; endpoints return the existing row on replay. `idempotency_key` is unique on
+  `case_analyses`, `internal_tasks`, `deal_snoozes`.
+- **Enum-validated interpretation.** `POST /api/deals/[id]/analysis` validates `health`/`priority`/
+  `analysisType` against enums (drift guard). Agent tasks are tagged `source='hermes'`.
+- **Agent-capable endpoints (Phase 1):** `POST /api/deals/[id]/analysis`, `POST /api/tasks`,
+  `PATCH|DELETE /api/tasks/[id]`, `POST|DELETE /api/deals/[id]/snooze`, `POST /api/deals/[id]/summary`.
+  **Sync routes are NOT agent-enabled yet** (Phase 3). Deploys/email stay behind a Discord confirm.
+- **DB workflow caveat:** this repo's Neon DB is managed by **`db push`**, not `migrate dev` (which
+  would propose a destructive reset — never run it). See `docs/LEARNINGS.md`.
 
 ## Git Commit Rules
 

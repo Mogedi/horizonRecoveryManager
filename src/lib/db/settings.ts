@@ -164,3 +164,23 @@ export async function saveSettings(updates: { key: string; value: number }[]): P
     })
   }
 }
+
+// ─── Agent kill switch (Phase 1 — Hermes) ───────────────────────────────────────
+
+export const AGENT_WRITES_ENABLED_KEY = 'agent_writes_enabled'
+
+// Maintenance-mode switch for agent (Hermes) writes. Default-ON when the key is unset, so a
+// fresh DB allows writes; set the key to 'false' to instantly lock all agent mutations.
+export async function areAgentWritesEnabled(): Promise<boolean> {
+  const row = await prisma.appSetting.findUnique({ where: { key: AGENT_WRITES_ENABLED_KEY } })
+  if (!row) return true
+  return row.value !== 'false'
+}
+
+export async function setAgentWritesEnabled(enabled: boolean): Promise<void> {
+  await prisma.appSetting.upsert({
+    where: { key: AGENT_WRITES_ENABLED_KEY },
+    create: { key: AGENT_WRITES_ENABLED_KEY, value: String(enabled) },
+    update: { value: String(enabled) },
+  })
+}

@@ -4,6 +4,7 @@ import { evaluateAll, buildRuleCtx } from '@/lib/rules'
 import { loadStageMap, PIPELINE_GROUP, TERMINAL_STAGE_IDS } from '@/lib/db/settings'
 import { getLastSyncStatus } from '@/lib/db/sync-log'
 import { getMoActionDealIds } from '@/lib/db/summaries'
+import { getMoActionMapFromAnalysis } from '@/lib/db/case-analysis'
 import { getClassifiedCallCountsByDeal } from '@/lib/db/call-transcripts'
 import { getWeeklyCallStats, computePipelineStats } from '@/lib/db/pipeline-stats'
 import type { DealWithFlags } from '@/lib/rules'
@@ -44,17 +45,27 @@ function assignBucket(
 }
 
 export async function GET() {
-  const [{ deals, snoozedDealIds }, stageMap, syncStatus, moActionIds, classifiedMap, weeklyCalls] = await Promise.all([
+  const [{ deals, snoozedDealIds }, stageMap, syncStatus, summaryMoIds, analysisMoMap, classifiedMap, weeklyCalls] = await Promise.all([
     getDealsForQueue(),
     loadStageMap(),
     getLastSyncStatus(),
     getMoActionDealIds(),
+    getMoActionMapFromAnalysis(),
     getClassifiedCallCountsByDeal(),
     getWeeklyCallStats(),
   ])
 
   const ctx = await buildRuleCtx(stageMap, snoozedDealIds)
   const results = evaluateAll(deals, ctx)
+
+  // The AI-interpretation layer (latest triage analysis) overrides the older ai_summaries
+  // signal per deal; deals with no analysis fall back to the summary set.
+  const moActionIds = new Set<string>()
+  for (const { deal } of results) {
+    const id = deal.hubspotId
+    const flagged = analysisMoMap.has(id) ? analysisMoMap.get(id)! : summaryMoIds.has(id)
+    if (flagged) moActionIds.add(id)
+  }
 
   const groups: Record<string, DealWithFlags[]> = {}
   for (const result of results) {

@@ -1,9 +1,32 @@
 // Conversational Hermes — free-text chat backed by Claude with READ-ONLY tools, so it answers
 // questions from real case data (resolving fuzzy names) instead of deferring to slash commands.
+// Cost-aware: defaults to Haiku (cheap); escalates to Sonnet on request. Reports per-message cost.
 import Anthropic from '@anthropic-ai/sdk'
+import { appendFile } from 'node:fs/promises'
 import { searchDeals, getCase, listQueue } from './cases-read.js'
 
-const MODEL = 'claude-sonnet-4-6'
+// $ per 1M tokens (input / output). Used for rough per-message cost estimates.
+const PRICING = {
+  'claude-haiku-4-5': { in: 1, out: 5 },
+  'claude-sonnet-4-6': { in: 3, out: 15 },
+}
+const DEFAULT_CHAT_MODEL = process.env.HERMES_CHAT_MODEL || 'claude-haiku-4-5'
+
+// Default to Haiku; let Mo escalate per-message ("use sonnet") or force back ("use haiku").
+function pickModel(userText) {
+  if (/\buse sonnet\b/i.test(userText)) return 'claude-sonnet-4-6'
+  if (/\buse haiku\b/i.test(userText)) return 'claude-haiku-4-5'
+  return DEFAULT_CHAT_MODEL
+}
+
+function estimateCostUSD(model, u) {
+  const p = PRICING[model] || PRICING['claude-sonnet-4-6']
+  const inTok =
+    (u.input_tokens || 0) +
+    (u.cache_creation_input_tokens || 0) * 1.25 +
+    (u.cache_read_input_tokens || 0) * 0.1
+  return (inTok * p.in + (u.output_tokens || 0) * p.out) / 1e6
+}
 
 let client
 function anthropic() {
@@ -101,12 +124,26 @@ function pushHistory(channelId, role, content) {
   histories.set(channelId, h)
 }
 
+// Best-effort usage log for a future /usage command. Never fails the chat.
+async function logUsage(entry) {
+  try {
+    await appendFile(new URL('../logs/usage.jsonl', import.meta.url), JSON.stringify(entry) + '\n')
+  } catch {
+    /* ignore */
+  }
+}
+
+// Returns { text, model, usage, costUSD }.
 export async function chat(channelId, userText) {
+  const model = pickModel(userText)
+  const system = `${SYSTEM}\n\nYou are currently running on the ${model} model. If Mo asks what model you're using, tell him honestly.`
   const messages = [...getHistory(channelId), { role: 'user', content: userText }]
+  const usage = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 }
   let finalText = '(no response)'
 
   for (let i = 0; i < 6; i++) {
-    const res = await anthropic().messages.create({ model: MODEL, max_tokens: 1500, system: SYSTEM, tools, messages })
+    const res = await anthropic().messages.create({ model, max_tokens: 1500, system, tools, messages })
+    for (const k of Object.keys(usage)) usage[k] += res.usage?.[k] || 0
 
     if (res.stop_reason === 'tool_use') {
       messages.push({ role: 'assistant', content: res.content })
@@ -135,5 +172,13 @@ export async function chat(channelId, userText) {
 
   pushHistory(channelId, 'user', userText)
   pushHistory(channelId, 'assistant', finalText)
-  return finalText
+
+  const costUSD = estimateCostUSD(model, usage)
+  await logUsage({
+    ts: new Date().toISOString(), channel: channelId, model,
+    in: usage.input_tokens, out: usage.output_tokens,
+    cache_read: usage.cache_read_input_tokens, cost: costUSD,
+  })
+
+  return { text: finalText, model, usage, costUSD }
 }

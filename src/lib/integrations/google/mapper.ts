@@ -16,7 +16,8 @@ function header(msg: GmailMessage, name: string): string | null {
 // direction: 'outbound' if message has the SENT label, else 'inbound'.
 export function mapGmailMessage(
   msg: GmailMessage,
-  dealHubspotId: string | null
+  dealHubspotId: string | null,
+  bodyText: string | null = null
 ): ActivityEventInput {
   const sentAt = msg.internalDate ? new Date(Number(msg.internalDate)) : new Date()
   const isSent = (msg.labelIds ?? []).includes('SENT')
@@ -33,7 +34,8 @@ export function mapGmailMessage(
     type: 'email',
     happenedAt: sentAt,
     direction: isSent ? 'outbound' : 'inbound',
-    body: msg.snippet ?? null,
+    // Full body when the sync chose to pull it (sent mail / case-related); else the snippet.
+    body: bodyText ?? msg.snippet ?? null,
     metadata: JSON.parse(JSON.stringify({
       subject,
       from,
@@ -41,8 +43,10 @@ export function mapGmailMessage(
       cc,
       labelIds: msg.labelIds ?? [],
       threadId: msg.threadId,
+      hasFullBody: bodyText != null,
     })),
-    rawPayload: JSON.parse(JSON.stringify(msg)),
+    // Store the raw payload only for headers-only messages; full-body messages already keep the text.
+    rawPayload: bodyText != null ? null : JSON.parse(JSON.stringify(msg)),
   }
 }
 

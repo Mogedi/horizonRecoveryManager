@@ -82,11 +82,21 @@ export class GoogleClient {
     service: string,
     method: 'GET' | 'POST',
     url: string,
-    params?: Record<string, string>,
+    params?: Record<string, string | string[]>,
     body?: unknown,
   ): Promise<T> {
     return googleLimiter.schedule(async () => {
-      const fullUrl = params ? `${url}?${new URLSearchParams(params)}` : url
+      // Build the query string supporting repeated keys (e.g. Gmail's metadataHeaders,
+      // which the API expects as one param per header — NOT a comma-joined value).
+      let fullUrl = url
+      if (params) {
+        const sp = new URLSearchParams()
+        for (const [k, v] of Object.entries(params)) {
+          if (Array.isArray(v)) for (const item of v) sp.append(k, item)
+          else sp.append(k, v)
+        }
+        fullUrl = `${url}?${sp.toString()}`
+      }
       const start = Date.now()
 
       const res = await this.fetchWithAuth(fullUrl, {
@@ -129,9 +139,11 @@ export class GoogleClient {
     id: string,
     format: 'metadata' | 'full' | 'minimal' = 'metadata'
   ): Promise<GmailMessage> {
-    const params: Record<string, string> = { format }
+    const params: Record<string, string | string[]> = { format }
     if (format === 'metadata') {
-      params.metadataHeaders = 'From,To,Cc,Subject,Date'
+      // Repeated query param — one entry per header. A comma-joined string is read by
+      // the Gmail API as a single (non-existent) header name and returns NO headers.
+      params.metadataHeaders = ['From', 'To', 'Cc', 'Subject', 'Date']
     }
     return this.request<GmailMessage>(
       'gmail', 'GET',

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { syncGmailSample, syncGmailFull } from '@/lib/integrations/google/sync'
+import { syncGmailSample, syncGmailFull, syncGmailBackfill } from '@/lib/integrations/google/sync'
 import { isGoogleConfigured } from '@/lib/integrations/google/auth'
 import { prisma } from '@/lib/db/client'
 import { log } from '@/lib/logger'
@@ -43,12 +43,14 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json().catch(() => ({}))
-  const mode: 'sample' | 'full' = body.mode === 'full' ? 'full' : 'sample'
+  const mode: 'sample' | 'full' | 'backfill' =
+    body.mode === 'backfill' ? 'backfill' : body.mode === 'full' ? 'full' : 'sample'
 
   log.info('google gmail sync triggered', { mode })
 
   try {
-    const report = mode === 'full' ? await syncGmailFull() : await syncGmailSample()
+    const report =
+      mode === 'backfill' ? await syncGmailBackfill() : mode === 'full' ? await syncGmailFull() : await syncGmailSample()
 
     return NextResponse.json({
       ok: true,
@@ -59,6 +61,7 @@ export async function POST(req: NextRequest) {
         messagesFetched: report.messagesFetched,
         messagesMatched: report.messagesMatched,
         messagesUnmatched: report.messagesUnmatched,
+        bodiesFetched: report.bodiesFetched,
         matchRate: report.messagesFetched > 0
           ? `${Math.round((report.messagesMatched / report.messagesFetched) * 100)}%`
           : 'n/a',

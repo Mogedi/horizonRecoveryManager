@@ -127,7 +127,7 @@ async function syncCallsInRange(
   const callsFetched = calls.length
   let callsMatched = 0
   let callsUnmatched = 0
-  let callsSkipped = 0
+  const callsSkipped = 0
 
   const events: ActivityEventInput[] = []
   const matchedDealIds = new Set<string>()

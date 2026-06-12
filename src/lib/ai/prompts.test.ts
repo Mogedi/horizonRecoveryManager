@@ -1,5 +1,16 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import { buildSummaryPrompt } from './prompts'
+
+// buildSummaryPrompt filters activities against the real wall clock (`new Date()`), so pin
+// "now" to a fixed reference date — otherwise these fixtures age out of the lookback window
+// and the suite breaks purely because time passed (see prompts.ts cutoff).
+beforeAll(() => {
+  vi.useFakeTimers()
+  vi.setSystemTime(new Date('2026-06-07T00:00:00Z'))
+})
+afterAll(() => {
+  vi.useRealTimers()
+})
 
 const deal = {
   hubspotId: 'deal-123',

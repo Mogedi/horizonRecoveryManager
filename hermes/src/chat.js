@@ -9,6 +9,7 @@ import {
 } from './skills/registry.js'
 import { routeSkills } from './skills/router.js'
 import { recall } from './memory.js'
+import { STYLE_RULES } from './style-rules.js'
 
 // $ per 1M tokens (input / output). Used for rough per-message cost estimates.
 const PRICING = {
@@ -16,6 +17,8 @@ const PRICING = {
   'claude-sonnet-4-6': { in: 3, out: 15 },
 }
 const DEFAULT_CHAT_MODEL = process.env.HERMES_CHAT_MODEL || 'claude-haiku-4-5'
+// Drafting/understanding email always uses a stronger model (quality + no "dumb" mistakes).
+const DRAFT_MODEL = process.env.HERMES_DRAFT_MODEL || 'claude-sonnet-4-6'
 
 // Default to Haiku; let Mo escalate per-message ("use sonnet") or force back ("use haiku").
 function pickModel(userText) {
@@ -107,7 +110,7 @@ function buildSystem(model, activeSkills, loadableSkills, memories) {
 // Returns { text, model, usage, costUSD, skills }.
 // images/docs: optional public URLs (Discord attachments) — images seen via vision, PDFs read natively.
 export async function chat(channelId, userText, images = [], docs = []) {
-  const model = pickModel(userText)
+  let model = pickModel(userText)
   // Passive recall: surface relevant long-term memories into context every turn.
   const memories = await recall(userText, 8).catch(() => [])
   const usage = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 }
@@ -127,6 +130,9 @@ export async function chat(channelId, userText, images = [], docs = []) {
   const active = [...alwaysOn, ...routable.filter((s) => selectedNames.has(s.name))]
   const activeNames = new Set(active.map((s) => s.name))
   const loadable = enabled.filter((s) => !activeNames.has(s.name))
+
+  // Drafting email always runs on the stronger model (quality + judgment), regardless of default.
+  if (activeNames.has('draft-email')) model = DRAFT_MODEL
 
   let { tools, handlers, serverTools } = assembleTools(active)
   const loadedNames = new Set(active.map((s) => s.name))
@@ -234,7 +240,7 @@ export async function summarizeThread(emails) {
   }).join('\n---\n')
   if (!transcript) return '(no prior messages)'
   const res = await anthropic().messages.create({
-    model: DEFAULT_CHAT_MODEL, max_tokens: 350,
+    model: DRAFT_MODEL, max_tokens: 350,
     system: 'Summarize this email thread for Mo in 2–4 short lines: what it is about, what the latest message said, and why he is replying. Be concise, plain text.',
     messages: [{ role: 'user', content: transcript.slice(0, 12000) }],
   })
@@ -245,11 +251,11 @@ export async function summarizeThread(emails) {
 // Used by the draft card's reply-to-edit flow (a single cheap call, not the full loop).
 export async function reviseDraft({ subject, body, instruction }) {
   const system =
-    'You revise an email draft written in Mo\'s voice for Horizon Recovery. Apply the instruction, keep his ' +
-    'tone and concision, keep it a complete email body. Return ONLY the revised body text — no preamble, no quotes.'
+    "You revise an email draft for Mo at Horizon Recovery. Apply his instruction, keep it a complete email body, " +
+    "and return ONLY the revised body text (no preamble, no quotes).\n\n" + STYLE_RULES
   const prompt = `Current subject: ${subject || '(none)'}\nCurrent body:\n${body || ''}\n\nMo's instruction: ${instruction}\n\nRevised body:`
   const res = await anthropic().messages.create({
-    model: DEFAULT_CHAT_MODEL, max_tokens: 1200, system,
+    model: DRAFT_MODEL, max_tokens: 1200, system,
     messages: [{ role: 'user', content: prompt }],
   })
   return res.content.filter((b) => b.type === 'text').map((b) => b.text).join('').trim()

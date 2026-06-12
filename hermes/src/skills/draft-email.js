@@ -3,17 +3,18 @@
 // (edit recipients/message, Send-with-confirm). Sending only happens from that card.
 import { getEmailDetail } from '../cases-read.js'
 import { emailDraftCreate } from '../hm-api.js'
+import { STYLE_RULES } from '../style-rules.js'
 
 export default {
   name: 'draft-email',
   description: "Draft an email reply (or a new email) in Mo's voice as a Gmail DRAFT — never sends. Use for \"draft a reply to X\", \"write an email to Y\".",
   playbook:
-    'Write in MO\'S voice — first pull real examples with get_sent_emails (email-assistant) and mirror his ' +
-    'phrasing, length, sign-off. For a REPLY: call read_email_to_reply first to get the original; set ' +
-    'To = the original sender, CC = the original CC addresses (reply-all) MINUS Mo\'s own address, and add ' +
-    'Kathleen (kathleen@horizonrecoverygroup.com) to CC if it\'s case-related. Subject = "Re: <original>". ' +
-    'Pass reply_to_email_id so it threads. Then call create_draft — it posts a review card where Mo edits ' +
-    'recipients/message and clicks Send. NEVER claim you sent it; you only draft. Keep it concise.',
+    'Process: for a REPLY, call read_email_to_reply first to get the original (and understand the thread); ' +
+    'pull real style examples with get_sent_emails. Set To = the original sender, CC = the original CC ' +
+    'addresses (reply-all) MINUS Mo\'s own address, add Kathleen (kathleen@horizonrecoverygroup.com) to CC if ' +
+    'it\'s case-related; Subject = "Re: <original>"; pass reply_to_email_id so it threads. Then call ' +
+    'create_draft (it posts a review card — Mo edits recipients/message and clicks Send; you NEVER send).\n\n' +
+    STYLE_RULES,
   writes: true,
   defaultEnabled: true,
   tools: [

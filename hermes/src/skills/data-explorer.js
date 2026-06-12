@@ -29,8 +29,10 @@ KEY TABLES (call describe_schema for the full column list):
   JSON map of stageId -> stage name), sync_log/sync_sources.
 
 GOTCHAS:
-- Stage is an ID. To show a stage NAME, join app_settings:
-    (SELECT value::jsonb FROM app_settings WHERE key='stage_map') ->> d.stage
+- Stage is an OPAQUE ID. NEVER show Mo a raw stage id (e.g. "Stage 3478695646") — it's meaningless to
+  him. ALWAYS resolve it to the stage NAME using the STAGE NAMES map provided in your context, and
+  group/label by name. In SQL you can also join:
+    (SELECT value::jsonb FROM app_settings WHERE key='stage_map') ->> d.stage AS stage_name
 - # phones for a contact: jsonb_array_length(phone_numbers). # emails: jsonb_array_length(email_list).
 - "Missing contact info" usually means a contact (or deal) with no phones AND no emails.
 - "Missing documents / missing tax deed doc": deals.hubspot_files_linked = false, or

@@ -66,7 +66,7 @@ export async function describeSchema() {
 
 // Stage ID → human name (from app_settings.stage_map). Cached for the process.
 let stageMapCache
-async function getStageMap() {
+export async function getStageMap() {
   if (stageMapCache) return stageMapCache
   const rows = await query(`SELECT value FROM app_settings WHERE key = 'stage_map'`)
   try {

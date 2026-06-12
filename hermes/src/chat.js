@@ -10,6 +10,7 @@ import {
 import { routeSkills } from './skills/router.js'
 import { recall } from './memory.js'
 import { renderStyleSheet } from './email-style.js'
+import { getStageMap } from './cases-read.js'
 
 // $ per 1M tokens (input / output). Used for rough per-message cost estimates.
 const PRICING = {
@@ -114,13 +115,14 @@ async function logUsage(entry) {
   }
 }
 
-function buildSystem(model, activeSkills, loadableSkills, memories, styleSheet) {
+function buildSystem(model, activeSkills, loadableSkills, memories, styleSheet, stageGuide) {
   const playbooks = activeSkills.flatMap((s) => (s.playbook ? [`[${s.name}] ${s.playbook}`] : []))
   const parts = [SYSTEM_BASE]
   if (memories?.length) {
     parts.push('What you remember about Mo (long-term memory):\n' + memories.map((m) => `- ${m.content}`).join('\n'))
   }
   if (styleSheet) parts.push(styleSheet)
+  if (stageGuide) parts.push(stageGuide)
   if (playbooks.length) parts.push('Active skill playbooks:\n' + playbooks.join('\n'))
   if (loadableSkills.length) {
     parts.push('Other skills you can load with load_skill if needed:\n' + skillMenu(loadableSkills))
@@ -158,6 +160,16 @@ export async function chat(channelId, userText, images = [], docs = []) {
   let styleSheet = null
   if (activeNames.has('draft-email')) { model = DRAFT_MODEL; styleSheet = await renderStyleSheet().catch(() => null) }
 
+  // Data skills query raw stage IDs — give the model the id→name map + a hard rule to use names.
+  let stageGuide = null
+  if (activeNames.has('data-explorer') || activeNames.has('outreach-planner') || activeNames.has('data-sync')) {
+    const sm = await getStageMap().catch(() => ({}))
+    if (sm && Object.keys(sm).length) {
+      const lines = Object.entries(sm).map(([id, name]) => `  ${id} = ${name}`).join('\n')
+      stageGuide = `STAGE NAMES (deals.stage is an opaque ID — ALWAYS show Mo the NAME below, never a raw stage ID; group/label by name):\n${lines}`
+    }
+  }
+
   let { tools, handlers, serverTools } = assembleTools(active)
   const loadedNames = new Set(active.map((s) => s.name))
   let searchCount = 0
@@ -180,7 +192,7 @@ export async function chat(channelId, userText, images = [], docs = []) {
   for (let i = 0; i < 8; i++) {
     const loadableNow = enabled.filter((s) => !loadedNames.has(s.name))
     const allTools = [...tools, ...serverTools, ...(loadableNow.length ? [LOAD_SKILL_TOOL] : [])]
-    const system = buildSystem(model, active, loadableNow, memories, styleSheet)
+    const system = buildSystem(model, active, loadableNow, memories, styleSheet, stageGuide)
 
     const res = await anthropic().messages.create({ model, max_tokens: 1500, system, tools: allTools, messages })
     addUsage(res.usage)

@@ -145,6 +145,7 @@ export async function chat(channelId, userText, images = [], docs = []) {
   const userContent = attach.length ? [...attach, { type: 'text', text: userText }] : userText
   const messages = [...getHistory(channelId), { role: 'user', content: userContent }]
   let finalText = '(no response)'
+  let draftCard = null // set when a tool wants the bot to post an interactive draft card
 
   for (let i = 0; i < 8; i++) {
     const loadableNow = enabled.filter((s) => !loadedNames.has(s.name))
@@ -184,6 +185,11 @@ export async function chat(channelId, userText, images = [], docs = []) {
             }
           } else if (handlers[block.name]) {
             out = await handlers[block.name](block.input || {})
+            // A tool can ask the bot to post an interactive card (e.g. a draft review card).
+            if (out && typeof out === 'object' && out._draftCard) {
+              draftCard = out._draftCard
+              out = out._toolText || 'done'
+            }
           } else {
             out = `unknown tool: ${block.name}`
           }
@@ -216,5 +222,19 @@ export async function chat(channelId, userText, images = [], docs = []) {
     cache_read: usage.cache_read_input_tokens, searches: searchCount, cost: costUSD,
   })
 
-  return { text: finalText, model, usage, costUSD, skills: skillsUsed, searches: searchCount }
+  return { text: finalText, model, usage, costUSD, skills: skillsUsed, searches: searchCount, draftCard }
+}
+
+// Talk-to-edit: revise a draft body given a natural-language instruction, keeping Mo's voice.
+// Used by the draft card's reply-to-edit flow (a single cheap call, not the full loop).
+export async function reviseDraft({ subject, body, instruction }) {
+  const system =
+    'You revise an email draft written in Mo\'s voice for Horizon Recovery. Apply the instruction, keep his ' +
+    'tone and concision, keep it a complete email body. Return ONLY the revised body text — no preamble, no quotes.'
+  const prompt = `Current subject: ${subject || '(none)'}\nCurrent body:\n${body || ''}\n\nMo's instruction: ${instruction}\n\nRevised body:`
+  const res = await anthropic().messages.create({
+    model: DEFAULT_CHAT_MODEL, max_tokens: 1200, system,
+    messages: [{ role: 'user', content: prompt }],
+  })
+  return res.content.filter((b) => b.type === 'text').map((b) => b.text).join('').trim()
 }

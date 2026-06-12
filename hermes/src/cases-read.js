@@ -239,6 +239,22 @@ export async function getRecentEmails({ days = 1, importance = null, direction =
   )
 }
 
+// The most recent RECEIVED email matching a sender/subject query — for drafting a reply.
+// Returns its Gmail id (for threading), from/to/cc (for reply-all), subject, and body.
+export async function getEmailDetail(queryStr) {
+  const rows = await query(
+    `SELECT external_id AS id,
+            metadata->>'from' AS from_addr, metadata->>'to' AS to_addr, metadata->>'cc' AS cc_addr,
+            metadata->>'subject' AS subject, body, happened_at AS ts, deal_hubspot_id
+     FROM activity_events
+     WHERE source::text='GOOGLE' AND type='email' AND direction='inbound'
+       AND (metadata->>'subject' ILIKE $1 OR metadata->>'from' ILIKE $1)
+     ORDER BY happened_at DESC LIMIT 1`,
+    [`%${queryStr}%`]
+  )
+  return rows[0] ?? null
+}
+
 // Deals with no Layer 2 data yet (no contacts) — i.e. new cases needing a Layer 2 pull.
 export async function dealsWithoutLayer2() {
   return query(

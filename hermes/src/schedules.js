@@ -5,13 +5,73 @@
 // Posts to Discord on failure (and notable successes) if HERMES_SCHEDULE_CHANNEL is set.
 import cron from 'node-cron'
 import {
-  syncJustCall, syncGmail, syncDrive, triggerLayer2,
-  classifyCalls, activeDealsWithDocs, verifyDealDocs, getDigest,
+  syncJustCall, syncDrive, triggerLayer2,
+  classifyCalls, activeDealsWithDocs, verifyDealDocs, getDigest, emailIntake,
 } from './hm-api.js'
-import { dealsWithoutLayer2 } from './cases-read.js'
+import { dealsWithoutLayer2, getRecentEmails } from './cases-read.js'
 
 const TZ = 'America/New_York'
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+// ── #inbox channel (email notifications) ────────────────────────────────────────
+const ownerMention = () => (process.env.DISCORD_OWNER_ID ? `<@${process.env.DISCORD_OWNER_ID}> ` : '')
+const shortAddr = (h) => {
+  if (!h) return 'unknown'
+  const name = h.match(/^\s*"?([^"<]+?)"?\s*</)?.[1]?.trim()
+  const email = h.match(/[\w.+-]+@[\w.-]+/)?.[0]
+  return name || email || h.slice(0, 40)
+}
+
+async function resolveInboxChannel(client) {
+  const ref = process.env.HERMES_INBOX_CHANNEL
+  if (!ref) return null
+  try { const c = await client.channels.fetch(ref); if (c?.isTextBased?.()) return c } catch { /* try name */ }
+  for (const g of client.guilds.cache.values()) {
+    const c = g.channels.cache.find((ch) => ch.name === ref && ch.isTextBased?.())
+    if (c) return c
+  }
+  return null
+}
+async function postToInbox(client, text) {
+  const ch = await resolveInboxChannel(client)
+  if (!ch) { console.warn('[email] no #inbox channel (set HERMES_INBOX_CHANNEL)'); return }
+  try { await ch.send(text.slice(0, 1990)) } catch (e) { console.error(`[email] post failed: ${e.message}`) }
+}
+
+// Every-2-min email pull + triage. @mentions Mo on important mail; FYI rolls into the daily digest.
+// Called by the scheduler with a client (posts); /sync-all calls it without a client (pull only).
+async function jobEmailIntake(client) {
+  const r = await emailIntake()
+  if (client) {
+    for (const e of r.notify ?? []) {
+      await postToInbox(client,
+        `🔔 ${ownerMention()}**Important email** — from ${shortAddr(e.from)}\n` +
+        `**${e.subject || '(no subject)'}**\n_${e.reason}_${e.dealName ? ` · case: ${e.dealName}` : ''}\n${e.link}`)
+    }
+    const dig = r.digest ?? []
+    if (dig.length) {
+      const lines = dig.slice(0, 6).map((e) => `• ${shortAddr(e.from)}: "${(e.subject || '(no subject)').slice(0, 60)}"`).join('\n')
+      await postToInbox(client, `📬 ${dig.length} FYI email(s) (saved for today's digest):\n${lines}${dig.length > 6 ? `\n…and ${dig.length - 6} more` : ''}`)
+    }
+  }
+  return { fetched: r.fetched, notify: (r.notify ?? []).length, digest: (r.digest ?? []).length, noise: r.noiseCount }
+}
+
+// End-of-day inbox digest → #inbox.
+async function jobEmailDigest(client) {
+  const rows = await getRecentEmails({ days: 1, direction: 'inbound', limit: 200 })
+  if (!rows.length) return { post: null }
+  const by = { notify: [], digest: [], noise: [], unclassified: [] }
+  for (const r of rows) (by[r.importance] ?? by.unclassified).push(r)
+  const fmt = (a) => a.slice(0, 15).map((r) => `• ${shortAddr(r.from_addr)}: "${(r.subject || '(no subject)').slice(0, 70)}"`).join('\n')
+  let msg = `🌇 **Email digest — today** (${rows.length} received)\n`
+  if (by.notify.length) msg += `\n**⚠️ Needs attention (${by.notify.length}):**\n${fmt(by.notify)}\n`
+  if (by.digest.length) msg += `\n**FYI (${by.digest.length}):**\n${fmt(by.digest)}\n`
+  const low = by.noise.length + by.unclassified.length
+  if (low) msg += `\n_+${low} low-priority_`
+  if (client) await postToInbox(client, msg)
+  return { post: null }
+}
 
 async function jobLayer2New() {
   const todo = await dealsWithoutLayer2()
@@ -85,7 +145,7 @@ async function jobMorningDigest() {
 // name → cron expr + handler + human description. Shared by the scheduler and /sync-all.
 const JOBS = [
   { name: 'justcall-sync', expr: '0 8-20 * * *', when: 'hourly, 8am–8pm ET', what: 'pull new JustCall logs', fn: () => syncJustCall() },
-  { name: 'gmail-sync', expr: '0 8-20/2 * * *', when: 'every 2 hours, 8am–8pm ET', what: 'pull new Gmail', fn: () => syncGmail() },
+  { name: 'email-intake', expr: '*/2 8-20 * * *', when: 'every 2 min, 8am–8pm ET', what: 'pull + triage new email, @mention on important', fn: (client) => jobEmailIntake(client) },
   { name: 'drive-index', expr: '0 8,14 * * *', when: '8am & 2pm ET', what: 'index Drive folders', fn: () => syncDrive() },
   { name: 'layer2-new-cases', expr: '30 8 * * *', when: '8:30am ET daily', what: 'pull Layer 2 detail for new cases', fn: () => jobLayer2New() },
 ]
@@ -93,6 +153,7 @@ const JOBS = [
 // Heavy jobs — off-hours, separate cadence. NOT part of /sync-all (which is the work-window syncs).
 const HEAVY_JOBS = [
   { name: 'morning-digest', expr: '45 7 * * *', when: '7:45am ET daily', what: 'post the morning briefing', fn: () => jobMorningDigest() },
+  { name: 'email-digest', expr: '0 17 * * *', when: '5pm ET daily', what: 'post the end-of-day email digest', fn: (client) => jobEmailDigest(client) },
   { name: 'transcribe-calls', expr: '0 2 * * *', when: '2am ET daily', what: 'transcribe + classify new calls', fn: () => jobTranscribeCalls() },
   { name: 'verify-docs', expr: '0 3 * * 0', when: 'Sundays 3am ET (weekly)', what: 'verify case docs are linked in HubSpot', fn: () => jobVerifyDocs() },
 ]
@@ -142,7 +203,7 @@ function wrap(name, client, fn) {
   return async () => {
     const t0 = Date.now()
     try {
-      const r = await fn()
+      const r = await fn(client) // jobs that post to a non-schedule channel use the client; others ignore it
       console.log(`[schedule] ${name} ok (${Date.now() - t0}ms)`, r ? JSON.stringify(r).slice(0, 200) : '')
       lastRuns[name] = { at: new Date().toISOString(), ok: true, ms: Date.now() - t0, summary: r?.post ?? JSON.stringify(r ?? {}).slice(0, 160) }
       // Jobs that want to announce a result return a `post` string; post it if present.

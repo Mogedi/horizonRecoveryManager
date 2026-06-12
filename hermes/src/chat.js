@@ -115,9 +115,22 @@ async function logUsage(entry) {
   }
 }
 
+// Your replies render in Discord, which does NOT support markdown tables (pipes show as raw text).
+const DISCORD_FORMAT =
+  "DISCORD FORMATTING — your output renders in Discord (NO markdown tables; pipes show as ugly raw text):\n" +
+  "- For ANY columnar/tabular data (lists of cases, rows with columns), use a fenced CODE BLOCK with " +
+  "space-aligned columns — monospace lines the columns up. NEVER use markdown | tables |.\n" +
+  "  Example:\n```\n#  Case                         Amount  Stage\n1  UPSON 42 Edgewood (Dobrozsi)  $38.8K  Attempted Contact\n2  NEWTON 95 Keel (Nolley)       $74.8K  Attempted Contact\n```\n" +
+  "- Keep columns TIGHT so they fit a phone: abbreviate (county + short address + last name), use $38.8K, " +
+  "trim/align stage. Pick a sensible column order, widest-useful info first.\n" +
+  "- For non-tabular answers use clean structure: ## headers, **bold** the key value, short bullets, blank " +
+  "lines between groups. Never a wall of text.\n" +
+  "- If there's a LOT (e.g. 40+ rows), still give the full code-block table if asked to 'list', but lead with " +
+  "a one-line summary and offer to filter/group (by stage, county, amount).";
+
 function buildSystem(model, activeSkills, loadableSkills, memories, styleSheet, stageGuide) {
   const playbooks = activeSkills.flatMap((s) => (s.playbook ? [`[${s.name}] ${s.playbook}`] : []))
-  const parts = [SYSTEM_BASE]
+  const parts = [SYSTEM_BASE, DISCORD_FORMAT]
   if (memories?.length) {
     parts.push('What you remember about Mo (long-term memory):\n' + memories.map((m) => `- ${m.content}`).join('\n'))
   }

@@ -216,6 +216,29 @@ export async function getSentEmails(limit = 20) {
   )
 }
 
+// Recent emails (received by default) with their triaged importance — for the end-of-day digest
+// and on-demand "what's going on with my emails" queries.
+export async function getRecentEmails({ days = 1, importance = null, direction = 'inbound', limit = 200 } = {}) {
+  const params = [days]
+  let where = `source::text='GOOGLE' AND type='email' AND happened_at > now() - make_interval(days => $1::int)`
+  if (direction) { params.push(direction); where += ` AND direction = $${params.length}` }
+  if (importance) { params.push(importance); where += ` AND metadata->>'importance' = $${params.length}` }
+  params.push(limit)
+  return query(
+    `SELECT happened_at AS ts,
+            metadata->>'from'    AS from_addr,
+            metadata->>'subject' AS subject,
+            metadata->>'importance' AS importance,
+            (metadata->>'hasFullBody')='true' AS has_body,
+            deal_hubspot_id
+     FROM activity_events
+     WHERE ${where}
+     ORDER BY happened_at DESC
+     LIMIT $${params.length}`,
+    params
+  )
+}
+
 // Deals with no Layer 2 data yet (no contacts) — i.e. new cases needing a Layer 2 pull.
 export async function dealsWithoutLayer2() {
   return query(

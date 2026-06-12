@@ -147,6 +147,142 @@ function extractBody(payload: GmailMessage['payload']): string | null {
   return null
 }
 
+// ─── Email intake (real-time pipeline) ──────────────────────────────────────────
+// Importance triage for the inbox notifier — broadened beyond casework to Mo's whole business +
+// legal matters. One cheap Haiku call; also decides whether the full body is worth pulling.
+type Importance = 'notify' | 'digest' | 'noise'
+
+async function classifyEmailImportance(
+  from: string | null, subject: string | null, preview: string | null
+): Promise<{ importance: Importance; pullBody: boolean; reason: string }> {
+  const prompt =
+    `An email arrived.\nFrom: ${from ?? ''}\nSubject: ${JSON.stringify(subject ?? '')}\n` +
+    `Preview: ${JSON.stringify((preview ?? '').slice(0, 300))}\n\n` +
+    `Mo runs Horizon Recovery (surplus-funds recovery) and uses this to manage his WHOLE business and ` +
+    `legal/attorney matters. Decide:\n` +
+    `1. importance: "notify" if it plausibly needs Mo's attention soon — a lawyer/attorney, court/county/clerk, ` +
+    `a client or heir, money/payment/invoice/wire, a deadline, a real person doing business, or anything ` +
+    `time-sensitive or personal-to-the-business. "digest" if it's a real but non-urgent FYI. "noise" if it's ` +
+    `marketing, newsletters, automated receipts, or app notifications.\n` +
+    `2. pull_body: true if reading the full body would help decide or matters (anything notify-worthy, or an ` +
+    `unfamiliar sender). false for obvious noise.\n` +
+    `Bias toward notify and pull_body when unsure — better safe. ` +
+    `Respond JSON only: {"importance":"notify|digest|noise","pull_body":boolean,"reason":"<=10 words"}`
+  try {
+    const txt = await callClaude(prompt, 'You triage email importance. Respond with strict JSON only.', 150, 'claude-haiku-4-5')
+    const m = txt.match(/\{[\s\S]*\}/)
+    const o = m ? JSON.parse(m[0]) : {}
+    const importance: Importance = ['notify', 'digest', 'noise'].includes(o.importance) ? o.importance : 'digest'
+    return { importance, pullBody: !!o.pull_body, reason: String(o.reason ?? '').slice(0, 80) }
+  } catch {
+    return { importance: 'digest', pullBody: true, reason: 'classify failed' }
+  }
+}
+
+export type IntakeEmail = {
+  id: string; from: string | null; subject: string | null; snippet: string | null
+  importance: Importance; reason: string; hasBody: boolean; dealName: string | null; link: string
+}
+export type IntakeResult = {
+  fetched: number; notify: IntakeEmail[]; digest: IntakeEmail[]; noiseCount: number; since: string; until: string
+}
+
+// Incremental pull since the GOOGLE cursor: classify each new email's importance + decide body,
+// upsert (tagged metadata.importance), and return what to notify on now vs roll into the digest.
+// This is the 2-minute real-time pipeline (replaces the old periodic gmail-sync).
+export async function intakeNewEmails(opts: { maxMessages?: number } = {}): Promise<IntakeResult> {
+  const maxMessages = opts.maxMessages ?? 40
+  const source = await prisma.syncSource.findUnique({ where: { name: 'GOOGLE' } })
+  const since = source?.lastSyncedAt ?? new Date(Date.now() - 24 * 60 * 60 * 1000)
+  const until = new Date()
+  const query = `after:${Math.floor(since.getTime() / 1000)} before:${Math.floor(until.getTime() / 1000)}`
+
+  const emailMap = await buildEmailDealMap()
+  const senderRules = await getAllSenderRules()
+  const events: ActivityEventInput[] = []
+  const notify: IntakeEmail[] = []
+  const digest: IntakeEmail[] = []
+  let noiseCount = 0
+  let fetched = 0
+  let pageToken: string | undefined
+
+  do {
+    const remaining = maxMessages - fetched
+    if (remaining <= 0) break
+    const listRes = await googleClient.listGmailMessages(query, { maxResults: Math.min(remaining, 50), pageToken })
+    const ids = listRes.messages ?? []
+    if (ids.length === 0) break
+
+    for (const stub of ids) {
+      if (fetched >= maxMessages) break
+      const msg = await googleClient.getGmailMessage(stub.id, 'metadata')
+      fetched++
+      const isSent = (msg.labelIds ?? []).includes('SENT')
+      const dealId = matchGmailToDeal(msg, emailMap)
+      const subject = headerValue(msg, 'subject')
+      const fromHeader = headerValue(msg, 'from')
+      const sender = firstEmail(fromHeader)
+
+      let importance: Importance = 'digest'
+      let reason = ''
+      let pullBody = false
+      if (isSent) {
+        pullBody = true; importance = 'noise'; reason = 'sent by Mo' // sent mail isn't an inbound notification
+      } else if (dealId) {
+        const c = await classifyEmailImportance(sender, subject, msg.snippet ?? null)
+        pullBody = true; importance = c.importance === 'noise' ? 'digest' : c.importance; reason = c.reason || 'case-related'
+      } else if (sender && senderRules.has(sender) && senderRules.get(sender) === false) {
+        pullBody = false; importance = 'noise'; reason = 'known noise sender'
+      } else if (sender && isNoiseHeuristic(sender, subject)) {
+        pullBody = false; importance = 'noise'; reason = 'noise heuristic'
+        senderRules.set(sender, false)
+        await upsertSenderRule(sender, false, { classification: 'noise', reason: 'heuristic', source: 'heuristic' })
+      } else {
+        const c = await classifyEmailImportance(sender, subject, msg.snippet ?? null)
+        importance = c.importance; pullBody = c.pullBody; reason = c.reason
+        if (sender) {
+          senderRules.set(sender, pullBody)
+          await upsertSenderRule(sender, pullBody, { classification: importance, reason, source: 'auto' })
+        }
+      }
+
+      let bodyText: string | null = null
+      let finalMsg: GmailMessage = msg
+      if (pullBody) {
+        try {
+          const full = await googleClient.getGmailMessage(stub.id, 'full')
+          bodyText = extractBody(full.payload)
+          finalMsg = full
+        } catch { /* keep metadata-only */ }
+      }
+      const ev = mapGmailMessage(finalMsg, dealId, bodyText)
+      ev.metadata = JSON.parse(JSON.stringify({ ...(ev.metadata as object), importance, importanceReason: reason }))
+      events.push(ev)
+
+      if (!isSent) {
+        const item: IntakeEmail = {
+          id: msg.id, from: fromHeader, subject, snippet: msg.snippet ?? null,
+          importance, reason, hasBody: !!bodyText, dealName: null,
+          link: `https://mail.google.com/mail/u/0/#all/${msg.id}`,
+        }
+        if (importance === 'notify') notify.push(item)
+        else if (importance === 'digest') digest.push(item)
+        else noiseCount++
+      }
+    }
+    pageToken = listRes.nextPageToken
+  } while (pageToken && fetched < maxMessages)
+
+  await upsertActivityEvents(events)
+  await prisma.syncSource.upsert({
+    where: { name: 'GOOGLE' },
+    create: { name: 'GOOGLE', isActive: true, lastSyncedAt: until },
+    update: { lastSyncedAt: until, isActive: true },
+  })
+
+  return { fetched, notify, digest, noiseCount, since: since.toISOString(), until: until.toISOString() }
+}
+
 // ─── Report type ──────────────────────────────────────────────────────────────
 
 export type GmailSyncReport = {

@@ -1,6 +1,6 @@
 // Skill: data-sync — pull fresh data on demand. Refresh a single case from HubSpot (Layer 2) and
 // read it back, or run a source sync (calls / emails / drive / deal-list) as a full or quick pull.
-import { syncJustCall, syncGmail, syncDrive, triggerLayer1, triggerLayer2 } from '../hm-api.js'
+import { syncJustCall, syncGmail, syncDrive, triggerLayer1, refreshCase } from '../hm-api.js'
 import { runAllSyncs } from '../schedules.js'
 
 function compact(r) {
@@ -28,10 +28,13 @@ export default {
   tools: [
     {
       name: 'refresh_case',
-      description: "Pull the latest HubSpot detail for ONE deal (contacts, activity, notes, tasks) into the DB. Needs the deal's hubspot_id. After it returns, read the case with get_case to report the latest.",
+      description: "Pull the LATEST for one deal from all 3 sources (HubSpot Layer 2 + that deal's JustCall calls + that deal's Gmail) into the DB. Freshness-gated: skips if refreshed in the last 30 min unless force=true. Needs the deal's hubspot_id; after it returns, read with get_case.",
       input_schema: {
         type: 'object',
-        properties: { deal_id: { type: 'string', description: 'the deal hubspot_id' } },
+        properties: {
+          deal_id: { type: 'string', description: 'the deal hubspot_id' },
+          force: { type: 'boolean', description: 'force a re-pull even if refreshed recently' },
+        },
         required: ['deal_id'],
       },
     },
@@ -56,8 +59,10 @@ export default {
   handlers: {
     refresh_case: async (input) => {
       if (!input.deal_id) return 'a deal hubspot_id is required'
-      const r = await triggerLayer2(input.deal_id)
-      return { refreshed: input.deal_id, result: compact(r), next: 'now call get_case to read the latest' }
+      const r = await refreshCase(input.deal_id, !!input.force)
+      return r.skipped
+        ? { refreshed: input.deal_id, skipped: true, reason: 'already fresh (refreshed <30 min ago)', next: 'read with get_case' }
+        : { refreshed: input.deal_id, hubspot: compact(r.hubspot), calls: compact(r.calls), emails: compact(r.emails), next: 'now call get_case to read the latest' }
     },
     sync_data: async (input) => {
       const mode = input.mode === 'sample' ? 'sample' : 'full'

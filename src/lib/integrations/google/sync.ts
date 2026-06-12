@@ -184,6 +184,49 @@ export async function syncGmailBackfill(): Promise<GmailSyncReport> {
   return syncGmailInRange(since, new Date(), 'backfill', 100000)
 }
 
+// Targeted per-deal email pull (for the case-refresh flow). Searches Gmail for messages to/from
+// THIS deal's contact addresses only — never the whole mailbox. `since` bounds the window; matched
+// mail is deal-related so we pull full bodies. Capped for the Vercel function budget.
+export async function syncGmailForDeal(
+  dealHubspotId: string,
+  since: Date,
+  maxMessages = 60
+): Promise<{ emails: number; fetched: number; bodies: number; inserted: number }> {
+  const contacts = await prisma.dealContact.findMany({ where: { dealHubspotId }, select: { emailList: true } })
+  const addrs = new Set<string>()
+  for (const c of contacts) {
+    const list = Array.isArray(c.emailList) ? (c.emailList as unknown[]) : []
+    for (const e of list) if (typeof e === 'string' && e.trim()) addrs.add(e.trim().toLowerCase())
+  }
+  if (addrs.size === 0) return { emails: 0, fetched: 0, bodies: 0, inserted: 0 }
+
+  const sinceUnix = Math.floor(since.getTime() / 1000)
+  const addrClause = [...addrs].map((e) => `from:${e} OR to:${e}`).join(' OR ')
+  const query = `after:${sinceUnix} (${addrClause})`
+
+  const events: ActivityEventInput[] = []
+  let pageToken: string | undefined
+  let fetched = 0
+  let bodies = 0
+  do {
+    const listRes = await googleClient.listGmailMessages(query, { maxResults: Math.min(maxMessages - fetched, 100), pageToken })
+    const ids = listRes.messages ?? []
+    if (ids.length === 0) break
+    for (const stub of ids) {
+      if (fetched >= maxMessages) break
+      const full = await googleClient.getGmailMessage(stub.id, 'full')
+      const bodyText = extractBody(full.payload)
+      if (bodyText) bodies++
+      events.push(mapGmailMessage(full, dealHubspotId, bodyText))
+      fetched++
+    }
+    pageToken = listRes.nextPageToken
+  } while (pageToken && fetched < maxMessages)
+
+  const inserted = await upsertActivityEvents(events)
+  return { emails: addrs.size, fetched, bodies, inserted }
+}
+
 async function syncGmailInRange(
   since: Date,
   until: Date,

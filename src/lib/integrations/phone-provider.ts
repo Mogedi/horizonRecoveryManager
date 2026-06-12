@@ -19,4 +19,6 @@ export interface NormalizedCallLog {
 
 export interface PhoneProvider {
   getCallLogs(since: Date, until: Date): Promise<NormalizedCallLog[]>
+  // Calls for a single contact number (per-case refresh) — never pulls the whole account.
+  getCallLogsForContact(contactNumberE164: string, since: Date, until: Date): Promise<NormalizedCallLog[]>
 }

@@ -119,6 +119,7 @@ model Deal {
   // HubSpot browser screenshot check — populated by hubspot-check route (manual only)
   hubspotCheck        Json?     @map("hubspot_check")         // HubSpotDriveCheckResult sans screenshotBase64
   hubspotCheckAt      DateTime? @map("hubspot_check_at")      @db.Timestamptz(6)
+  lastRefreshedAt     DateTime? @map("last_refreshed_at")     @db.Timestamptz(6) // last on-demand per-case refresh (HubSpot+calls+email)
   hubspotScreenshot   String?   @map("hubspot_screenshot")    // JPEG base64, ~100-200KB
   // Queryable summary columns — extracted from hubspotCheck for fast filtering/sorting
   hubspotFilesLinked  Boolean?  @map("hubspot_files_linked")  // true = all files linked; false = gaps found

@@ -1,7 +1,8 @@
 import { prisma } from '@/lib/db/client'
 import { upsertActivityEvents, type ActivityEventInput } from '@/lib/db/activity-events'
-import { lookupDealByPhone, upsertPhoneNumber } from '@/lib/db/phone-numbers'
+import { lookupDealByPhone, upsertPhoneNumber, getPhoneNumbersForDeal } from '@/lib/db/phone-numbers'
 import { getJustCallClient } from './client'
+import { normalizeToE164 } from './normalize'
 import { log } from '@/lib/logger'
 import type { NormalizedCallLog } from '@/lib/integrations/phone-provider'
 import { ActivitySource } from '@prisma/client'
@@ -25,6 +26,42 @@ async function matchCallToDeal(call: NormalizedCallLog): Promise<string | null> 
   // contact_number is the customer for both inbound and outbound.
   const dealId = await lookupDealByPhone(call.contactNumberE164)
   return dealId
+}
+
+// Targeted per-deal call pull (for the case-refresh flow). Pulls calls only for THIS deal's phone
+// numbers via the contact_number filter — never the whole account. `since` bounds the window.
+export async function syncJustCallForDeal(
+  dealHubspotId: string,
+  since: Date
+): Promise<{ phones: number; calls: number; inserted: number }> {
+  // Deal's numbers: prefer the phone registry; fall back to the contacts' raw phone lists.
+  const registry = await getPhoneNumbersForDeal(dealHubspotId)
+  const numbers = new Set<string>(registry.map((p) => p.numberE164))
+  if (numbers.size === 0) {
+    const contacts = await prisma.dealContact.findMany({ where: { dealHubspotId }, select: { phoneNumbers: true } })
+    for (const c of contacts) {
+      const list = Array.isArray(c.phoneNumbers) ? c.phoneNumbers : []
+      for (const raw of list) {
+        const e = normalizeToE164(typeof raw === 'string' ? raw : (raw as { number?: string })?.number)
+        if (e) numbers.add(e)
+      }
+    }
+  }
+  if (numbers.size === 0) return { phones: 0, calls: 0, inserted: 0 }
+
+  const client = getJustCallClient()
+  const until = new Date()
+  const events: ActivityEventInput[] = []
+  for (const num of numbers) {
+    try {
+      const calls = await client.getCallLogsForContact(num, since, until)
+      for (const call of calls) events.push(toActivityEvent(call, dealHubspotId))
+    } catch (e) {
+      log.warn('justcall per-deal fetch failed', { num, error: e instanceof Error ? e.message : String(e) })
+    }
+  }
+  const inserted = await upsertActivityEvents(events)
+  return { phones: numbers.size, calls: events.length, inserted }
 }
 
 // Convert a NormalizedCallLog to an ActivityEventInput for DB insertion.

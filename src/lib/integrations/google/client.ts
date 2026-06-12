@@ -123,7 +123,7 @@ export class GoogleClient {
 
   private async request<T>(
     service: string,
-    method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+    method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
     url: string,
     params?: Record<string, string | string[]>,
     body?: unknown,
@@ -196,6 +196,29 @@ export class GoogleClient {
       `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}`,
       params
     )
+  }
+
+  // ─── Gmail drafts (compose scope) ────────────────────────────────────────────
+
+  async createDraft(raw: string, threadId?: string): Promise<{ id: string; message?: { id: string; threadId: string } }> {
+    return this.request('gmail', 'POST', 'https://gmail.googleapis.com/gmail/v1/users/me/drafts', undefined,
+      { message: { raw, ...(threadId ? { threadId } : {}) } })
+  }
+  async updateDraft(draftId: string, raw: string, threadId?: string): Promise<{ id: string; message?: { id: string; threadId: string } }> {
+    return this.request('gmail', 'PUT', `https://gmail.googleapis.com/gmail/v1/users/me/drafts/${encodeURIComponent(draftId)}`, undefined,
+      { message: { raw, ...(threadId ? { threadId } : {}) } })
+  }
+  async sendDraft(draftId: string): Promise<{ id: string; threadId?: string }> {
+    return this.request('gmail', 'POST', `https://gmail.googleapis.com/gmail/v1/users/me/drafts/send`, undefined, { id: draftId })
+  }
+  async deleteDraft(draftId: string): Promise<void> {
+    await this.request('gmail', 'DELETE', `https://gmail.googleapis.com/gmail/v1/users/me/drafts/${encodeURIComponent(draftId)}`)
+  }
+  // Original message headers (Message-Id / References / Subject) for proper reply threading.
+  async getMessageHeaders(id: string): Promise<GmailMessage> {
+    return this.request<GmailMessage>('gmail', 'GET',
+      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}`,
+      { format: 'metadata', metadataHeaders: ['Message-Id', 'References', 'Subject', 'From', 'To', 'Cc'] })
   }
 
   // ─── Calendar (events scope) ────────────────────────────────────────────────

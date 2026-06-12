@@ -7,11 +7,12 @@
 import {
   Client, GatewayIntentBits, Partials, Events, MessageFlags,
   EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, SlashCommandBuilder,
+  ModalBuilder, TextInputBuilder, TextInputStyle,
 } from 'discord.js'
 import { listQueue, getCase } from './cases-read.js'
 import { triage } from './triage.js'
-import { newWorkflow } from './hm-api.js'
-import { chat } from './chat.js'
+import { newWorkflow, emailDraftCreate, emailDraftSend, emailDraftDiscard } from './hm-api.js'
+import { chat, reviseDraft } from './chat.js'
 import { startSchedules, runAllSyncs, postDigestNow } from './schedules.js'
 import { skillStatus, setSkillEnabled, getSkill } from './skills/registry.js'
 
@@ -59,6 +60,61 @@ function remember(entry) {
   pending.set(id, entry)
   if (pending.size > 200) pending.delete(pending.keys().next().value) // cap memory
   return id
+}
+
+// ── Draft review cards ──────────────────────────────────────────────────────────
+// Active draft state, keyed by a short token. Also indexed by the card's message id so a
+// reply-to-the-card can be interpreted as a talk-to-edit instruction.
+const drafts = new Map()          // token -> { draftId, replyToEmailId, to, cc, bcc, subject, body, channelId, userId, cardMessageId }
+const draftByMessage = new Map()  // cardMessageId -> token
+
+function rememberDraft(entry) {
+  const id = Math.random().toString(36).slice(2, 10)
+  drafts.set(id, entry)
+  if (drafts.size > 100) { const k = drafts.keys().next().value; const old = drafts.get(k); if (old?.cardMessageId) draftByMessage.delete(old.cardMessageId); drafts.delete(k) }
+  return id
+}
+
+const fmtList = (a) => (a && a.length ? a.join(', ') : '—')
+
+function buildDraftEmbed(d) {
+  return new EmbedBuilder()
+    .setTitle('✉️ Draft — review before sending')
+    .setDescription((d.body || '(empty)').slice(0, 4000))
+    .addFields(
+      field('Subject', d.subject || '(none)'),
+      field('To', fmtList(d.to), true),
+      field('CC', fmtList(d.cc), true),
+      field('BCC', fmtList(d.bcc), true),
+    )
+    .setFooter({ text: 'Saved as a Gmail draft — nothing is sent until you click Send. Reply to this message to revise the body.' })
+}
+function draftButtons(id) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`dr_recip:${id}`).setLabel('✏️ Recipients').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`dr_msg:${id}`).setLabel('📝 Message').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`dr_send:${id}`).setLabel('📤 Send').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId(`dr_discard:${id}`).setLabel('🗑️ Discard').setStyle(ButtonStyle.Danger),
+  )
+}
+const parseAddrs = (s) => (s || '').split(/[,\n;]+/).map((x) => x.trim()).filter(Boolean)
+
+// Push the current draft state to the Gmail draft (re-threads if it's a reply).
+async function syncDraftToGmail(d) {
+  const r = await emailDraftCreate({
+    draftId: d.draftId, replyToGmailId: d.replyToEmailId || undefined,
+    to: d.to, cc: d.cc, bcc: d.bcc, subject: d.subject, body: d.body,
+  })
+  d.draftId = r.draftId
+  return r
+}
+async function refreshCard(interactionOrMsg, d, id) {
+  const payload = { embeds: [buildDraftEmbed(d)], components: [draftButtons(id)] }
+  try {
+    const ch = await client.channels.fetch(d.channelId)
+    const msg = await ch.messages.fetch(d.cardMessageId)
+    await msg.edit(payload)
+  } catch { /* card gone */ }
 }
 
 const field = (name, value, inline = false) => ({ name, value: value && String(value).slice(0, 1024) || '—', inline })
@@ -157,6 +213,65 @@ client.on(Events.InteractionCreate, async (interaction) => {
         await interaction.editReply(`${sub === 'enable' ? '🟢 Enabled' : '⚪ Disabled'} **${name}**.`)
       }
 
+    } else if (interaction.isModalSubmit() && interaction.customId.startsWith('drm_')) {
+      const [kind, id] = interaction.customId.split(':')
+      const d = drafts.get(id)
+      if (!d) { await interaction.reply({ content: 'This draft has expired.', flags: MessageFlags.Ephemeral }); return }
+      await interaction.deferUpdate()
+      if (kind === 'drm_recip') {
+        d.to = parseAddrs(interaction.fields.getTextInputValue('to'))
+        d.cc = parseAddrs(interaction.fields.getTextInputValue('cc'))
+        d.bcc = parseAddrs(interaction.fields.getTextInputValue('bcc'))
+      } else if (kind === 'drm_msg') {
+        d.subject = interaction.fields.getTextInputValue('subject').trim()
+        d.body = interaction.fields.getTextInputValue('body')
+      }
+      await syncDraftToGmail(d)
+      await refreshCard(interaction, d, id)
+
+    } else if (interaction.isButton() && interaction.customId.startsWith('dr_')) {
+      const [action, id] = interaction.customId.split(':')
+      const d = drafts.get(id)
+      if (!d) { await interaction.reply({ content: 'This draft has expired.', flags: MessageFlags.Ephemeral }); return }
+      if (OWNER_ID && interaction.user.id !== OWNER_ID && interaction.user.id !== d.userId) {
+        await interaction.reply({ content: 'Only the requester can act on this draft.', flags: MessageFlags.Ephemeral }); return
+      }
+      if (action === 'dr_recip') {
+        const m = new ModalBuilder().setCustomId(`drm_recip:${id}`).setTitle('Edit recipients')
+        const f = (cid, label, val) => new ActionRowBuilder().addComponents(
+          new TextInputBuilder().setCustomId(cid).setLabel(label).setStyle(TextInputStyle.Short).setRequired(false).setValue((val || []).join(', ')))
+        m.addComponents(f('to', 'To (comma-separated)', d.to), f('cc', 'CC', d.cc), f('bcc', 'BCC', d.bcc))
+        await interaction.showModal(m)
+      } else if (action === 'dr_msg') {
+        const m = new ModalBuilder().setCustomId(`drm_msg:${id}`).setTitle('Edit message')
+        m.addComponents(
+          new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('subject').setLabel('Subject').setStyle(TextInputStyle.Short).setRequired(false).setValue(d.subject || '')),
+          new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('body').setLabel('Body').setStyle(TextInputStyle.Paragraph).setRequired(true).setValue((d.body || '').slice(0, 4000))))
+        await interaction.showModal(m)
+      } else if (action === 'dr_send') {
+        if (!d.to.length) { await interaction.reply({ content: '⚠️ No "To" recipient set — add one with ✏️ Recipients first.', flags: MessageFlags.Ephemeral }); return }
+        const row = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId(`dr_sendok:${id}`).setLabel('Confirm send').setStyle(ButtonStyle.Success),
+          new ButtonBuilder().setCustomId(`dr_cancel:${id}`).setLabel('Cancel').setStyle(ButtonStyle.Secondary))
+        await interaction.reply({ content: `Send to **${fmtList(d.to)}**${d.cc.length ? ` · CC ${fmtList(d.cc)}` : ''}${d.bcc.length ? ` · BCC ${fmtList(d.bcc)}` : ''}?`, components: [row], flags: MessageFlags.Ephemeral })
+      } else if (action === 'dr_cancel') {
+        await interaction.update({ content: 'Send cancelled.', components: [] })
+      } else if (action === 'dr_sendok') {
+        await interaction.update({ content: '📤 Sending…', components: [] })
+        await emailDraftSend({ draftId: d.draftId, to: d.to, cc: d.cc, bcc: d.bcc, subject: d.subject })
+        try {
+          const ch = await client.channels.fetch(d.channelId); const msg = await ch.messages.fetch(d.cardMessageId)
+          await msg.edit({ embeds: [buildDraftEmbed(d).setTitle('✅ Sent').setFooter({ text: `Sent to ${fmtList(d.to)}` })], components: [] })
+        } catch { /* card gone */ }
+        await interaction.editReply({ content: `✅ Sent to ${fmtList(d.to)}.`, components: [] })
+        draftByMessage.delete(d.cardMessageId); drafts.delete(id)
+      } else if (action === 'dr_discard') {
+        try { await emailDraftDiscard(d.draftId) } catch { /* already gone */ }
+        try { const ch = await client.channels.fetch(d.channelId); const msg = await ch.messages.fetch(d.cardMessageId); await msg.edit({ embeds: [buildDraftEmbed(d).setTitle('🗑️ Discarded')], components: [] }) } catch { /* */ }
+        draftByMessage.delete(d.cardMessageId); drafts.delete(id)
+        await interaction.reply({ content: '🗑️ Draft discarded.', flags: MessageFlags.Ephemeral })
+      }
+
     } else if (interaction.isButton()) {
       const [action, id] = interaction.customId.split(':')
       const entry = pending.get(id)
@@ -202,6 +317,21 @@ client.on(Events.MessageCreate, async (message) => {
       if (!allowed) return
     }
     const text = (message.content ?? '').replace(/<@!?\d+>/g, '').trim()
+
+    // Talk-to-edit: a reply to a draft card revises that draft's body.
+    const refId = message.reference?.messageId
+    if (refId && draftByMessage.has(refId) && text) {
+      const d = drafts.get(draftByMessage.get(refId))
+      if (d) {
+        await message.channel.sendTyping().catch(() => {})
+        d.body = await reviseDraft({ subject: d.subject, body: d.body, instruction: text })
+        await syncDraftToGmail(d)
+        await refreshCard(message, d, draftByMessage.get(refId))
+        await message.reply('✏️ Updated the draft.').catch(() => {})
+        return
+      }
+    }
+
     // Attachments → images via vision, PDFs read natively.
     const atts = [...message.attachments.values()]
     const images = atts.filter((a) => (a.contentType || '').startsWith('image/')).map((a) => a.url)
@@ -209,13 +339,22 @@ client.on(Events.MessageCreate, async (message) => {
     if (!text && !images.length && !docs.length) return
     await message.channel.sendTyping().catch(() => {})
     const fallback = docs.length ? 'Read and summarize the attached document.' : 'Describe / analyze the attached image.'
-    const { text: answer, model, costUSD, searches } = await chat(message.channelId, text || fallback, images, docs)
+    const { text: answer, model, costUSD, searches, draftCard } = await chat(message.channelId, text || fallback, images, docs)
     const searchTag = searches ? ` · 🔎 ${searches}` : ''
     const footer = `\n-# 🪙 ${model.replace('claude-', '')} · ~$${costUSD.toFixed(4)}${searchTag}`
     const chunks = answer.match(/[\s\S]{1,1900}/g) ?? ['(no response)']
     chunks[chunks.length - 1] += footer
     await message.reply(chunks[0])
     for (const c of chunks.slice(1)) await message.channel.send(c)
+
+    // If a tool created a draft, post the interactive review card.
+    if (draftCard) {
+      const d = { ...draftCard, channelId: message.channelId, userId: message.author.id, cardMessageId: null }
+      const id = rememberDraft(d)
+      const card = await message.channel.send({ embeds: [buildDraftEmbed(d)], components: [draftButtons(id)] })
+      d.cardMessageId = card.id
+      draftByMessage.set(card.id, id)
+    }
   } catch (e) {
     console.error('message error:', e)
     try { await message.reply(`⚠️ ${e.message}`) } catch { /* interaction gone */ }

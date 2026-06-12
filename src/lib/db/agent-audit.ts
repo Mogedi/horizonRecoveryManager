@@ -17,6 +17,9 @@ export type AgentAction =
   | 'create_calendar_event'
   | 'update_calendar_event'
   | 'delete_calendar_event'
+  | 'create_email_draft'
+  | 'send_email'
+  | 'discard_email_draft'
 
 export type LogAgentActionInput = {
   actor: string

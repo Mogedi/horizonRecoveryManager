@@ -59,6 +59,11 @@ export const getDigest = () => req('POST', '/api/digest', {})
 // Incremental email intake + importance triage. Returns { fetched, notify[], digest[], noiseCount }.
 export const emailIntake = () => req('POST', '/api/email/intake', {})
 
+// Draft assistant (Gmail drafts — created here, sent only on explicit Send).
+export const emailDraftCreate = (payload) => req('POST', '/api/email/draft', { body: payload })
+export const emailDraftSend = (payload) => req('POST', '/api/email/draft/send', { body: payload })
+export const emailDraftDiscard = (id) => req('DELETE', `/api/email/draft/${encodeURIComponent(id)}`, {})
+
 // Full attention queue (the dashboard's rules engine output): action buckets
 // (follow_up / move_close / call_today / ready_work / snoozed), per-deal flags, stageMap,
 // pipelineStats. The single correct source for outreach planning — no rule logic duplicated.

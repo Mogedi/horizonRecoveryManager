@@ -9,10 +9,10 @@ import {
   EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, SlashCommandBuilder,
   ModalBuilder, TextInputBuilder, TextInputStyle,
 } from 'discord.js'
-import { listQueue, getCase } from './cases-read.js'
+import { listQueue, getCase, getEmailThread } from './cases-read.js'
 import { triage } from './triage.js'
 import { newWorkflow, emailDraftCreate, emailDraftSend, emailDraftDiscard } from './hm-api.js'
-import { chat, reviseDraft } from './chat.js'
+import { chat, reviseDraft, summarizeThread } from './chat.js'
 import { startSchedules, runAllSyncs, postDigestNow } from './schedules.js'
 import { skillStatus, setSkillEnabled, getSkill } from './skills/registry.js'
 
@@ -66,7 +66,8 @@ function remember(entry) {
 // Active draft state, keyed by a short token. Also indexed by the card's message id so a
 // reply-to-the-card can be interpreted as a talk-to-edit instruction.
 const drafts = new Map()          // token -> { draftId, replyToEmailId, to, cc, bcc, subject, body, channelId, userId, cardMessageId }
-const draftByMessage = new Map()  // cardMessageId -> token
+const draftByMessage = new Map()  // cardMessageId -> token  (reply-to-card = edit)
+const draftByThread = new Map()   // contextThreadId -> token  (message in the thread = edit)
 
 function rememberDraft(entry) {
   const id = Math.random().toString(36).slice(2, 10)
@@ -310,26 +311,28 @@ client.on(Events.InteractionCreate, async (interaction) => {
 client.on(Events.MessageCreate, async (message) => {
   try {
     if (message.author.bot) return
+    const text = (message.content ?? '').replace(/<@!?\d+>/g, '').trim()
+
+    // Talk-to-edit (works anywhere, incl. the context thread): a reply to a draft card OR a
+    // message inside the draft's context thread revises that draft's body.
+    const editTok = (message.reference?.messageId && draftByMessage.get(message.reference.messageId)) || draftByThread.get(message.channelId)
+    if (editTok && text) {
+      const d = drafts.get(editTok)
+      if (d) {
+        await message.channel.sendTyping().catch(() => {})
+        d.body = await reviseDraft({ subject: d.subject, body: d.body, instruction: text })
+        await syncDraftToGmail(d)
+        await refreshCard(message, d, editTok)
+        await message.reply('✏️ Updated the draft.').catch(() => {})
+        return
+      }
+    }
+
     const isDM = !message.guildId
     if (!isDM && CHAT_CHANNELS.length) {
       const chName = message.channel?.name
       const allowed = CHAT_CHANNELS.includes(message.channelId) || (chName && CHAT_CHANNELS.includes(chName))
       if (!allowed) return
-    }
-    const text = (message.content ?? '').replace(/<@!?\d+>/g, '').trim()
-
-    // Talk-to-edit: a reply to a draft card revises that draft's body.
-    const refId = message.reference?.messageId
-    if (refId && draftByMessage.has(refId) && text) {
-      const d = drafts.get(draftByMessage.get(refId))
-      if (d) {
-        await message.channel.sendTyping().catch(() => {})
-        d.body = await reviseDraft({ subject: d.subject, body: d.body, instruction: text })
-        await syncDraftToGmail(d)
-        await refreshCard(message, d, draftByMessage.get(refId))
-        await message.reply('✏️ Updated the draft.').catch(() => {})
-        return
-      }
     }
 
     // Attachments → images via vision, PDFs read natively.
@@ -354,6 +357,23 @@ client.on(Events.MessageCreate, async (message) => {
       const card = await message.channel.send({ embeds: [buildDraftEmbed(d)], components: [draftButtons(id)] })
       d.cardMessageId = card.id
       draftByMessage.set(card.id, id)
+      // Stage B: for a reply, attach a context thread (previous email + thread summary) so the
+      // card itself stays clean.
+      if (d.replyToEmailId) {
+        try {
+          const thread = await card.startThread({ name: `Context: ${(d.subject || 'email').replace(/^re:\s*/i, '').slice(0, 80)}` })
+          draftByThread.set(thread.id, id) // messages in this thread = talk-to-edit
+          const emails = await getEmailThread(d.replyToEmailId)
+          const prev = emails.find((e) => e.id === d.replyToEmailId) || emails[emails.length - 1]
+          if (prev) {
+            await thread.send(`📧 **Previous email** — from ${prev.from_addr || 'unknown'}\n**${prev.subject || '(no subject)'}**\n\n${(prev.body || '(no body stored)').slice(0, 1800)}`)
+          }
+          const summary = await summarizeThread(emails)
+          if (summary) await thread.send(`🧵 **Thread summary**\n${summary}`.slice(0, 1900))
+        } catch (e) {
+          console.error('draft context thread failed:', e.message)
+        }
+      }
     }
   } catch (e) {
     console.error('message error:', e)

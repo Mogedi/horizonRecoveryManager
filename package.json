@@ -16,7 +16,8 @@
     "db:generate": "prisma generate",
     "db:seed": "dotenv -e .env.local -- node prisma/seed.mjs",
     "smoke": "bash scripts/smoke-test.sh",
-    "check:logs": "bash scripts/check-logs.sh"
+    "check:logs": "bash scripts/check-logs.sh",
+    "lint": "eslint ."
   },
   "prisma": {
     "seed": "npm run db:seed"
@@ -53,6 +54,8 @@
     "@vitejs/plugin-react": "^6.0.2",
     "@vitest/coverage-v8": "^4.1.8",
     "dotenv-cli": "^11.0.0",
+    "eslint": "^9.39.4",
+    "eslint-config-next": "^16.2.9",
     "jsdom": "^29.1.1",
     "tailwindcss": "^4",
     "typescript": "^5",

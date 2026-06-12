@@ -24,15 +24,11 @@ export async function upsertSummary(hubspotId: string, json: SummaryJson) {
 }
 
 export async function getMoActionDealIds(): Promise<Set<string>> {
+  // Filter on the JSON field in SQL (Postgres JSON-path) instead of loading every summaryJson
+  // blob and filtering in JS — returns only the matching deal ids.
   const rows = await prisma.aiSummary.findMany({
-    select: { dealHubspotId: true, summaryJson: true },
+    where: { summaryJson: { path: ['mo_action_required'], equals: true } },
+    select: { dealHubspotId: true },
   })
-  const ids = new Set<string>()
-  for (const row of rows) {
-    const json = row.summaryJson as { mo_action_required?: boolean }
-    if (json?.mo_action_required === true) {
-      ids.add(row.dealHubspotId)
-    }
-  }
-  return ids
+  return new Set(rows.map(r => r.dealHubspotId))
 }

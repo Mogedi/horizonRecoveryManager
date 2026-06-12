@@ -109,14 +109,14 @@ export async function getAnalysisByIdempotencyKey(idempotencyKey: string) {
 // Latest `triage` analysis's moActionRequired per deal — the AI-interpretation layer's signal
 // for the queue's follow_up bucket. Deals with no analysis fall back to ai_summaries upstream.
 export async function getMoActionMapFromAnalysis(): Promise<Map<string, boolean>> {
+  // DISTINCT ON (deal) ordered by createdAt desc → the DB returns one row per deal (its latest
+  // triage), instead of fetching every triage row ever and de-duping in JS. This append-only
+  // table grows with each run, so the saving compounds over time.
   const rows = await prisma.caseAnalysis.findMany({
     where: { analysisType: AnalysisType.triage },
-    orderBy: { createdAt: 'desc' },
+    orderBy: [{ dealHubspotId: 'asc' }, { createdAt: 'desc' }],
+    distinct: ['dealHubspotId'],
     select: { dealHubspotId: true, moActionRequired: true },
   })
-  const map = new Map<string, boolean>()
-  for (const row of rows) {
-    if (!map.has(row.dealHubspotId)) map.set(row.dealHubspotId, row.moActionRequired)
-  }
-  return map
+  return new Map(rows.map(r => [r.dealHubspotId, r.moActionRequired]))
 }

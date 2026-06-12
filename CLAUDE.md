@@ -141,7 +141,7 @@ When you search: mark what you confirmed, what you couldn't confirm, and what co
 Pipeline name:     Cases – Surplus Funds (pipeline ID from pipeline-stages.json)
 Total deals:       150 (2 pages of 100 in CRM search)
 Timezone:          America/New_York
-Tests:             606 passing
+Tests:             631 passing
 
 --- HubSpot ---
 HubSpot plan:      Starter — 100 req/10s, 250,000 req/day

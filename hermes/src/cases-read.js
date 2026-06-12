@@ -255,6 +255,25 @@ export async function getEmailDetail(queryStr) {
   return rows[0] ?? null
 }
 
+// All emails in the same Gmail thread as `emailId` (oldest → newest) — for the draft context thread.
+export async function getEmailThread(emailId) {
+  const base = await query(
+    `SELECT metadata->>'threadId' AS thread_id FROM activity_events WHERE external_id=$1 AND source::text='GOOGLE' LIMIT 1`,
+    [emailId]
+  )
+  const threadId = base[0]?.thread_id
+  const cols = `external_id AS id, metadata->>'from' AS from_addr, metadata->>'subject' AS subject, body, happened_at AS ts, direction`
+  if (!threadId) {
+    return query(`SELECT ${cols} FROM activity_events WHERE external_id=$1 LIMIT 1`, [emailId])
+  }
+  return query(
+    `SELECT ${cols} FROM activity_events
+     WHERE source::text='GOOGLE' AND type='email' AND metadata->>'threadId'=$1
+     ORDER BY happened_at ASC`,
+    [threadId]
+  )
+}
+
 // Deals with no Layer 2 data yet (no contacts) — i.e. new cases needing a Layer 2 pull.
 export async function dealsWithoutLayer2() {
   return query(

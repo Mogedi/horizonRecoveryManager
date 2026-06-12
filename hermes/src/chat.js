@@ -225,6 +225,22 @@ export async function chat(channelId, userText, images = [], docs = []) {
   return { text: finalText, model, usage, costUSD, skills: skillsUsed, searches: searchCount, draftCard }
 }
 
+// Summarize an email thread for the draft context thread: what it's about, the latest message,
+// and why Mo is replying. A single cheap call.
+export async function summarizeThread(emails) {
+  const transcript = (emails || []).slice(-8).map((e) => {
+    const who = e.direction === 'outbound' ? 'Mo' : (e.from_addr || 'them')
+    return `[${who}] ${e.subject || ''}\n${(e.body || '').replace(/\s+/g, ' ').slice(0, 800)}`
+  }).join('\n---\n')
+  if (!transcript) return '(no prior messages)'
+  const res = await anthropic().messages.create({
+    model: DEFAULT_CHAT_MODEL, max_tokens: 350,
+    system: 'Summarize this email thread for Mo in 2–4 short lines: what it is about, what the latest message said, and why he is replying. Be concise, plain text.',
+    messages: [{ role: 'user', content: transcript.slice(0, 12000) }],
+  })
+  return res.content.filter((b) => b.type === 'text').map((b) => b.text).join('').trim()
+}
+
 // Talk-to-edit: revise a draft body given a natural-language instruction, keeping Mo's voice.
 // Used by the draft card's reply-to-edit flow (a single cheap call, not the full loop).
 export async function reviseDraft({ subject, body, instruction }) {

@@ -39,6 +39,10 @@ export const syncGmail = (mode = 'full') => req('POST', '/api/sync/google/gmail'
 export const syncDrive = () => req('POST', '/api/sync/google/drive', {})
 export const triggerLayer1 = () => req('POST', '/api/sync/layer1', {})
 export const triggerLayer2 = (dealId) => req('POST', `/api/sync/layer2/${dealId}`, {})
+// Combined per-case refresh: HubSpot Layer 2 + this deal's JustCall + this deal's Gmail,
+// freshness-gated (skips if refreshed within 30 min unless force).
+export const refreshCase = (dealId, force = false) =>
+  req('POST', `/api/deals/${encodeURIComponent(dealId)}/refresh${force ? '?force=1' : ''}`, {})
 
 // Heavy nightly/weekly jobs. Each call is one chunk so it stays under the Vercel 60s budget;
 // the scheduler loops until `done`.

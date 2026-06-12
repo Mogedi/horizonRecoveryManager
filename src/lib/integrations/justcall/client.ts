@@ -108,6 +108,32 @@ class JustCallClient implements PhoneProvider {
     log.info('justcall fetch complete', { totalFetched, normalized: results.length })
     return results
   }
+
+  // Calls for ONE contact number (per-case refresh) — uses the contact_number filter so we never
+  // pull the whole account. Bounded window; a contact rarely has >100 calls in the window.
+  async getCallLogsForContact(contactNumberE164: string, since: Date, until: Date): Promise<NormalizedCallLog[]> {
+    const results: NormalizedCallLog[] = []
+    let page = 1
+    while (true) {
+      const resp = await this.request<JustCallCallsResponse>('/calls', {
+        contact_number: contactNumberE164,
+        from_datetime: toJustCallDatetime(since),
+        to_datetime: toJustCallDatetime(until),
+        per_page: PER_PAGE,
+        page,
+        sort: 'datetime',
+        order: 'asc',
+      })
+      if (!resp.data || resp.data.length === 0) break
+      for (const raw of resp.data) {
+        const n = normalizeJustCallRecord(raw)
+        if (n) results.push(n)
+      }
+      if (resp.data.length < PER_PAGE || page >= 5) break // cap pages — per-contact is small
+      page++
+    }
+    return results
+  }
 }
 
 // Module-level singleton — reads credentials from env at call time (not module load time).

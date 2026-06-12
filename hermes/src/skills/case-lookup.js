@@ -1,5 +1,8 @@
 // Skill: case-lookup — find deals and read full case detail. Core, always on.
+// get_case auto-refreshes the case from HubSpot/JustCall/Gmail first (freshness-gated server-side:
+// a no-op if the case was refreshed in the last 30 min), so a lookup always reflects the latest.
 import { searchDeals, getCase, listQueue } from '../cases-read.js'
+import { refreshCase } from '../hm-api.js'
 
 function compactCase(c) {
   return {
@@ -67,6 +70,11 @@ export default {
       const rows = await listQueue(40)
       return rows.map((r) => ({ hubspot_id: r.hubspot_id, name: r.name, stage: r.stage, amount: r.amount }))
     },
-    get_case: async (input) => compactCase(await getCase(String(input.deal_id ?? ''))),
+    get_case: async (input) => {
+      const dealId = String(input.deal_id ?? '')
+      // Pull the latest first (server-side TTL makes this a no-op when already fresh), then read.
+      await refreshCase(dealId).catch(() => {})
+      return compactCase(await getCase(dealId))
+    },
   },
 }

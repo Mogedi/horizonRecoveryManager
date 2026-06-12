@@ -3,7 +3,7 @@
 // so repeated lookups don't re-pull. Each source is independent (one failing doesn't fail the rest).
 import { prisma } from '@/lib/db/client'
 import { runLayer2Sync } from './layer2'
-import { syncJustCallForDeal } from '@/lib/integrations/justcall/sync'
+import { syncJustCallFull } from '@/lib/integrations/justcall/sync'
 import { syncGmailForDeal } from '@/lib/integrations/google/sync'
 import { isGoogleConfigured } from '@/lib/integrations/google/auth'
 import { log } from '@/lib/logger'
@@ -42,7 +42,10 @@ export async function refreshDeal(dealHubspotId: string, opts: { force?: boolean
   log.info('case refresh starting', { dealHubspotId, since: since.toISOString() })
 
   const hubspot = await settle('layer2', runLayer2Sync(dealHubspotId))
-  const calls = await settle('justcall', syncJustCallForDeal(dealHubspotId, since))
+  // JustCall: incremental global sync (only new calls since the last sync — tiny and self-
+  // throttling via its own cursor, and reliably matched). JustCall's per-contact filter proved
+  // inconsistent with our stored numbers (line-vs-contact mismatches), so we don't target by number.
+  const calls = await settle('justcall', syncJustCallFull())
   const emails = isGoogleConfigured()
     ? await settle('gmail', syncGmailForDeal(dealHubspotId, since))
     : { skipped: 'google not configured' }

@@ -3,7 +3,6 @@
 // (edit recipients/message, Send-with-confirm). Sending only happens from that card.
 import { getEmailDetail } from '../cases-read.js'
 import { emailDraftCreate } from '../hm-api.js'
-import { STYLE_RULES } from '../style-rules.js'
 
 export default {
   name: 'draft-email',
@@ -13,8 +12,8 @@ export default {
     'pull real style examples with get_sent_emails. Set To = the original sender, CC = the original CC ' +
     'addresses (reply-all) MINUS Mo\'s own address, add Kathleen (kathleen@horizonrecoverygroup.com) to CC if ' +
     'it\'s case-related; Subject = "Re: <original>"; pass reply_to_email_id so it threads. Then call ' +
-    'create_draft (it posts a review card — Mo edits recipients/message and clicks Send; you NEVER send).\n\n' +
-    STYLE_RULES,
+    'create_draft (it posts a review card — Mo edits recipients/message and clicks Send; you NEVER send).\n' +
+    "Follow MO'S EMAIL STYLE SHEET (provided in your system context) exactly when writing the body.",
   writes: true,
   defaultEnabled: true,
   tools: [

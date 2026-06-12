@@ -9,7 +9,7 @@ import {
 } from './skills/registry.js'
 import { routeSkills } from './skills/router.js'
 import { recall } from './memory.js'
-import { STYLE_RULES } from './style-rules.js'
+import { renderStyleSheet } from './email-style.js'
 
 // $ per 1M tokens (input / output). Used for rough per-message cost estimates.
 const PRICING = {
@@ -72,9 +72,10 @@ const LOAD_SKILL_TOOL = {
   },
 }
 
-// Per-channel rolling history (final text only) for continuity. In-memory; resets on restart.
+// Per-channel/thread rolling history (final text only) for continuity. In-memory; resets on restart
+// (threads rebuild from Discord on miss — see bot.js).
 const histories = new Map()
-function getHistory(channelId) {
+export function getHistory(channelId) {
   return histories.get(channelId) ?? []
 }
 function pushHistory(channelId, role, content) {
@@ -82,6 +83,26 @@ function pushHistory(channelId, role, content) {
   h.push({ role, content })
   while (h.length > 10) h.shift()
   histories.set(channelId, h)
+}
+// Seed a channel/thread's history (only if empty — never clobber an active conversation).
+export function seedHistory(channelId, history) {
+  if (!histories.has(channelId) && Array.isArray(history) && history.length) {
+    histories.set(channelId, history.slice(-10))
+  }
+}
+// Short Title-Case name (3–5 words) for a new conversation thread. Cheap Haiku call.
+export async function titleFor(text) {
+  try {
+    const res = await anthropic().messages.create({
+      model: 'claude-haiku-4-5', max_tokens: 24,
+      system: 'Give a 3–5 word Title Case label (no quotes, no trailing period) for a chat that opens with this message.',
+      messages: [{ role: 'user', content: String(text || '').slice(0, 300) }],
+    })
+    const t = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('').trim().replace(/^["']|["']$/g, '')
+    return t.slice(0, 90) || 'Chat'
+  } catch {
+    return (String(text || '').slice(0, 40).trim()) || 'Chat'
+  }
 }
 
 // Best-effort usage log for a future /usage command. Never fails the chat.
@@ -93,12 +114,13 @@ async function logUsage(entry) {
   }
 }
 
-function buildSystem(model, activeSkills, loadableSkills, memories) {
+function buildSystem(model, activeSkills, loadableSkills, memories, styleSheet) {
   const playbooks = activeSkills.flatMap((s) => (s.playbook ? [`[${s.name}] ${s.playbook}`] : []))
   const parts = [SYSTEM_BASE]
   if (memories?.length) {
     parts.push('What you remember about Mo (long-term memory):\n' + memories.map((m) => `- ${m.content}`).join('\n'))
   }
+  if (styleSheet) parts.push(styleSheet)
   if (playbooks.length) parts.push('Active skill playbooks:\n' + playbooks.join('\n'))
   if (loadableSkills.length) {
     parts.push('Other skills you can load with load_skill if needed:\n' + skillMenu(loadableSkills))
@@ -131,8 +153,10 @@ export async function chat(channelId, userText, images = [], docs = []) {
   const activeNames = new Set(active.map((s) => s.name))
   const loadable = enabled.filter((s) => !activeNames.has(s.name))
 
-  // Drafting email always runs on the stronger model (quality + judgment), regardless of default.
-  if (activeNames.has('draft-email')) model = DRAFT_MODEL
+  // Drafting email always runs on the stronger model (quality + judgment), regardless of default,
+  // and gets Mo's live style sheet injected.
+  let styleSheet = null
+  if (activeNames.has('draft-email')) { model = DRAFT_MODEL; styleSheet = await renderStyleSheet().catch(() => null) }
 
   let { tools, handlers, serverTools } = assembleTools(active)
   const loadedNames = new Set(active.map((s) => s.name))
@@ -156,7 +180,7 @@ export async function chat(channelId, userText, images = [], docs = []) {
   for (let i = 0; i < 8; i++) {
     const loadableNow = enabled.filter((s) => !loadedNames.has(s.name))
     const allTools = [...tools, ...serverTools, ...(loadableNow.length ? [LOAD_SKILL_TOOL] : [])]
-    const system = buildSystem(model, active, loadableNow, memories)
+    const system = buildSystem(model, active, loadableNow, memories, styleSheet)
 
     const res = await anthropic().messages.create({ model, max_tokens: 1500, system, tools: allTools, messages })
     addUsage(res.usage)
@@ -250,9 +274,10 @@ export async function summarizeThread(emails) {
 // Talk-to-edit: revise a draft body given a natural-language instruction, keeping Mo's voice.
 // Used by the draft card's reply-to-edit flow (a single cheap call, not the full loop).
 export async function reviseDraft({ subject, body, instruction }) {
+  const sheet = await renderStyleSheet().catch(() => '')
   const system =
     "You revise an email draft for Mo at Horizon Recovery. Apply his instruction, keep it a complete email body, " +
-    "and return ONLY the revised body text (no preamble, no quotes).\n\n" + STYLE_RULES
+    "and return ONLY the revised body text (no preamble, no quotes).\n\n" + sheet
   const prompt = `Current subject: ${subject || '(none)'}\nCurrent body:\n${body || ''}\n\nMo's instruction: ${instruction}\n\nRevised body:`
   const res = await anthropic().messages.create({
     model: DRAFT_MODEL, max_tokens: 1200, system,

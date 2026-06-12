@@ -78,6 +78,24 @@ function rememberDraft(entry) {
 
 const fmtList = (a) => (a && a.length ? a.join(', ') : '—')
 
+// Split a reply for Discord's ~2000-char limit WITHOUT breaking fenced code blocks (used for
+// aligned tables): if a split lands inside a ``` block, close it and reopen it in the next chunk.
+function chunkForDiscord(text, max = 1900) {
+  const out = []
+  let buf = ''
+  let inCode = false
+  for (const line of String(text).split('\n')) {
+    if (buf && buf.length + line.length + 1 > max) {
+      out.push(inCode ? buf + '\n```' : buf)
+      buf = inCode ? '```' : ''
+    }
+    buf = buf ? buf + '\n' + line : line
+    if (line.trimStart().startsWith('```')) inCode = !inCode
+  }
+  if (buf.trim()) out.push(buf)
+  return out.length ? out : ['(no response)']
+}
+
 function buildDraftEmbed(d) {
   return new EmbedBuilder()
     .setTitle('✉️ Draft — review before sending')
@@ -370,7 +388,7 @@ client.on(Events.MessageCreate, async (message) => {
     const { text: answer, model, costUSD, searches, draftCard } = await chat(convoId, text || fallback, images, docs)
     const searchTag = searches ? ` · 🔎 ${searches}` : ''
     const footer = `\n-# 🪙 ${model.replace('claude-', '')} · ~$${costUSD.toFixed(4)}${searchTag}`
-    const chunks = answer.match(/[\s\S]{1,1900}/g) ?? ['(no response)']
+    const chunks = chunkForDiscord(answer)
     chunks[chunks.length - 1] += footer
     for (const c of chunks) await convoChannel.send(c)
 

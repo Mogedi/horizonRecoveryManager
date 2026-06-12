@@ -343,8 +343,9 @@ client.on(Events.MessageCreate, async (message) => {
     const docs = atts.filter((a) => (a.contentType || '') === 'application/pdf').map((a) => a.url)
     if (!text && !images.length && !docs.length) return
 
-    // Thread-per-conversation: a reply to a Hermes answer in a chat channel moves the convo into its
-    // own thread; messages already in a thread continue there (rebuilding context if we lost it).
+    // Thread-per-conversation: EVERY new top-level message in a chat channel gets its own thread
+    // (keeps #general a clean, scannable list of openers); messages already in a thread continue
+    // there (rebuilding context from Discord if we lost it, e.g. after a restart). DMs stay inline.
     let convoChannel = message.channel
     let convoId = message.channelId
     if (inThread) {
@@ -357,16 +358,11 @@ client.on(Events.MessageCreate, async (message) => {
           seedHistory(convoId, hist)
         } catch { /* keep empty */ }
       }
-    } else if (message.reference?.messageId) {
-      let ref = null
-      try { ref = await message.channel.messages.fetch(message.reference.messageId) } catch { /* gone */ }
-      if (ref && ref.author.id === client.user.id) {
-        try {
-          const thread = await ref.startThread({ name: (await titleFor(text || 'chat')).slice(0, 90) })
-          seedHistory(thread.id, getHistory(message.channelId)) // carry the prior inline exchange
-          convoChannel = thread; convoId = thread.id
-        } catch (e) { console.error('thread create failed:', e.message) }
-      }
+    } else if (!isDM) {
+      try {
+        const thread = message.hasThread ? message.thread : await message.startThread({ name: (await titleFor(text || 'chat')).slice(0, 90) })
+        convoChannel = thread; convoId = thread.id
+      } catch (e) { console.error('thread create failed:', e.message) /* fall back to inline */ }
     }
 
     await convoChannel.sendTyping?.().catch(() => {})

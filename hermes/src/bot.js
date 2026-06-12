@@ -12,7 +12,7 @@ import {
 import { listQueue, getCase, getEmailThread } from './cases-read.js'
 import { triage } from './triage.js'
 import { newWorkflow, emailDraftCreate, emailDraftSend, emailDraftDiscard } from './hm-api.js'
-import { chat, reviseDraft, summarizeThread } from './chat.js'
+import { chat, reviseDraft, summarizeThread, getHistory, seedHistory, titleFor } from './chat.js'
 import { startSchedules, runAllSyncs, postDigestNow } from './schedules.js'
 import { skillStatus, setSkillEnabled, getSkill } from './skills/registry.js'
 
@@ -328,11 +328,13 @@ client.on(Events.MessageCreate, async (message) => {
       }
     }
 
+    // Allow chat channels AND threads whose parent is a chat channel.
     const isDM = !message.guildId
+    const inThread = !!message.channel.isThread?.()
+    const parent = inThread ? message.channel.parent : message.channel
     if (!isDM && CHAT_CHANNELS.length) {
-      const chName = message.channel?.name
-      const allowed = CHAT_CHANNELS.includes(message.channelId) || (chName && CHAT_CHANNELS.includes(chName))
-      if (!allowed) return
+      const ok = (ch) => ch && (CHAT_CHANNELS.includes(ch.id) || (ch.name && CHAT_CHANNELS.includes(ch.name)))
+      if (!ok(parent)) return
     }
 
     // Attachments → images via vision, PDFs read natively.
@@ -340,38 +342,69 @@ client.on(Events.MessageCreate, async (message) => {
     const images = atts.filter((a) => (a.contentType || '').startsWith('image/')).map((a) => a.url)
     const docs = atts.filter((a) => (a.contentType || '') === 'application/pdf').map((a) => a.url)
     if (!text && !images.length && !docs.length) return
-    await message.channel.sendTyping().catch(() => {})
+
+    // Thread-per-conversation: a reply to a Hermes answer in a chat channel moves the convo into its
+    // own thread; messages already in a thread continue there (rebuilding context if we lost it).
+    let convoChannel = message.channel
+    let convoId = message.channelId
+    if (inThread) {
+      if (!getHistory(convoId).length) {
+        try {
+          const msgs = await message.channel.messages.fetch({ limit: 20 })
+          const hist = [...msgs.values()].reverse()
+            .filter((m) => m.id !== message.id && (m.content || '').trim())
+            .map((m) => ({ role: m.author.id === client.user.id ? 'assistant' : 'user', content: (m.content || '').replace(/\n-# [^\n]*$/, '').slice(0, 1500) }))
+          seedHistory(convoId, hist)
+        } catch { /* keep empty */ }
+      }
+    } else if (message.reference?.messageId) {
+      let ref = null
+      try { ref = await message.channel.messages.fetch(message.reference.messageId) } catch { /* gone */ }
+      if (ref && ref.author.id === client.user.id) {
+        try {
+          const thread = await ref.startThread({ name: (await titleFor(text || 'chat')).slice(0, 90) })
+          seedHistory(thread.id, getHistory(message.channelId)) // carry the prior inline exchange
+          convoChannel = thread; convoId = thread.id
+        } catch (e) { console.error('thread create failed:', e.message) }
+      }
+    }
+
+    await convoChannel.sendTyping?.().catch(() => {})
     const fallback = docs.length ? 'Read and summarize the attached document.' : 'Describe / analyze the attached image.'
-    const { text: answer, model, costUSD, searches, draftCard } = await chat(message.channelId, text || fallback, images, docs)
+    const { text: answer, model, costUSD, searches, draftCard } = await chat(convoId, text || fallback, images, docs)
     const searchTag = searches ? ` · 🔎 ${searches}` : ''
     const footer = `\n-# 🪙 ${model.replace('claude-', '')} · ~$${costUSD.toFixed(4)}${searchTag}`
     const chunks = answer.match(/[\s\S]{1,1900}/g) ?? ['(no response)']
     chunks[chunks.length - 1] += footer
-    await message.reply(chunks[0])
-    for (const c of chunks.slice(1)) await message.channel.send(c)
+    for (const c of chunks) await convoChannel.send(c)
 
-    // If a tool created a draft, post the interactive review card.
+    // If a tool created a draft, post the interactive review card in the active channel/thread.
     if (draftCard) {
-      const d = { ...draftCard, channelId: message.channelId, userId: message.author.id, cardMessageId: null }
+      const d = { ...draftCard, channelId: convoId, userId: message.author.id, cardMessageId: null }
       const id = rememberDraft(d)
-      const card = await message.channel.send({ embeds: [buildDraftEmbed(d)], components: [draftButtons(id)] })
+      const card = await convoChannel.send({ embeds: [buildDraftEmbed(d)], components: [draftButtons(id)] })
       d.cardMessageId = card.id
       draftByMessage.set(card.id, id)
-      // Stage B: for a reply, attach a context thread (previous email + thread summary) so the
-      // card itself stays clean.
+      // Context (previous email + thread summary): in its own sub-thread when the card is top-level,
+      // or inline when the card is already inside a conversation thread (no nested threads).
       if (d.replyToEmailId) {
         try {
-          const thread = await card.startThread({ name: `Context: ${(d.subject || 'email').replace(/^re:\s*/i, '').slice(0, 80)}` })
-          draftByThread.set(thread.id, id) // messages in this thread = talk-to-edit
-          const emails = await getEmailThread(d.replyToEmailId)
+          const emails = await getEmailThread(d.replyToEmailId).catch(() => [])
           const prev = emails.find((e) => e.id === d.replyToEmailId) || emails[emails.length - 1]
-          if (prev) {
-            await thread.send(`📧 **Previous email** — from ${prev.from_addr || 'unknown'}\n**${prev.subject || '(no subject)'}**\n\n${(prev.body || '(no body stored)').slice(0, 1800)}`)
+          const summary = await summarizeThread(emails).catch(() => '')
+          const prevMsg = prev ? `📧 **Previous email** — from ${prev.from_addr || 'unknown'}\n**${prev.subject || '(no subject)'}**\n\n${(prev.body || '(no body stored)').slice(0, 1800)}` : null
+          const sumMsg = summary ? `🧵 **Thread summary**\n${summary}`.slice(0, 1900) : null
+          if (convoChannel.isThread?.()) {
+            if (prevMsg) await convoChannel.send(prevMsg)
+            if (sumMsg) await convoChannel.send(sumMsg)
+          } else {
+            const ct = await card.startThread({ name: `Context: ${(d.subject || 'email').replace(/^re:\s*/i, '').slice(0, 80)}` })
+            draftByThread.set(ct.id, id)
+            if (prevMsg) await ct.send(prevMsg)
+            if (sumMsg) await ct.send(sumMsg)
           }
-          const summary = await summarizeThread(emails)
-          if (summary) await thread.send(`🧵 **Thread summary**\n${summary}`.slice(0, 1900))
         } catch (e) {
-          console.error('draft context thread failed:', e.message)
+          console.error('draft context failed:', e.message)
         }
       }
     }

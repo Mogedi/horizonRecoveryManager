@@ -182,6 +182,10 @@ export async function saveDossier(d: Dossier, evidencePackageId: number | null, 
       caseId: caseId ?? null,
       subject: json(d.subject), heirGraph: json(d.heirGraph), candidatePeople: json(d.candidatePeople),
       contactRankings: json(d.contactRankings), confidence: json(d.confidence), reviewStatus: d.reviewStatus,
+      // v3 derived sections (Phase B)
+      actionableContacts: json(d.actionableContacts), familyStructure: json(d.familyStructure),
+      completeness: json(d.completeness), conflicts: json(d.conflicts),
+      timeline: json(d.timeline), sourceIntel: json(d.sourceIntel),
     },
     select: { id: true },
   })

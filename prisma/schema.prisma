@@ -510,6 +510,13 @@ model ResearchDossier {
   candidatePeople   Json      @map("candidate_people")
   contactRankings   Json      @map("contact_rankings")
   confidence        Json
+  // v3 derived sections (Phase B) — nullable so older dossiers remain valid.
+  actionableContacts Json?    @map("actionable_contacts")
+  familyStructure    Json?    @map("family_structure")
+  completeness       Json?
+  conflicts          Json?
+  timeline           Json?
+  sourceIntel        Json?    @map("source_intel")
   reviewStatus      String    @default("pending") @map("review_status") // pending | approved | rejected | needs_more
   reviewedBy        String?   @map("reviewed_by")
   reviewedAt        DateTime? @map("reviewed_at") @db.Timestamptz(6)

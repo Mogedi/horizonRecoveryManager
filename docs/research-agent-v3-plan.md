@@ -252,6 +252,6 @@ relationships with their raw quotes, and CRM/researched visibly separated.
 - [x] B1–B5 derivation: two sections, ranking, confidence checklists, completeness, **conflict objects**, CRM split
 - [x] B6 timeline (with step reasons) + source intelligence by `sourceType`
 - [x] B7 `sourceType → evidenceStrength` mapping
-- [ ] C view: six-section detail panel + conflicts banner
+- [x] C view: six-section detail panel + conflicts banner
 - [ ] D verify: batch, idempotency, Browser Use engagement
 - [ ] `npm test` green throughout; PR (no direct push to main)

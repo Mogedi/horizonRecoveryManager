@@ -37,6 +37,57 @@ export async function listRequests(limit = 50) {
   return prisma.researchRequest.findMany({ orderBy: { createdAt: 'desc' }, take: limit })
 }
 
+// ── Live progress ────────────────────────────────────────────────────────────────
+export async function logProgress(requestId: number, message: string, step?: string | null) {
+  return prisma.researchProgress.create({ data: { requestId, message, step: step ?? null } })
+}
+
+export async function getProgressForRequests(requestIds: number[]) {
+  const out: Record<number, { step: string | null; message: string; createdAt: Date }[]> = {}
+  if (!requestIds.length) return out
+  const rows = await prisma.researchProgress.findMany({
+    where: { requestId: { in: requestIds } },
+    orderBy: { createdAt: 'asc' },
+    select: { requestId: true, step: true, message: true, createdAt: true },
+  })
+  for (const r of rows) (out[r.requestId] ||= []).push({ step: r.step, message: r.message, createdAt: r.createdAt })
+  return out
+}
+
+// ── Per-run cost ─────────────────────────────────────────────────────────────────
+export interface CostInput {
+  requestId: number; model?: string | null
+  inTokens?: number; outTokens?: number; firecrawlCalls?: number; usd?: number; runSeconds?: number
+}
+export async function saveCost(c: CostInput) {
+  return prisma.researchCost.create({
+    data: {
+      requestId: c.requestId, model: c.model ?? null, inTokens: c.inTokens ?? 0, outTokens: c.outTokens ?? 0,
+      firecrawlCalls: c.firecrawlCalls ?? 0, usd: c.usd ?? 0, runSeconds: c.runSeconds ?? 0,
+    },
+  })
+}
+
+// Cost trend — avg $/run and totals, bucketed by day, for the "is it coming down?" chart.
+export async function getCostTrend(days = 60) {
+  const since = new Date(Date.now() - days * 86_400_000)
+  const rows = await prisma.researchCost.findMany({ where: { createdAt: { gte: since } }, select: { usd: true, createdAt: true } })
+  const byDay = new Map<string, { n: number; usd: number }>()
+  for (const r of rows) {
+    const day = r.createdAt.toISOString().slice(0, 10)
+    const a = byDay.get(day) ?? { n: 0, usd: 0 }
+    a.n++; a.usd += r.usd
+    byDay.set(day, a)
+  }
+  const totalUsd = rows.reduce((s, r) => s + r.usd, 0)
+  return {
+    runs: rows.length,
+    totalUsd: +totalUsd.toFixed(4),
+    avgUsd: rows.length ? +(totalUsd / rows.length).toFixed(4) : 0,
+    byDay: [...byDay.entries()].map(([day, a]) => ({ day, runs: a.n, avgUsd: +(a.usd / a.n).toFixed(4) })).sort((x, y) => x.day.localeCompare(y.day)),
+  }
+}
+
 // ── Immutable evidence package + derived dossier ────────────────────────────────
 export async function saveEvidencePackage(pkg: EvidencePackage, caseId?: string | null): Promise<number> {
   const row = await prisma.evidencePackage.create({

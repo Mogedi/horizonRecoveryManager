@@ -433,6 +433,35 @@ model ResearchRequest {
   @@map("research_requests")
 }
 
+// Live progress narration for a running request — so the dashboard shows "what it's doing now"
+// instead of waiting for the dossier. Hermes calls report_progress at each step.
+model ResearchProgress {
+  id        Int      @id @default(autoincrement())
+  requestId Int      @map("request_id")
+  step      String?
+  message   String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([requestId, createdAt])
+  @@map("research_progress")
+}
+
+// Per-run cost (token usage from Hermes's session store + Firecrawl calls). Tracked over time.
+model ResearchCost {
+  id            Int      @id @default(autoincrement())
+  requestId     Int      @map("request_id")
+  model         String?
+  inTokens      Int      @default(0) @map("in_tokens")
+  outTokens     Int      @default(0) @map("out_tokens")
+  firecrawlCalls Int     @default(0) @map("firecrawl_calls")
+  usd           Float    @default(0)
+  runSeconds    Int      @default(0) @map("run_seconds")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([createdAt])
+  @@map("research_costs")
+}
+
 // What Hermes writes — IMMUTABLE, provenance-tracked. Dossiers are DERIVED from this and never the
 // reverse. A dossier can be dropped and rebuilt from here whenever the derivation logic improves.
 model EvidencePackage {

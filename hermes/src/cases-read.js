@@ -227,9 +227,12 @@ export async function getRecentEmails({ days = 1, importance = null, direction =
   return query(
     `SELECT happened_at AS ts,
             metadata->>'from'    AS from_addr,
+            metadata->>'to'      AS to_addr,
             metadata->>'subject' AS subject,
             metadata->>'importance' AS importance,
-            (metadata->>'hasFullBody')='true' AS has_body,
+            metadata->>'importanceReason' AS importance_reason,
+            LEFT(body, 1500)     AS body,
+            body IS NOT NULL     AS has_body,
             deal_hubspot_id
      FROM activity_events
      WHERE ${where}

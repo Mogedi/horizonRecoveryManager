@@ -246,9 +246,14 @@ export async function intakeNewEmails(opts: { maxMessages?: number } = {}): Prom
         }
       }
 
+      // Lean less on body-filtering than the importance triage does: pull the FULL body for every
+      // meaningful email (anything sent, or not classified as pure noise) so the details — time,
+      // body, everything — are always there when asked, without a second fetch. Only obvious noise
+      // (login codes, app notifications) stays metadata-only.
+      const wantBody = isSent || importance !== 'noise'
       let bodyText: string | null = null
       let finalMsg: GmailMessage = msg
-      if (pullBody) {
+      if (wantBody) {
         try {
           const full = await googleClient.getGmailMessage(stub.id, 'full')
           bodyText = extractBody(full.payload)

@@ -1,315 +1,327 @@
-# Horizon Research Agent — Design Doc
+# Horizon Research Agent — Design Doc (v2)
 
-Status: design (no implementation yet). Author: design review with Mo.
+Status: **design, ready to implement.** v2 supersedes v1 after a CTO-level review.
+Author: design review with Mo + Claude Code.
 
-## 1. Purpose & principles
+> v1 built deterministic per-source scrapers inside HorizonManager. The live pass proved that's the
+> wrong shape: every GA county is a different, partly-defended system, and a rigid pipeline just gives
+> up when blocked. v2 moves the *research* into Hermes (an agentic runtime) and keeps the *business
+> logic + data + UI* in Horizon, joined by one immutable contract.
 
-A **research agent** for surplus-recovery / probate / heir work. Given a person + (usually) a known
-property address, it collects evidence from multiple sources, resolves which records refer to the
-*same human*, scores the match with explainable evidence, and produces a reviewable dossier. **The
-human makes the final decision.** No auto-outreach, no auto-CRM writes, no autonomous action.
+---
 
-Principles (decided):
-- **Entity resolution is the product.** The browser is infrastructure.
-- **Public records first** (~80% of value: property, deeds, tax, probate, obituaries, relatives).
-  People-search brokers are the contact last-mile (~20%), evaluated only if telemetry justifies it.
-- **Telemetry is a first-class feature.** Every source call is measured. We build *scraper
-  observability*, not just scrapers.
-- **Deterministic per-source adapters**, not an open-ended web agent. Workflow is structured:
-  search → open result → extract fields → score. (No Browser Use in Phase 1.)
-- **No ML / no model training / no learning loop** until ≥100 real cases have run and the telemetry
-  has been read. Matching starts as transparent hand-tuned rules.
-- **Reuse what exists:** Patchright (already a dep), the dashboard (human-review surface), the
-  HorizonManager MCP (trigger + introspection), append-only storage (facts vs. interpretation).
+## 1. What this is (reframed)
 
-## 2. Architecture
+Not "skip tracing." The product is **Probate Research / Claimant Discovery** for surplus recovery.
+Given a name + property address, the system researches the case the way a forensic genealogist would
+([probate research](https://en.wikipedia.org/wiki/Probate_research)): confirm the property/owner,
+determine **alive or deceased** (~60% deceased), and when deceased build the **heir graph** —
+relationships, addresses, phones, and supporting documents — with explainable confidence and a human
+making the final call.
 
-```
-Hermes / Sonnet
-  → find_person(query)                 [MCP tool on the HorizonManager MCP]
-    → Research Runner                  sequential · paced · circuit-breaker
-      → Source Adapters                public records first · Patchright · hybrid extract
-        → Telemetry Layer              every call → SourceAttempt
-      → Entity Resolution Engine       weighted signals · property = anchor · source-independence
-      → Confidence                     evidence bands · conflicts explicit
-      → Dossier (append-only)
-  → Human Review                       the existing dashboard
+The valuable output is not `{ "phone": "..." }`. It's:
+
+```json
+{ "deceased": true, "heir_graph": {...}, "candidate_people": [...], "relationships": [...],
+  "addresses": [...], "phones": [...], "documents": [...], "confidence": "high", "review_status": "pending" }
 ```
 
-Runtime has exactly two MCP tools: `find_person` and `source_health`. There is **no generic
-"Playwright MCP" runtime layer** — adapters drive Patchright directly. A browser MCP / the
-browser-harness is used only at **dev-time** to author new adapters (see §7).
+**Browser = commodity. Evidence = valuable. Entity resolution = the moat.**
 
-## 3. Folder structure
+---
+
+## 2. Core principles (the contract that prevents drift)
+
+1. **Hermes = behavior. Horizon = storage + business brain.**
+   - Hermes searches, browses, reasons, collects **evidence**, and writes it back. Nothing else.
+   - Horizon stores evidence, runs entity resolution + scoring + heir-graph, owns all schemas, runs
+     the review workflow, and renders the view/reports.
+2. **Evidence is immutable + provenance-tracked. Every business object is derived and re-derivable.**
+   - Hermes can only write **raw evidence with provenance** (source URL, timestamp, snippet, the raw
+     extract). It can NEVER write a score, a heir decision, or any business object.
+   - Horizon derives dossiers/scores/heir-graphs from stored evidence. When the logic improves, Horizon
+     **re-runs over stored evidence — no re-scraping.** Evidence is the permanent asset; derived objects
+     are disposable.
+   - This boundary *structurally* prevents the #1 risk (business logic drifting into Hermes): if Hermes
+     can't write a business object, the logic can't live there.
+3. **Memory is a speed cache, never a source of truth.**
+   - Hermes may remember things within a run for speed, but durable learnings (e.g. "Gordon County →
+     gordonassessors.com, search works like X") are **written to the `county_sources` table in Horizon**,
+     verified and telemetry-backed — not trusted from model memory.
+4. **Plan → Execute → Re-plan.** The mission is structured, so Hermes plans first, executes, and
+   re-plans a step when it's blocked — bounded by a budget. (Resilient plan-then-execute; see §6.)
+5. **Human makes the final decision.** No auto-outreach, no auto-CRM writes. Every dossier is reviewable;
+   every score is explainable; every source is traceable.
+6. **Contracts over runtimes.** The `EvidencePackage` schema, the DB, the MCP, and the UI are Horizon's.
+   If Hermes is ever replaced (OpenAI agent, custom worker), the data and UI survive unchanged.
+
+---
+
+## 3. Architecture
 
 ```
-src/lib/research/
-  find-person.ts        # orchestrator behind the find_person MCP tool
-  runner.ts             # sequential, paced runner + per-source circuit breaker
-  types.ts              # the interfaces in §4
-  sources/
-    index.ts            # adapter registry (id, kind, coverage, enabled)
-    base.ts             # shared: Patchright session, block detection, extraction helpers
-    <source>.ts         # one file per source adapter
-  resolution/
-    engine.ts           # weighted-signal matching
-    signals.ts          # signal definitions + weights (tunable, explainable)
-  confidence.ts         # band derivation from evidence
-  telemetry.ts          # SourceAttempt logging + health queries (source_health tool)
-  dossier.ts            # build + persist the append-only dossier
+HorizonManager (Vercel + Neon)  ── system of record + business brain + view
+  • Research page → enqueue research_request (returns instantly; no serverless timeout)
+  • Stores: research_requests (queue) · evidence_packages (IMMUTABLE) · dossiers (DERIVED)
+            research_documents · source_attempts (telemetry) · county_sources (verified registry)
+  • Deterministic engine: entity resolution → heir graph → claimant scoring → confidence → review_status
+            (re-runnable over stored evidence)
+  • Dashboard: review / approve / reports
+        │ enqueue ↓                                        ↑ read for display
+HorizonManager MCP (VPS)  ── the bridge / the contract surface
+  • read:  next pending request, case data, county_sources, prior evidence
+  • write: evidence_package, documents, telemetry, county_source upserts, mark request done
+        ↑ Hermes calls these
+Hermes (Nous, VPS)  ── the research runtime (plan → execute → re-plan)
+  • Native tools: web_search, browser (Patchright/Browser Use), plus the MCP read/write tools
+  • Research playbook (a skill): the plan-execute-replan loop, budget-bounded
+  • Memory = speed only; durable learnings are written to county_sources
+        ↑ brains
+Claude (Sonnet/Opus, inside Hermes)
 ```
 
-## 4. Core interfaces (TypeScript)
+Triggering is **queue-based** (handles bursts of 100–300): the dashboard enqueues instantly; Hermes
+drains the queue at its own pace with concurrency + per-run budgets; results appear in the view as they
+land. Ad-hoc "research the X case" from Discord is a thin add-on that enqueues the same way.
+
+---
+
+## 4. The two contracts (the seam — design first, version it)
+
+### 4a. EvidencePackage — Hermes → Horizon, **immutable**
+Everything Hermes is allowed to produce. No scores, no business objects — only evidence + provenance.
 
 ```ts
-type Goal = 'locate_owner' | 'find_heirs' | 'mailing_address' | 'contact'
-
-interface PersonQuery {
-  name: string
-  address?: string; city?: string; state?: string   // the property = our anchor
-  ageHint?: number
-  relativesHint?: string[]
-  goal?: Goal
-  caseId: string                                     // ties dossier + telemetry to the deal
-}
-
-interface Address { line1: string; city?: string; state?: string; zip?: string
-  kind: 'current' | 'prior' | 'property' | 'mailing' }
-
-// Common contract EVERY adapter returns — sources are swappable behind this.
-interface Candidate {
-  sourceId: string                 // which adapter produced it
-  url: string                      // exact page (traceability)
-  name: string | null
-  addresses: Address[]
-  phones: string[]; emails: string[]
-  relatives: string[]
-  ageOrDob: string | null
-  deceased: boolean | null
-  signals: string[]                // raw signals this source asserts
-  raw: unknown                     // raw extracted blob, for audit
-}
-
-// Telemetry is not optional — every adapter call yields one of these.
-interface SourceAttempt {
-  sourceId: string; caseId: string
-  status: 'success' | 'blocked' | 'captcha' | 'empty' | 'error'
-  blockReason?: 'cloudflare' | 'captcha' | 'http_403' | 'http_429' | 'redirect' | 'empty' | 'parse'
+interface Provenance {
+  sourceId: string          // e.g. 'qpublic:gordon', 'fastpeoplesearch', 'legacy.com'
   url: string
-  latencyMs: number
-  candidateCount: number
-  proxyUsed: boolean               // correlate block rate with proxy on/off
-  timestamp: Date
+  retrievedAt: string       // ISO
+  snippet?: string          // the raw text the claim came from
+  documentId?: number       // if backed by a captured document
 }
 
-interface SourceResult { attempt: SourceAttempt; candidates: Candidate[] }
-
-interface SourceAdapter {
-  id: string; label: string
-  kind: 'property' | 'tax' | 'deed' | 'probate' | 'obituary' | 'people_search' | 'social'
-  coverage: { states?: string[]; counties?: string[] }   // when this source applies
-  enabled: boolean
-  search(query: PersonQuery, ctx: RunContext): Promise<SourceResult>
+interface EvidenceItem {
+  kind: 'identity' | 'address' | 'phone' | 'email' | 'relationship' | 'deceased' | 'property' | 'note'
+  value: unknown            // shape depends on kind (see below)
+  provenance: Provenance
 }
 
-// Matching output for one resolved person.
-interface EvidenceItem { signal: string; sources: string[]; weight: number; note: string } // sources[] = independence
-interface Resolution {
-  band: 'high' | 'medium' | 'low' | 'conflicting'
-  score: number                    // sortable heuristic, NOT a probability
-  best: Candidate                  // merged best-evidence record
-  evidence: EvidenceItem[]         // why selected
-  conflicts: EvidenceItem[]        // what disagrees
-  ambiguities: string[]
+// value shapes by kind:
+//  identity     { name, ageOrDob? }
+//  address      { line1, city, state, zip, kind: 'property'|'mailing'|'current'|'prior' }
+//  phone        { number, label? }
+//  email        { address }
+//  relationship { person, relationToSubject, otherName }   // e.g. "survived by daughter Jane Smith"
+//  deceased     { isDeceased: boolean, dateOfDeath?, source: 'obituary'|'ssdi'|'probate'|'inferred' }
+//  property     { parcelId?, owner, situsAddress, deedBook? }
+
+interface CandidatePerson {
+  localId: string           // stable within this package
+  name: string | null
+  evidenceRefs: number[]    // indices into evidence[] that describe this person
 }
 
+interface ResearchPlan {
+  goal: 'locate_owner' | 'find_heirs' | 'mailing_address' | 'contact'
+  steps: { n: number; intent: string; source?: string; status: 'planned'|'done'|'failed'|'replanned' }[]
+}
+
+interface EvidencePackage {
+  requestId: number
+  query: PersonQuery
+  plan: ResearchPlan        // auditable: what Hermes intended + what happened
+  candidates: CandidatePerson[]
+  evidence: EvidenceItem[]  // the immutable corpus, each with provenance
+  documents: { documentId: number; kind: string; sourceUrl: string }[]
+  telemetry: SourceAttempt[]
+  notes: string[]
+  budget: { stepsUsed: number; sourcesHit: number; capHit: boolean }
+  completedAt: string
+}
+```
+
+### 4b. Dossier — Horizon-**derived**, re-derivable from the package
+Built by Horizon's deterministic engine; recomputed whenever ER/scoring logic improves.
+
+```ts
 interface Dossier {
-  id: string; caseId: string; query: PersonQuery; createdAt: Date
-  resolution: Resolution
-  candidates: Candidate[]          // everything collected
-  attempts: SourceAttempt[]        // full source trace
-  reviewed: boolean; reviewedBy?: string; reviewedAt?: Date
+  evidencePackageId: number
+  subject: { name: string; deceased: boolean | null; dateOfDeath?: string }
+  heirGraph: HeirGraph                 // people + relationships (for deceased owners)
+  candidatePeople: ScoredCandidate[]   // each with claimantScore + justification
+  contactRankings: { person: string; phones: string[]; emails: string[]; rank: number }[]
+  confidence: { band: 'high'|'medium'|'low'|'conflicting'; justification: EvidenceItem[]; conflicts: EvidenceItem[] }
+  reviewStatus: 'pending' | 'approved' | 'rejected' | 'needs_more'
+  generatedAt: string
 }
 ```
 
-## 5. Data flow
+---
+
+## 5. The agent loop (resilient plan-then-execute)
+
+Per the 2026 research, plan-then-execute is the reliable, low-cost, auditable pattern for structured
+missions — *with a re-planner* so it isn't brittle on the open web
+([Resilient Plan-then-Execute, arXiv 2509.08646](https://arxiv.org/pdf/2509.08646);
+[ReAct vs Plan-and-Execute](https://dev.to/jamesli/react-vs-plan-and-execute-a-practical-comparison-of-llm-agent-patterns-4gh9)).
+Evidence is a first-class state structure with a budget
+([DeepEvidence, arXiv 2601.11560](https://arxiv.org/pdf/2601.11560)).
 
 ```
-find_person(query)
-  runner picks adapters whose coverage matches query.state/county, ordered: public records → people-search
-  for each adapter (sequential, paced):
-     search() → SourceResult        (telemetry logged regardless of outcome)
-     if blocked Nx in a row → circuit-breaker pauses that source + pings Discord
-  collect all candidates
-  resolution.engine: cluster candidates → score vs the property anchor + signals (dedup by source independence)
-  confidence: derive band + evidence + conflicts
-  dossier.build → persist (append-only) → surface in dashboard for review
+1. GATHER INPUTS   name + address → county (free Census geocoder)
+2. PLAN            draft the research plan for the goal (locate_owner | find_heirs); record it
+                   consult county_sources for a known-good method before searching blind
+3. EXECUTE         per step: web_search to FIND the right source → navigate → extract evidence →
+                   capture documents → append EvidenceItems with provenance
+4. RE-PLAN         on block/empty (frameset, Cloudflare, no result): re-plan that step
+                   (GIS REST API / cached page / alternate site / people-search), budget-bounded
+5. LEARN           on a newly-confirmed working method → upsert county_sources (verified, not memory)
+6. RETURN          assemble the EvidencePackage → write via MCP → mark request done
+7. DERIVE (Horizon) entity resolution → heir graph → claimant scoring → confidence → dossier
+8. REVIEW (human)   approve / reject / request more in the dashboard
 ```
 
-## 6. Source adapter lifecycle — "learning / skills over time"
+Budget caps (steps, sources, wall-clock, $) bound cost during 100–300 bursts and stop runaway loops.
 
-This is how the system "figures it out" and **grows skills over time** *without* becoming an
-unreliable open-ended agent. A source is a **skill** that is discovered once, codified, then run
-deterministically — exactly like Hermes's skills and the browser-harness domain-skills.
+---
 
-```
-1. DISCOVER  (dev-time, assisted)  Point Claude at a new source via the browser MCP / harness.
-                                   It explores: how to search, read results, extract fields.
-2. CODIFY                          It proposes a deterministic adapter (search steps + extraction
-                                   map + block detection). You review/approve.
-3. REGISTER                        Adapter added to sources/index.ts with coverage (states/counties).
-4. RUN        (runtime)            Deterministic. Telemetry on every call. No re-figuring-it-out.
-5. MONITOR                         Block rate / candidate yield / match contribution tracked.
-6. REPAIR/RETIRE                   When telemetry shows decay (layout drift, new anti-bot), re-run
-                                   DISCOVER to repair, or disable the source.
-```
+## 6. Entity resolution, heir graph, scoring (Horizon, deterministic)
 
-So "it learns on its own" = **the library of reviewed source-adapters grows**, and the **telemetry**
-tells you which to trust. Per *run* it stays deterministic (reliable, cheap, debuggable). The only
-genuine "learning" deferred to Phase 3 is a repository of human-approved matches to tune signal
-weights — and only once we have volume.
+Best practice = **deterministic rules + probabilistic/fuzzy scoring + a justification engine**, all
+explainable and auditable ([(Almost) all of entity resolution, Science Advances](https://www.science.org/doi/10.1126/sciadv.abi8021)).
+This is the moat and it lives entirely in Horizon, re-derivable from evidence.
 
-## 7. Browser strategy
+- **Anchor on the property.** The owner-of-record address is the strongest disambiguator.
+- **Signals** (tunable, transparent): property/exact/prior address, city, state, name similarity,
+  relationship overlap, age, phone/email overlap. Corroboration weights by **independent** sources
+  (broker echoes don't count multiple times).
+- **Heir graph** (for deceased owners): nodes = people, edges = relationships extracted from obituaries
+  ("survived by…"), probate filings, and people-search "associated persons." Forensic-genealogy framing.
+- **Claimant score + justification**: each candidate gets a score *and* the human-readable evidence
+  behind it. Output is a **band** (`high|medium|low|conflicting`) + evidence + explicit conflicts —
+  never a fake probability.
 
-- **Patchright** (drop-in stealth Playwright, already a dep; `scripts/test-patchright.ts` verifies it).
-- **Sequential + human pacing.** At ~30–40 cases/week, rate is not the risk — datacenter-IP
-  reputation + fingerprint are. Patchright handles fingerprint; the **Oxylabs residential proxy** is
-  a telemetry-triggered lever (`proxyUsed` measures whether it helps), not a default.
-- **Extraction: hybrid.** Deterministic accessibility-tree / selector extraction first; an LLM
-  "page → Candidate schema" extraction as the **fallback** for messy/changing pages (the
-  Firecrawl/Crawl4AI pattern). Avoid screenshot→click loops. Screenshots are kept only as
-  human-review artifacts and for CAPTCHA debugging.
-- **CAPTCHA = human-in-the-loop.** When one appears, pause + ping Discord to solve once. No
-  auto-solving (not worth it at this volume).
+---
 
-## 8. Entity resolution
+## 7. county_sources — learned-but-verified registry (Horizon)
 
-- **Anchor on the property.** For surplus recovery you usually know the owner-of-record's address;
-  that's far stronger than name+city. Cluster candidates and score against the anchor first.
-- **Transparent weighted signals** (in `signals.ts`, tunable): exact/partial/prior address match,
-  city, state, relative overlap, age overlap, phone/email overlap, name similarity.
-- **Source independence.** Brokers resell the same data — N agreeing sources may be one source
-  echoed. Each `EvidenceItem` tracks `sources[]`; corroboration weight scales with *independent*
-  sources, not raw count.
-- **Deceased fork.** If the owner is deceased (obituary/probate hit), the goal flips to `find_heirs`
-  — a relationship-graph search, scored differently from locating one living person.
+The durable replacement for "Hermes remembers." Telemetry-backed; decays when it starts failing.
 
-## 9. Confidence
-
-- Output is **evidence + a band** (`high | medium | low | conflicting`), with `score` as a sortable
-  heuristic only — never presented as a probability (we won't have calibration).
-- **Conflicts are explicit.** Two people matching different signals → `conflicting`, surfaced for review.
-- Every band is explainable: the reviewer sees the supporting and conflicting evidence and the source URLs.
-
-## 10. Telemetry & health
-
-- Every `SourceAttempt` persisted. `source_health` MCP tool answers, per source over a window:
-  success rate, block rate (by reason), avg candidates, avg latency, contribution to confirmed
-  matches, and degradation trend. Hermes can report this in Discord on demand.
-- Circuit breaker + Discord alert when a source's block rate crosses a threshold.
-
-## 11. Human review
-
-- Dossier surfaces in the **existing dashboard**: resolution band, merged best record, evidence,
-  conflicts, every candidate, every source URL + screenshot. Approve / reject / pick-different-candidate.
-- Approvals are stored (Phase 3 weight-tuning input). No outreach is ever triggered by this system.
-
-## 12. Database (Prisma, append-only where it's interpretation)
-
-```
-model SourceAttempt {
-  id, sourceId, caseId, status, blockReason?, url, latencyMs, candidateCount, proxyUsed, createdAt
-  @@index([sourceId, createdAt])   // health queries
-}
-model ResearchDossier {            // append-only — never overwritten (mirrors case_analyses)
-  id, caseId, query Json, resolution Json, candidates Json, attempts Json,
-  reviewed, reviewedBy?, reviewedAt?, createdAt
-  @@index([caseId, createdAt])
+```ts
+interface CountySource {
+  state: string; county: string
+  sourceKind: 'property' | 'deed' | 'probate' | 'obituary'
+  method: 'gis_api' | 'qpublic' | 'custom_site' | 'propertyradar'
+  entryUrl: string
+  searchHint: string        // how to search it (params / steps), discovered once
+  lastVerifiedAt: string
+  successRate: number        // from source_attempts
+  status: 'active' | 'degraded' | 'broken'
 }
 ```
+
+Hermes reads this before searching blind; on a confirmed new method it upserts a row. If a method's
+success rate drops, status → `degraded`, and the next run re-discovers (the "repair" lifecycle).
+
+---
+
+## 8. Sources & coverage (GA-first reality)
+
+The live pass found there is **no unified qPublic** — every county differs:
+
+| County | System | Approach |
+|---|---|---|
+| DeKalb | classic qPublic (frameset) | direct frame URL / GIS API |
+| Cobb | Cloudflare-walled | **GIS REST API** bypass preferred |
+| Fulton | custom (fultonassessor.org) | site search / underlying API |
+| Gwinnett | qPublic landing | site search / GIS API |
+| Gordon (sample) | custom (gordonassessors.com) | site search |
+
+**Preferred order per county:** (1) **GIS/ArcGIS REST API** if one exists (structured JSON, no
+scraping, no Cloudflare) → (2) the county site → (3) qPublic. Hermes discovers which works and records
+it in `county_sources`. Beyond property: **obituary/death** (Legacy.com, Find a Grave, SSDI — free),
+**people-search** (FastPeopleSearch/TruePeopleSearch — defended, telemetry-measured), and the paid
+logins via the vault (**PropertyRadar**, **GSCCCA** for deed images). BeenVerified: excluded (quota).
+Social (FB/LinkedIn): deferred (flag risk).
+
+---
+
+## 9. Credentials vault, documents, telemetry, review
+
+- **Vault:** per-source creds (GSCCCA, PropertyRadar) as VPS env vars for MVP; encrypted table +
+  dashboard UI later. Never in git, logs, evidence, or dossiers. Patchright persistent profile reuses
+  sessions so logins are rare.
+- **Documents:** capture deed/lien images → PDF (screenshot, not the site print dialog) → stored in
+  `research_documents` (bytes + provenance), previewed in the dashboard; Google Drive write is a later
+  upgrade (needs scope).
+- **Telemetry (first-class):** every source call → `source_attempts`; a `source_health` MCP tool answers
+  "which source is reliable / degrading?" in Discord. Circuit-breaker skips sources with high recent
+  block rate.
+- **Review:** the dashboard renders the derived dossier (band, heir graph, candidates, contacts,
+  evidence + source URLs + document previews); approve / reject / request-more. Reports generated here.
+
+---
+
+## 10. Data model (Neon / Prisma)
+
+```
+research_requests   id, query Json, goal, status(pending|running|done|failed), enqueuedBy, createdAt, startedAt, finishedAt
+evidence_packages   id, requestId, query Json, plan Json, candidates Json, evidence Json (IMMUTABLE), telemetry Json, notes Json, completedAt
+research_dossiers   id, evidencePackageId, caseId?, subject Json, heirGraph Json, candidatePeople Json, confidence Json, reviewStatus, generatedAt   (DERIVED, re-creatable)
+research_documents  id, caseId?, evidencePackageId?, sourceId, kind, mimeType, bytes, sourceUrl, createdAt
+source_attempts     id, sourceId, requestId?, caseId?, status, blockReason?, url, latencyMs, candidateCount, proxyUsed, createdAt
+county_sources      id, state, county, sourceKind, method, entryUrl, searchHint, lastVerifiedAt, successRate, status
+```
+
+`evidence_packages` are append-only/immutable. `research_dossiers` can be dropped and rebuilt from the
+package at any time.
+
+---
+
+## 11. What changes from v1 code
+
+- **Keep & grow:** the DB, `resolution`/`confidence` (this becomes the Horizon derivation engine, now
+  fed by an EvidencePackage), telemetry, the dashboard view, `geo.ts`.
+- **Replace:** the deterministic adapters + fixed runner (`qpublic.ts`, `fastpeoplesearch.ts`) and the
+  Vercel-side `find-person` pipeline → the plan-execute-replan loop moves into Hermes. Their knowledge
+  becomes seed rows in `county_sources`, not code.
+- **Add:** `research_requests` queue, `evidence_packages` table, `county_sources` registry, the
+  EvidencePackage MCP write tools, the Horizon **derivation engine** (ER → heir graph → scoring), and
+  the **Hermes research playbook** (plan→execute→re-plan, budget-bounded) + Hermes browser/search tools.
+
+---
+
+## 12. Phasing
+
+- **Build the seam first (no runtime depends on an unlocked contract):** the `EvidencePackage` schema,
+  the queue + `evidence_packages` + `county_sources` tables, the MCP read/write tools, and the Horizon
+  derivation engine with a **fixture EvidencePackage** (unit-tested end-to-end without any browser).
+- **MVP runtime:** the Hermes research playbook over **one path proven to work** — start with the
+  GIS-API property lookup (structured, unblocked) + an obituary/death check → real EvidencePackage →
+  Horizon dossier → dashboard review. Telemetry from day one.
+- **Phase 2:** more county methods (recorded in `county_sources`), people-search (measure block rate →
+  decide on Oxylabs proxy), PropertyRadar + GSCCCA via the vault, document capture.
+- **Phase 3:** richer heir-graph resolution; reports; revisit the proxy / additional sources by telemetry.
+
+---
 
 ## 13. Risks & failure modes
 
 | Risk | Mitigation |
 |---|---|
-| Datacenter-IP block on request #1 | Patchright by default; Oxylabs residential proxy as a measured lever |
-| Layout drift breaks an adapter | Telemetry flags decay → re-run DISCOVER to repair; LLM-extract fallback absorbs minor drift |
-| CAPTCHA | Human-in-the-loop pause + ping; circuit breaker |
-| False match (two different people) | Property anchor + conflict modeling + `conflicting` band + human review |
-| Source echo (resold data) | Independence-weighted corroboration |
-| Stale data (old phones/addresses) | Show source date; prefer recent; mark `prior` addresses |
-| Cost runaway | Cache dossiers by (query hash); per-case source budget; sequential, not parallel |
-| Legal / permissible-purpose | Human-final-decision gate; no auto-outreach; dossier is research, not a consumer report |
+| **Business logic drifting into Hermes** (the #1 risk) | Hermes can only write immutable evidence — never a score/decision. Boundary is structural. |
+| Memory treated as truth | Durable learnings go to `county_sources` (verified, telemetry-backed), not model memory. |
+| Cloudflare / framesets | Prefer GIS REST APIs; re-plan to alternates; proxy as a measured lever; telemetry + circuit breaker. |
+| Plan brittleness | Re-planner step; budget caps stop runaway loops. |
+| False match / wrong heir | Property anchor + conflict modeling + `conflicting` band + human review. |
+| Cost during 100–300 bursts | Plan-execute (low LLM count) + per-run budgets + queue pacing. |
+| Runtime lock-in | Contracts (EvidencePackage/DB/MCP/UI) are Horizon's; Hermes is swappable. |
+| Legal / permissible-purpose | Human-final-decision gate; no auto-outreach; research output, not a consumer report. |
 
-## 14. Phasing
+---
 
-- **MVP** — Research Runner + telemetry + **one** public-records adapter, end-to-end. `find_person`
-  MCP tool → append-only dossier → dashboard review. Transparent weighted matching. Goal: real
-  block-rate + yield numbers within days.
-- **Phase 2** — add 2–4 more public-records / obituary adapters; the discover→codify authoring flow;
-  source-independence dedup; proxy decision driven by telemetry; one people-search source if justified.
-- **Phase 3** — heir-graph for deceased owners; approved-match repository → tune signal weights
-  (only after ≥100 cases); revisit Browser Use only if a source genuinely needs dynamic navigation.
-
-## 15. Horizon-specific: sources, credentials, documents, entry page
-
-### Geography & goals
-~90–95% **Georgia** (some Florida). Default state = GA, overridable. Per case we want ALL of:
-confirm land owned · alive-or-deceased (**≈60% deceased → heir-hunt**) · current mailing address ·
-multiple phone numbers · relatives list · (optional, low priority) a matched Facebook/LinkedIn URL.
-
-### Source plan (priority order)
-1. **qPublic** (qpublic.schneidergeospatial.com / qpublic.net) — FREE, no login. Property directory:
-   owner, parcel, property address, assessments, often deed-book references. **START HERE** — it makes
-   GSCCCA searches targeted. [property/tax adapter]
-2. **GSCCCA** (gsccca.org) — GA Superior Court Clerks' Cooperative Authority. **LOGIN REQUIRED.** Tax
-   deeds, liens, real-estate index. Flow: pick county / use parcel → name search (Last, First) → open
-   the deed/lien → **capture the document image** (not the site's print dialog). [deed adapter + vault]
-3. **PropertyRadar** — paid account (Mo has). LOGIN REQUIRED. Owner/property/contact enrichment.
-4. **People-search** (FastPeopleSearch, TruePeopleSearch) — FREE, no login, but anti-bot defended.
-   Phones / relatives / prior addresses. Telemetry decides if they're worth it. **BeenVerified: do
-   NOT use** — limited search quota Mo doesn't want burned.
-5. **Death / obituary** (≈60% of cases): Legacy.com (mostly free/public), Find a Grave (free), SSDI
-   (free). newspapers.com & some obit sites are paywalled → optional account via the vault.
-6. **Social** (Facebook/LinkedIn) — **DEFERRED.** Logged-in scraping flags accounts and blocks fast.
-   At most a Phase-2 *passive* public-URL capture from search results; never logged-in scraping.
-
-### Soft learning / source discovery
-When research surfaces a useful records site we don't have an adapter for (a county portal, zoning
-site, etc.), log it to a **suggested_sources** list for Mo to approve → it enters the discover→codify
-lifecycle (§6) and becomes a new skill. This is how coverage grows to sites Mo didn't know about
-(the way qPublic once was).
-
-### Credentials (vault)
-- **MVP:** per-source env vars on the VPS (e.g. `GSCCCA_USER` / `GSCCCA_PASS`) — never in git, never
-  logged. The adapter's `login()` reads them; the Patchright **persistent profile reuses the session**
-  so we log in rarely (also more human-like).
-- **Later:** an encrypted `source_credentials` table + a dashboard screen so Mo adds/updates creds
-  himself. Credentials never appear in logs, telemetry, dossiers, or git.
-
-### Document capture & storage
-Navigate to the deed/lien image → capture (screenshot / page→PDF), **not** the site print dialog.
-- **MVP:** a `research_documents` table (bytes + metadata), served to the dashboard via an API route.
-  Guaranteed to work, no extra OAuth scopes.
-- **Preferred later:** write the PDF into the deal's **Google Drive** folder (matching the existing
-  deal-case folder style) — needs Drive *write* scope (a Google re-consent); falls back to DB/VPS.
-
-### Entry + review page (dashboard)
-New page `/dashboard/research`: a form (name, address, city, **state defaulted to GA**, + optional
-parcelId, county, ageHint, relatives) → runs `find_person` → renders the dossier inline: resolution
-band, merged best record, phones, addresses, relatives, deceased status, evidence + source URLs, and
-inline previews of captured documents. Mo verifies/approves here — no retyping. This is both the
-human-review surface and the everyday entry point.
-
-## 16. Updated DB additions
-
-```
-model ResearchDocument {     // captured deeds/liens/screenshots, tied to a case
-  id, caseId, dossierId?, sourceId, kind, label, mimeType, bytes Bytes, sourceUrl?, createdAt
-  @@index([caseId, createdAt])
-}
-model SuggestedSource {      // soft-learning: sites worth turning into adapters
-  id, url, host, note, seenCount, status('new'|'approved'|'rejected'), createdAt
-}
-// Credentials: MVP = VPS env vars (no table). Later: encrypted source_credentials + dashboard UI.
-```
+## 14. References
+- Resilient plan-then-execute: [arXiv 2509.08646](https://arxiv.org/pdf/2509.08646) · pattern comparison: [ReAct vs Plan-and-Execute](https://dev.to/jamesli/react-vs-plan-and-execute-a-practical-comparison-of-llm-agent-patterns-4gh9)
+- Evidence-graph deep-research agents: [DeepEvidence, arXiv 2601.11560](https://arxiv.org/pdf/2601.11560) · [Deep Research survey, arXiv 2508.12752](https://arxiv.org/html/2508.12752v1)
+- Entity resolution best practice: [(Almost) all of entity resolution, Science Advances](https://www.science.org/doi/10.1126/sciadv.abi8021) · [RudderStack overview](https://www.rudderstack.com/blog/what-is-entity-resolution/)
+- Probate / forensic genealogy: [Probate research (Wikipedia)](https://en.wikipedia.org/wiki/Probate_research)

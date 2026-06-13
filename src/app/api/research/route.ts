@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { isAuthenticated, isAuthedOrAgent, unauthorizedResponse } from '@/lib/auth/require-session'
-import { enqueueRequest, listRecentDossiersWithCost, listRequests, getProgressForRequests, getCostTrend } from '@/lib/db/research'
+import { enqueueRequest, findRecentDossierForCase, listRecentDossiersWithCost, listRequests, getProgressForRequests, getCostTrend } from '@/lib/db/research'
 import type { PersonQuery, Goal } from '@/lib/research/types'
 
 const GOALS: Goal[] = ['locate_owner', 'find_heirs', 'mailing_address', 'contact']
@@ -8,9 +8,15 @@ const GOALS: Goal[] = ['locate_owner', 'find_heirs', 'mailing_address', 'contact
 // POST → enqueue a research request (returns instantly; Hermes drains the queue). Session or agent.
 export async function POST(req: NextRequest) {
   if (!(await isAuthedOrAgent(req))) return unauthorizedResponse()
-  let body: Partial<PersonQuery> & { goal?: string }
+  let body: Partial<PersonQuery> & { goal?: string; force?: boolean }
   try { body = await req.json() } catch { return NextResponse.json({ error: 'invalid json' }, { status: 400 }) }
   if (!body.name?.trim()) return NextResponse.json({ error: 'name is required' }, { status: 400 })
+
+  // Conservative case-level idempotency: skip if this case already has a recent dossier (unless forced).
+  if (body.caseId && !body.force) {
+    const recent = await findRecentDossierForCase(body.caseId)
+    if (recent) return NextResponse.json({ skipped: true, reason: 'recent_dossier', dossierId: recent.id, dossierAt: recent.createdAt })
+  }
 
   const goal: Goal = GOALS.includes(body.goal as Goal) ? (body.goal as Goal) : 'find_heirs'
   const query: PersonQuery = {

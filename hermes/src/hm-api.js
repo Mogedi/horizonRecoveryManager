@@ -109,6 +109,8 @@ export function newWorkflow(correlationId = `hermes:${randomUUID()}`) {
 // the verified county registry. Hermes can write evidence only — never a business object.
 export const claimResearchRequest = () => req('GET', '/api/research/next', {})
 export const submitEvidencePackage = (pkg) => req('POST', '/api/research/evidence', { body: pkg })
+// Person-level idempotency: contact data we already hold for a name — check before paying for a search.
+export const getPriorEvidence = (name) => req('GET', `/api/research/prior-evidence?name=${enc(name)}`, {})
 export const getCountySources = (state = 'GA', county) =>
   req('GET', `/api/research/county-sources?state=${enc(state)}${county ? `&county=${enc(county)}` : ''}`, {})
 export const upsertCountySource = (source) => req('POST', '/api/research/county-sources', { body: source })

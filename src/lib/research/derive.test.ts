@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import { deriveDossier, nameSimilarity } from './derive'
-import type { EvidencePackage, Provenance } from './types'
+import type { EvidencePackage, Provenance, SourceType } from './types'
 
-const prov = (sourceId: string): Provenance => ({ sourceId, url: `https://${sourceId}/x`, retrievedAt: '2026-06-13T00:00:00Z' })
+const prov = (sourceId: string, sourceType: SourceType = 'other'): Provenance =>
+  ({ sourceId, sourceType, url: `https://${sourceId}/x`, retrievedAt: '2026-06-13T00:00:00Z', sourceText: `evidence from ${sourceId}` })
 
 // Deceased owner (Tammy) with two heirs surfaced from an obituary + people-search.
 const fixture: EvidencePackage = {
@@ -14,15 +15,15 @@ const fixture: EvidencePackage = {
     { localId: 'bob', name: 'Bob Burchett', evidenceRefs: [3, 7, 8] },
   ],
   evidence: [
-    { kind: 'property', value: { owner: 'Tammy L Burchett', situsAddress: '235 Whipporwill Ln SE', parcelId: '123' }, provenance: prov('qpublic:gordon') },
-    { kind: 'deceased', value: { isDeceased: true, dateOfDeath: '2021-03-15', basis: 'obituary' }, provenance: prov('legacy.com') },
-    { kind: 'relationship', value: { person: 'Jane Burchett', relationToSubject: 'daughter' }, provenance: prov('legacy.com') },
-    { kind: 'relationship', value: { person: 'Bob Burchett', relationToSubject: 'son' }, provenance: prov('legacy.com') },
-    { kind: 'identity', value: { name: 'Jane Burchett', ageOrDob: '48' }, provenance: prov('fastpeoplesearch') },
-    { kind: 'address', value: { line1: '12 Oak St', city: 'Marietta', state: 'GA', kind: 'current' }, provenance: prov('fastpeoplesearch') },
-    { kind: 'phone', value: { number: '770-555-0101' }, provenance: prov('fastpeoplesearch') },
-    { kind: 'identity', value: { name: 'Bob Burchett' }, provenance: prov('fastpeoplesearch') },
-    { kind: 'phone', value: { number: '404-555-0199' }, provenance: prov('fastpeoplesearch') },
+    { kind: 'property', value: { owner: 'Tammy L Burchett', situsAddress: '235 Whipporwill Ln SE', parcelId: '123' }, provenance: prov('qpublic:gordon', 'property') },
+    { kind: 'deceased', value: { deceasedStatus: 'deceased', dateOfDeath: '2021-03-15', basis: 'obituary' }, provenance: prov('legacy.com', 'obituary') },
+    { kind: 'relationship', value: { person: 'Jane Burchett', normalizedName: 'jane burchett', relationshipAsStated: 'daughter', relationCategory: 'child' }, provenance: prov('legacy.com', 'obituary') },
+    { kind: 'relationship', value: { person: 'Bob Burchett', normalizedName: 'bob burchett', relationshipAsStated: 'son', relationCategory: 'child' }, provenance: prov('legacy.com', 'obituary') },
+    { kind: 'identity', value: { name: 'Jane Burchett', normalizedName: 'jane burchett', ageOrDob: '48', deceasedStatus: 'living' }, provenance: prov('fastpeoplesearch', 'people_search') },
+    { kind: 'address', value: { line1: '12 Oak St', city: 'Marietta', state: 'GA', kind: 'current' }, provenance: prov('fastpeoplesearch', 'people_search') },
+    { kind: 'phone', value: { number: '770-555-0101', contactMethodStatus: 'unverified' }, provenance: prov('fastpeoplesearch', 'people_search') },
+    { kind: 'identity', value: { name: 'Bob Burchett', normalizedName: 'bob burchett', deceasedStatus: 'living' }, provenance: prov('fastpeoplesearch', 'people_search') },
+    { kind: 'phone', value: { number: '404-555-0199', contactMethodStatus: 'unverified' }, provenance: prov('fastpeoplesearch', 'people_search') },
   ],
   documents: [],
   telemetry: [],

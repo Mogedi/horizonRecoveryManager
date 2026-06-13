@@ -139,8 +139,8 @@ function evidenceText(e: EvidenceItem): string {
     case 'address': return `Address [${e.value.kind}]: ${e.value.line1}${e.value.city ? `, ${e.value.city}` : ''} ${e.value.state ?? ''}`
     case 'phone': return `Phone: ${e.value.number}`
     case 'email': return `Email: ${e.value.address}`
-    case 'relationship': return `Relationship: ${e.value.person} — ${e.value.relationToSubject}`
-    case 'deceased': return `Deceased: ${e.value.isDeceased ? 'yes' : 'no'}${e.value.dateOfDeath ? ` (${e.value.dateOfDeath})` : ''} [${e.value.basis}]`
+    case 'relationship': return `Relationship: ${e.value.person} — ${e.value.relationshipAsStated}`
+    case 'deceased': return `Deceased: ${e.value.deceasedStatus}${e.value.dateOfDeath ? ` (${e.value.dateOfDeath})` : ''} [${e.value.basis}]`
     case 'property': return `Property: ${e.value.owner}${e.value.parcelId ? ` · parcel ${e.value.parcelId}` : ''}`
     default: return e.value.text
   }

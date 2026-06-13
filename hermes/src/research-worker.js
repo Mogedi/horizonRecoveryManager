@@ -2,7 +2,11 @@
 // Each run: claim (next_research_request) → research per the playbook → submit_evidence_package.
 // Hermes is the runtime; this just paces the queue. PM2: hermes-research-worker. Run: npm run research-worker
 import { spawn, execSync } from 'node:child_process'
+import { createWriteStream, mkdirSync } from 'node:fs'
 import { query } from './cases-read.js'
+
+const LOG_DIR = process.env.RESEARCH_LOG_DIR || `${process.env.HOME || '/home/mo'}/hermes/logs/research`
+try { mkdirSync(LOG_DIR, { recursive: true }) } catch { /* exists */ }
 
 const MAX = Number(process.env.RESEARCH_CONCURRENCY || 2) // concurrent agentic runs (cost/load cap)
 const POLL_MS = Number(process.env.RESEARCH_POLL_MS || 20000)
@@ -37,9 +41,13 @@ function fireRun() {
   if (!container) { log('no running hermes-agent container found'); return }
   active++
   const t0 = Date.now()
-  log(`firing research run (active=${active})`)
-  const child = spawn('docker', ['exec', container, HERMES, '-z', DRAIN_PROMPT], { stdio: 'ignore' })
-  child.on('exit', (code) => { active--; log(`run done (code=${code}, ${Math.round((Date.now() - t0) / 1000)}s, active=${active})`); tick() })
+  // Raw run output → a per-run host log (deep debug; the user-facing live view is report_progress).
+  const logFile = `${LOG_DIR}/run-${t0}.log`
+  const out = createWriteStream(logFile, { flags: 'a' })
+  log(`firing research run (active=${active}, log=${logFile})`)
+  const child = spawn('docker', ['exec', container, HERMES, '-z', DRAIN_PROMPT], { stdio: ['ignore', 'pipe', 'pipe'] })
+  child.stdout.pipe(out); child.stderr.pipe(out)
+  child.on('exit', (code) => { active--; out.end(); log(`run done (code=${code}, ${Math.round((Date.now() - t0) / 1000)}s, active=${active})`); tick() })
   child.on('error', (e) => { active--; log('spawn error:', e.message) })
 }
 

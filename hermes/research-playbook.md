@@ -10,6 +10,11 @@ Work the mission as **PLAN → EXECUTE → RE-PLAN**. Be efficient; respect the 
 Call `next_research_request`. If it returns `null`, stop — the queue is empty.
 Otherwise you have `{ requestId, query: { name, address, city, state, county, goal } }`.
 
+**Keep the `requestId`.** Call `report_progress(requestId, "<one line>")` after EVERY step below
+(plan, each search/scrape, found/blocked, each heir, submitting) so Mo can watch the run live. Keep
+messages short, e.g. `"searching Gordon property records"`, `"obituary found — deceased confirmed"`,
+`"researching heir David Pryor"`, `"submitting evidence"`.
+
 ## 2. Plan
 State a short plan for the goal:
 - **find_heirs** (owner likely deceased): confirm the property/owner → confirm deceased + date →

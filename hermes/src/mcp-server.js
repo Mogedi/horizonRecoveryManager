@@ -18,7 +18,7 @@ import {
   getAttentionQueue, getDealDocuments, refreshCase, newWorkflow,
   emailIntake, syncJustCall, syncGmail, syncDrive, getDigest, classifyCalls,
   triggerLayer1, triggerLayer2, verifyDealDocs, activeDealsWithDocs,
-  claimResearchRequest, submitEvidencePackage, getCountySources, upsertCountySource,
+  claimResearchRequest, submitEvidencePackage, getCountySources, upsertCountySource, reportProgress,
 } from './hm-api.js'
 
 const PORT = Number(process.env.MCP_PORT || 8848)
@@ -191,6 +191,10 @@ tool('get_county_sources',
 tool('upsert_county_source',
   { title: 'Record a working source method', description: 'After confirming a method works for a county, record it (durable learning, not memory). Future runs reuse it.', inputSchema: { state: z.string(), county: z.string(), sourceKind: z.enum(['property', 'deed', 'probate', 'obituary']), method: z.enum(['gis_api', 'qpublic', 'custom_site', 'propertyradar']), entryUrl: z.string(), searchHint: z.string().optional() }, annotations: writeHint },
   (a) => upsertCountySource({ ...a, searchHint: a.searchHint ?? '' }))
+
+tool('report_progress',
+  { title: 'Report research progress', description: 'Narrate what you are doing RIGHT NOW for the request you are working on (shown live in the dashboard so Mo sees it is working). Call this at each step: planning, searching a source, found/blocked, researching an heir, submitting. Keep messages short (one line).', inputSchema: { requestId: z.number(), message: z.string(), step: z.string().optional() }, annotations: { ...writeHint, idempotentHint: false } },
+  ({ requestId, message, step }) => reportProgress(requestId, message, step))
 
 tool('submit_evidence_package',
   { title: 'Submit research evidence', description: 'Write the IMMUTABLE evidence package for a completed research request. Horizon stores it and derives the dossier (scoring/heir-graph). Provide evidence items WITH provenance (sourceId, url, retrievedAt). Do NOT compute scores or business objects — only evidence.', inputSchema: {

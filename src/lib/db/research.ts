@@ -56,14 +56,20 @@ export async function getProgressForRequests(requestIds: number[]) {
 
 // ── Per-run cost ─────────────────────────────────────────────────────────────────
 export interface CostInput {
-  requestId: number; model?: string | null
+  sessionId?: string | null; requestId?: number | null; model?: string | null
   inTokens?: number; outTokens?: number; firecrawlCalls?: number; usd?: number; runSeconds?: number
 }
 export async function saveCost(c: CostInput) {
+  // Dedupe by Hermes session id (the cost-sync re-posts recent sessions; each run = one session).
+  if (c.sessionId) {
+    const existing = await prisma.researchCost.findFirst({ where: { sessionId: c.sessionId }, select: { id: true } })
+    if (existing) return existing
+  }
   return prisma.researchCost.create({
     data: {
-      requestId: c.requestId, model: c.model ?? null, inTokens: c.inTokens ?? 0, outTokens: c.outTokens ?? 0,
-      firecrawlCalls: c.firecrawlCalls ?? 0, usd: c.usd ?? 0, runSeconds: c.runSeconds ?? 0,
+      sessionId: c.sessionId ?? null, requestId: c.requestId ?? null, model: c.model ?? null,
+      inTokens: c.inTokens ?? 0, outTokens: c.outTokens ?? 0, firecrawlCalls: c.firecrawlCalls ?? 0,
+      usd: c.usd ?? 0, runSeconds: c.runSeconds ?? 0,
     },
   })
 }

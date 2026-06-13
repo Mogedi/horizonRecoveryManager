@@ -486,6 +486,7 @@ model EvidencePackage {
 model SourceAttempt {
   id             Int      @id @default(autoincrement())
   sourceId       String   @map("source_id")
+  sourceType     String?  @map("source_type") // obituary | people_search | property | government | crm | probate | funeral | other
   requestId      Int?     @map("request_id")
   caseId         String?  @map("case_id")
   status         String   // success | blocked | captcha | empty | error

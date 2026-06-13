@@ -302,7 +302,8 @@ function buildConflicts(pkg: EvidencePackage): Conflict[] {
   return conflicts
 }
 
-const CLOSE_FAMILY = new Set<RelationCategory>(['parent', 'sibling', 'spouse', 'child', 'grandparent'])
+// Descendants (child, grandchild) are the strongest heir signal; ascendants/siblings/spouse round it out.
+const CLOSE_FAMILY = new Set<RelationCategory>(['parent', 'sibling', 'spouse', 'child', 'grandchild', 'grandparent'])
 function buildCompleteness(pkg: EvidencePackage, actionable: ActionableContact[]): Completeness {
   return {
     deathConfirmed: pkg.evidence.some(e => e.kind === 'deceased' && e.value.deceasedStatus === 'deceased'),
@@ -326,7 +327,9 @@ function buildSourceIntel(pkg: EvidencePackage): SourceIntelEntry[] {
     const a = get(t); a.items++; a.sources.add(it.provenance.sourceId); byType.set(t, a)
   }
   for (const att of pkg.telemetry ?? []) {
-    const t = typeOfSource.get(att.sourceId) ?? 'unknown'
+    // Prefer the attempt's own sourceType (set even when the source was blocked / yielded no evidence);
+    // fall back to the type inferred from evidence, then 'unknown'.
+    const t: SourceType | 'unknown' = att.sourceType ?? typeOfSource.get(att.sourceId) ?? 'unknown'
     const a = get(t); a.attempts++; byType.set(t, a)
   }
   return [...byType.entries()].map(([sourceType, a]) => ({ sourceType, items: a.items, sources: [...a.sources], attempts: a.attempts }))

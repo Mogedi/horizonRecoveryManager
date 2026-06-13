@@ -35,7 +35,10 @@ const fixture: EvidencePackage = {
     { kind: 'relationship', value: { person: 'Carl Burchett', normalizedName: 'carl burchett', relationshipAsStated: 'brother', relationCategory: 'sibling' }, provenance: { ...prov('crm', 'crm'), isFromCrm: true } },
   ],
   documents: [],
-  telemetry: [],
+  // a blocked attempt that yielded NO evidence — must still group under its own sourceType, not 'unknown'
+  telemetry: [
+    { sourceId: 'qpublic9.qpublic.net', sourceType: 'government', status: 'blocked', blockReason: 'cloudflare', latencyMs: 1200, candidateCount: 0, proxyUsed: false, timestamp: new Date('2026-06-13T00:00:00Z') },
+  ],
   notes: [],
   budget: { stepsUsed: 4, sourcesHit: 3, capHit: false },
   completedAt: '2026-06-13T00:00:00Z',
@@ -148,6 +151,21 @@ describe('deriveDossier — Phase B sections', () => {
     expect(types).toContain('obituary')
     expect(types).toContain('people_search')
     expect(types).toContain('property')
+  })
+
+  it('B6: a blocked attempt (no evidence) groups under its own sourceType, not "unknown"', () => {
+    const gov = d.sourceIntel.find(s => s.sourceType === 'government')
+    expect(gov?.attempts).toBe(1)
+    expect(d.sourceIntel.map(s => s.sourceType)).not.toContain('unknown')
+  })
+
+  it('B4: grandchildren count as close family (descendant heirs)', () => {
+    const withGrandchild: EvidencePackage = {
+      ...fixture,
+      evidence: [{ kind: 'relationship', value: { person: 'Tina Pryor', normalizedName: 'tina pryor', relationshipAsStated: 'granddaughter', relationCategory: 'grandchild', deceasedStatus: 'living' }, provenance: prov('legacy.com', 'obituary') }],
+      candidates: [],
+    }
+    expect(deriveDossier(withGrandchild).completeness.closeFamilyIdentified).toBe(true)
   })
 })
 

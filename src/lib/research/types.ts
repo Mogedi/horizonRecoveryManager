@@ -35,7 +35,9 @@ export interface Address {
 export type SourceType = 'obituary' | 'people_search' | 'property' | 'government' | 'crm' | 'probate' | 'funeral' | 'other'
 export type DeceasedStatus = 'living' | 'deceased' | 'unknown'
 // Best-effort grouping bucket. `relationshipAsStated` is the source of truth; this is for grouping only.
-export type RelationCategory = 'parent' | 'sibling' | 'spouse' | 'child' | 'grandparent' | 'cousin' | 'extended' | 'friend' | 'unknown'
+// `grandchild` covers any descendant generation below child (great-grandchildren map here too — we don't
+// split generations); `grandparent` covers ascendants above parent.
+export type RelationCategory = 'parent' | 'sibling' | 'spouse' | 'child' | 'grandchild' | 'grandparent' | 'cousin' | 'extended' | 'friend' | 'unknown'
 // Designed for the future phone-validation API: it flips unverified → valid/stale/invalid. Default 'unverified'.
 export type ContactMethodStatus = 'unverified' | 'valid' | 'stale' | 'invalid'
 
@@ -88,6 +90,7 @@ export type AttemptStatus = 'success' | 'blocked' | 'captcha' | 'empty' | 'error
 export type BlockReason = 'cloudflare' | 'captcha' | 'http_403' | 'http_429' | 'redirect' | 'empty' | 'parse'
 export interface SourceAttempt {
   sourceId: string
+  sourceType?: SourceType // what KIND of source was attempted — lets source intel group blocked/empty tries
   requestId?: number | null
   caseId?: string | null
   status: AttemptStatus

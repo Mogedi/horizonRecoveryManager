@@ -245,7 +245,7 @@ export async function markDossierReviewed(id: number, reviewStatus: string, revi
 export async function logSourceAttempt(a: SourceAttempt) {
   return prisma.sourceAttempt.create({
     data: {
-      sourceId: a.sourceId, requestId: a.requestId ?? null, caseId: a.caseId ?? null, status: a.status,
+      sourceId: a.sourceId, sourceType: a.sourceType ?? null, requestId: a.requestId ?? null, caseId: a.caseId ?? null, status: a.status,
       blockReason: a.blockReason ?? null, url: a.url ?? null, latencyMs: Math.round(a.latencyMs),
       candidateCount: a.candidateCount, proxyUsed: a.proxyUsed,
     },

@@ -77,12 +77,18 @@ async function tick() {
 
 // Cost sync — read Hermes's per-session cost (estimated_cost_usd) and record recent CLI runs.
 // Deduped server-side by sessionId, so re-posting recent sessions is harmless.
-function costSync() {
+async function costSync() {
   if (!container) { container = findContainer(); if (!container) return }
   try {
+    // Recent requests, to link each run's session → request → dossier (so cost shows per dossier).
+    let reqs = []
+    try {
+      reqs = await query("SELECT id, extract(epoch from started_at)*1000 AS started_ms, extract(epoch from finished_at)*1000 AS finished_ms FROM research_requests WHERE started_at > now() - interval '6 hours'")
+    } catch { /* ignore — requestId stays null */ }
+
     execSync(`docker exec ${container} ${HERMES} sessions export /opt/data/_costsync.jsonl`, { stdio: 'ignore' })
     const raw = execSync(`docker exec ${container} cat /opt/data/_costsync.jsonl`).toString()
-    const cutoff = Date.now() - 6 * 3600 * 1000 // last 6h
+    const cutoff = Date.now() - 6 * 3600 * 1000
     let synced = 0
     for (const line of raw.split('\n')) {
       if (!line.trim()) continue
@@ -96,7 +102,10 @@ function costSync() {
       const usd = s.estimated_cost_usd ?? s.actual_cost_usd ?? estimateUsd(s)
       const endMs = s.ended_at ? Date.parse(s.ended_at) : (s.last_active ? Number(s.last_active) * 1000 : 0)
       const runSeconds = endMs > started ? Math.round((endMs - started) / 1000) : 0
-      submitCost({ sessionId: s.id, model: s.model, inTokens: s.input_tokens || 0, outTokens: s.output_tokens || 0, usd: Number(usd) || 0, runSeconds }).catch(() => {})
+      // Match the request whose claim→submit window contains this session's start.
+      const m = reqs.find(r => started >= Number(r.started_ms) - 30000 && (r.finished_ms ? started <= Number(r.finished_ms) + 60000 : started <= Date.now()))
+      const requestId = m ? Number(m.id) : null
+      submitCost({ sessionId: s.id, requestId, model: s.model, inTokens: s.input_tokens || 0, outTokens: s.output_tokens || 0, usd: Number(usd) || 0, runSeconds }).catch(() => {})
       synced++
     }
     if (synced) log(`cost sync: posted ${synced} recent session(s)`)

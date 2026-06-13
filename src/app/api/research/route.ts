@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { isAuthenticated, isAuthedOrAgent, unauthorizedResponse } from '@/lib/auth/require-session'
-import { enqueueRequest, listRecentDossiers, listRequests, getProgressForRequests, getCostTrend } from '@/lib/db/research'
+import { enqueueRequest, listRecentDossiersWithCost, listRequests, getProgressForRequests, getCostTrend } from '@/lib/db/research'
 import type { PersonQuery, Goal } from '@/lib/research/types'
 
 const GOALS: Goal[] = ['locate_owner', 'find_heirs', 'mailing_address', 'contact']
@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
 // GET → recent dossiers, queue state (with live progress for active requests), and the cost trend.
 export async function GET() {
   if (!(await isAuthenticated())) return unauthorizedResponse()
-  const [dossiers, requests, costTrend] = await Promise.all([listRecentDossiers(25), listRequests(25), getCostTrend(60)])
+  const [dossiers, requests, costTrend] = await Promise.all([listRecentDossiersWithCost(25), listRequests(25), getCostTrend(60)])
   const activeIds = requests.filter(r => r.status === 'running' || r.status === 'pending').map(r => r.id)
   const progress = await getProgressForRequests(activeIds)
   return NextResponse.json({ dossiers, requests, progress, costTrend })

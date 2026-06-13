@@ -4,6 +4,18 @@
 import { spawn, execSync } from 'node:child_process'
 import { createWriteStream, mkdirSync } from 'node:fs'
 import { query } from './cases-read.js'
+import { submitCost } from './hm-api.js'
+
+// Fallback price table ($/1M tokens) if Hermes didn't compute estimated_cost_usd for a session.
+const PRICES = {
+  'claude-opus': { in: 5, out: 25 }, 'claude-sonnet': { in: 3, out: 15 }, 'claude-haiku': { in: 1, out: 5 },
+}
+function estimateUsd(s) {
+  const m = String(s.model || '').toLowerCase()
+  const p = m.includes('opus') ? PRICES['claude-opus'] : m.includes('haiku') ? PRICES['claude-haiku'] : PRICES['claude-sonnet']
+  const inTok = (s.input_tokens || 0) + (s.cache_read_tokens || 0) * 0.1 + (s.cache_write_tokens || 0) * 1.25
+  return (inTok * p.in + (s.output_tokens || 0) * p.out) / 1e6
+}
 
 const LOG_DIR = process.env.RESEARCH_LOG_DIR || `${process.env.HOME || '/home/mo'}/hermes/logs/research`
 try { mkdirSync(LOG_DIR, { recursive: true }) } catch { /* exists */ }
@@ -63,7 +75,35 @@ async function tick() {
   } finally { ticking = false }
 }
 
+// Cost sync — read Hermes's per-session cost (estimated_cost_usd) and record recent CLI runs.
+// Deduped server-side by sessionId, so re-posting recent sessions is harmless.
+function costSync() {
+  if (!container) { container = findContainer(); if (!container) return }
+  try {
+    execSync(`docker exec ${container} ${HERMES} sessions export /opt/data/_costsync.jsonl`, { stdio: 'ignore' })
+    const raw = execSync(`docker exec ${container} cat /opt/data/_costsync.jsonl`).toString()
+    const cutoff = Date.now() - 6 * 3600 * 1000 // last 6h
+    let synced = 0
+    for (const line of raw.split('\n')) {
+      if (!line.trim()) continue
+      let s
+      try { s = JSON.parse(line) } catch { continue }
+      if (s.source !== 'cli') continue
+      const ended = s.ended_at ? Date.parse(s.ended_at) : 0
+      if (!ended || ended < cutoff) continue
+      if (!s.output_tokens && !s.estimated_cost_usd) continue
+      const usd = s.estimated_cost_usd ?? s.actual_cost_usd ?? estimateUsd(s)
+      const runSeconds = s.started_at && s.ended_at ? Math.round((ended - Date.parse(s.started_at)) / 1000) : 0
+      submitCost({ sessionId: s.id, model: s.model, inTokens: s.input_tokens || 0, outTokens: s.output_tokens || 0, usd: Number(usd) || 0, runSeconds }).catch(() => {})
+      synced++
+    }
+    if (synced) log(`cost sync: posted ${synced} recent session(s)`)
+  } catch (e) { log('costSync error:', e.message) }
+}
+
 container = container || findContainer()
 log(`up — container=${container || '(auto)'} concurrency=${MAX} poll=${POLL_MS}ms`)
 setInterval(tick, POLL_MS)
+setInterval(costSync, 120_000) // every 2 min
 tick()
+costSync()

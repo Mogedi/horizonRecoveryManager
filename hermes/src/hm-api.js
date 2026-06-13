@@ -115,3 +115,5 @@ export const upsertCountySource = (source) => req('POST', '/api/research/county-
 // Live progress narration (shown in the dashboard while a run is in flight).
 export const reportProgress = (requestId, message, step) =>
   req('POST', '/api/research/progress', { body: { requestId, message, step } })
+// Per-run cost sync (one Hermes session = one run); deduped server-side by sessionId.
+export const submitCost = (cost) => req('POST', '/api/research/cost', { body: cost })

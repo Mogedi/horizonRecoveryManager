@@ -1,7 +1,20 @@
 // Shared adapter helpers: block detection + LLM extraction. Adapters NEVER throw for an expected
 // block — they return a SourceResult whose attempt.status says what happened.
 import { callClaude } from '@/lib/ai/client'
-import type { BlockReason, Candidate, Address, AddressKind } from '../types'
+import type {
+  BlockReason, Candidate, Address, AddressKind, AttemptStatus, SourceAttempt, PersonQuery, RunContext,
+} from '../types'
+
+// Build a telemetry record with the common fields filled in.
+export function makeAttempt(
+  sourceId: string, status: AttemptStatus, q: PersonQuery, startedAt: number, ctx: RunContext,
+  extra: Partial<SourceAttempt> = {},
+): SourceAttempt {
+  return {
+    sourceId, caseId: q.caseId ?? null, status, latencyMs: Date.now() - startedAt,
+    candidateCount: 0, proxyUsed: ctx.proxyUsed, timestamp: new Date(), ...extra,
+  }
+}
 
 // Classify a page as a block from HTTP status + visible text. Pure + unit-tested.
 export function detectBlock(status: number | null, bodyText: string): BlockReason | null {

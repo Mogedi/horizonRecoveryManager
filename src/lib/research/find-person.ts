@@ -5,6 +5,7 @@ import type { PersonQuery, Dossier } from './types'
 import { adaptersFor } from './sources'
 import { runResearch } from './runner'
 import { buildDossier } from './dossier'
+import { resolveCounty } from './geo'
 import { saveDossier, getSourceHealth } from '@/lib/db/research'
 
 export interface FindPersonOptions {
@@ -16,6 +17,17 @@ export async function findPerson(
   query: PersonQuery, opts: FindPersonOptions = {},
 ): Promise<{ dossier: Dossier; dossierId: number | null; skipped: string[] }> {
   const q: PersonQuery = { ...query, state: (query.state || 'GA').toUpperCase() }
+
+  // qPublic is keyed by COUNTY, but Mo searches by address — derive the county (and confirm state)
+  // from the address when not supplied. Free Census geocoder; failure just leaves county unset.
+  if (!q.county && q.address) {
+    const geo = await resolveCounty([q.address, q.city, q.state].filter(Boolean).join(', ')).catch(() => null)
+    if (geo) {
+      q.county = geo.county
+      if (geo.state) q.state = geo.state.toUpperCase()
+    }
+  }
+
   const all = adaptersFor(q)
 
   // Circuit breaker: skip a source if it's been mostly blocked over the last week.

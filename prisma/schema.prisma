@@ -415,9 +415,47 @@ model SyncSource {
 // caseId is the deal hubspot_id when tied to a deal, or null for ad-hoc searches from the
 // research page. No hard FK — research can run standalone. See docs/research-agent-design.md.
 
+// Queue — the dashboard enqueues; Hermes drains. Handles 100-300 bursts without blocking the UI.
+model ResearchRequest {
+  id                Int       @id @default(autoincrement())
+  query             Json
+  goal              String    // locate_owner | find_heirs | mailing_address | contact
+  status            String    @default("pending") // pending | running | done | failed
+  enqueuedBy        String    @map("enqueued_by")
+  evidencePackageId Int?      @map("evidence_package_id")
+  dossierId         Int?      @map("dossier_id")
+  error             String?
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  startedAt         DateTime? @map("started_at") @db.Timestamptz(6)
+  finishedAt        DateTime? @map("finished_at") @db.Timestamptz(6)
+
+  @@index([status, createdAt])
+  @@map("research_requests")
+}
+
+// What Hermes writes — IMMUTABLE, provenance-tracked. Dossiers are DERIVED from this and never the
+// reverse. A dossier can be dropped and rebuilt from here whenever the derivation logic improves.
+model EvidencePackage {
+  id          Int      @id @default(autoincrement())
+  requestId   Int?     @map("request_id")
+  caseId      String?  @map("case_id")
+  query       Json
+  plan        Json
+  candidates  Json
+  evidence    Json
+  documents   Json
+  telemetry   Json
+  notes       Json
+  budget      Json
+  completedAt DateTime @default(now()) @map("completed_at") @db.Timestamptz(6)
+
+  @@map("evidence_packages")
+}
+
 model SourceAttempt {
   id             Int      @id @default(autoincrement())
   sourceId       String   @map("source_id")
+  requestId      Int?     @map("request_id")
   caseId         String?  @map("case_id")
   status         String   // success | blocked | captcha | empty | error
   blockReason    String?  @map("block_reason") // cloudflare | captcha | http_403 | http_429 | redirect | empty | parse
@@ -431,17 +469,20 @@ model SourceAttempt {
   @@map("source_attempts")
 }
 
+// DERIVED from an EvidencePackage by Horizon's engine. Re-creatable; never authored by Hermes.
 model ResearchDossier {
-  id         Int       @id @default(autoincrement())
-  caseId     String?   @map("case_id")
-  query      Json
-  resolution Json
-  candidates Json
-  attempts   Json
-  reviewed   Boolean   @default(false)
-  reviewedBy String?   @map("reviewed_by")
-  reviewedAt DateTime? @map("reviewed_at") @db.Timestamptz(6)
-  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  id                Int       @id @default(autoincrement())
+  evidencePackageId Int?      @map("evidence_package_id")
+  caseId            String?   @map("case_id")
+  subject           Json
+  heirGraph         Json      @map("heir_graph")
+  candidatePeople   Json      @map("candidate_people")
+  contactRankings   Json      @map("contact_rankings")
+  confidence        Json
+  reviewStatus      String    @default("pending") @map("review_status") // pending | approved | rejected | needs_more
+  reviewedBy        String?   @map("reviewed_by")
+  reviewedAt        DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
   documents ResearchDocument[]
 
@@ -450,21 +491,39 @@ model ResearchDossier {
 }
 
 model ResearchDocument {
-  id        Int      @id @default(autoincrement())
-  caseId    String?  @map("case_id")
-  dossierId Int?     @map("dossier_id")
-  sourceId  String   @map("source_id")
-  kind      String   // tax_deed | lien | property_card | obituary | screenshot
-  label     String?
-  mimeType  String   @map("mime_type")
-  bytes     Bytes
-  sourceUrl String?  @map("source_url")
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  id                Int      @id @default(autoincrement())
+  caseId            String?  @map("case_id")
+  dossierId         Int?     @map("dossier_id")
+  evidencePackageId Int?     @map("evidence_package_id")
+  sourceId          String   @map("source_id")
+  kind              String   // tax_deed | lien | property_card | obituary | screenshot
+  label             String?
+  mimeType          String   @map("mime_type")
+  bytes             Bytes
+  sourceUrl         String?  @map("source_url")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   dossier ResearchDossier? @relation(fields: [dossierId], references: [id], onDelete: Cascade)
 
   @@index([caseId, createdAt])
   @@map("research_documents")
+}
+
+// Learned-but-verified registry — the durable replacement for "Hermes remembers a county".
+model CountySource {
+  id             Int      @id @default(autoincrement())
+  state          String
+  county         String
+  sourceKind     String   @map("source_kind") // property | deed | probate | obituary
+  method         String   // gis_api | qpublic | custom_site | propertyradar
+  entryUrl       String   @map("entry_url")
+  searchHint     String   @map("search_hint")
+  lastVerifiedAt DateTime @default(now()) @map("last_verified_at") @db.Timestamptz(6)
+  successRate    Float    @default(1) @map("success_rate")
+  status         String   @default("active") // active | degraded | broken
+
+  @@unique([state, county, sourceKind])
+  @@map("county_sources")
 }
 
 model SuggestedSource {

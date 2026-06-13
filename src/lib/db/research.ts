@@ -62,8 +62,12 @@ export interface CostInput {
 export async function saveCost(c: CostInput) {
   // Dedupe by Hermes session id (the cost-sync re-posts recent sessions; each run = one session).
   if (c.sessionId) {
-    const existing = await prisma.researchCost.findFirst({ where: { sessionId: c.sessionId }, select: { id: true } })
-    if (existing) return existing
+    const existing = await prisma.researchCost.findFirst({ where: { sessionId: c.sessionId }, select: { id: true, requestId: true } })
+    if (existing) {
+      // Backfill the request link if a later sync resolved it (request finished after the first sync).
+      if (c.requestId && !existing.requestId) await prisma.researchCost.update({ where: { id: existing.id }, data: { requestId: c.requestId } })
+      return existing
+    }
   }
   return prisma.researchCost.create({
     data: {
@@ -138,6 +142,33 @@ export async function getDossier(id: number) {
 
 export async function listRecentDossiers(limit = 25) {
   return prisma.researchDossier.findMany({ orderBy: { createdAt: 'desc' }, take: limit })
+}
+
+// Recent dossiers, each with its per-run cost (dossier → request → cost).
+export async function listRecentDossiersWithCost(limit = 25) {
+  const dossiers = await prisma.researchDossier.findMany({ orderBy: { createdAt: 'desc' }, take: limit })
+  const reqs = await prisma.researchRequest.findMany({ where: { dossierId: { in: dossiers.map(d => d.id) } }, select: { id: true, dossierId: true } })
+  const reqByDossier = new Map(reqs.map(r => [r.dossierId, r.id]))
+  const costs = await prisma.researchCost.findMany({ where: { requestId: { in: reqs.map(r => r.id) } }, select: { requestId: true, usd: true } })
+  const costByReq = new Map(costs.map(c => [c.requestId, c.usd]))
+  return dossiers.map(d => ({ ...d, usd: costByReq.get(reqByDossier.get(d.id) ?? -1) ?? null }))
+}
+
+// Full dossier for the detail panel: the derived dossier + its source evidence + its cost.
+export async function getDossierDetail(id: number) {
+  const dossier = await prisma.researchDossier.findUnique({
+    where: { id },
+    include: { documents: { select: { id: true, kind: true, label: true, mimeType: true, sourceUrl: true, createdAt: true } } },
+  })
+  if (!dossier) return null
+  const evidence = dossier.evidencePackageId
+    ? await prisma.evidencePackage.findUnique({ where: { id: dossier.evidencePackageId }, select: { evidence: true, plan: true, notes: true } })
+    : null
+  const request = await prisma.researchRequest.findFirst({ where: { dossierId: id }, select: { id: true } })
+  const cost = request
+    ? await prisma.researchCost.findFirst({ where: { requestId: request.id }, select: { usd: true, model: true, inTokens: true, outTokens: true, runSeconds: true } })
+    : null
+  return { dossier, evidence, cost }
 }
 
 export async function markDossierReviewed(id: number, reviewStatus: string, reviewedBy: string) {

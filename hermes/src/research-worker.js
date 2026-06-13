@@ -89,11 +89,13 @@ function costSync() {
       let s
       try { s = JSON.parse(line) } catch { continue }
       if (s.source !== 'cli') continue
-      const ended = s.ended_at ? Date.parse(s.ended_at) : 0
-      if (!ended || ended < cutoff) continue
+      // started_at is a numeric epoch (seconds); ended_at is often null, so filter on started_at.
+      const started = s.started_at ? Number(s.started_at) * 1000 : 0
+      if (!started || started < cutoff) continue
       if (!s.output_tokens && !s.estimated_cost_usd) continue
       const usd = s.estimated_cost_usd ?? s.actual_cost_usd ?? estimateUsd(s)
-      const runSeconds = s.started_at && s.ended_at ? Math.round((ended - Date.parse(s.started_at)) / 1000) : 0
+      const endMs = s.ended_at ? Date.parse(s.ended_at) : (s.last_active ? Number(s.last_active) * 1000 : 0)
+      const runSeconds = endMs > started ? Math.round((endMs - started) / 1000) : 0
       submitCost({ sessionId: s.id, model: s.model, inTokens: s.input_tokens || 0, outTokens: s.output_tokens || 0, usd: Number(usd) || 0, runSeconds }).catch(() => {})
       synced++
     }

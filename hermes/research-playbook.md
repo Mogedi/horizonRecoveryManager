@@ -36,15 +36,21 @@ b. **Alive or deceased.** **search_web** `"<name> obituary <city> <state>"` (try
    Grave). **scrape** the obituary → `deceased` (isDeceased, dateOfDeath, basis), plus any
    **"survived by …"** relatives → `relationship` items.
 
-c. **Heirs / relatives** (if deceased). For each named relative, **search_web** + **scrape** a
-   people-search result for their current address + phones. If a source is blocked, note it and move on.
+c. **Heirs / relatives** (if deceased). Research the relatives **IN PARALLEL** — fire multiple
+   searches/scrapes at once (parallel tool calls), NOT one at a time (this is the slow part). Prefer
+   Firecrawl `search` (it returns page content — one step, not search-then-scrape). For EACH relative,
+   call `report_progress` ("researching JoAnn Johnson → found phone") so the live view keeps updating.
 
 d. **Contacts.** Collect phones/emails for the living owner, or for the heirs.
 
-## 4. Re-plan on block / empty
-If a source is blocked, CAPTCHA'd, or empty: try an **alternate** (GIS API, a different site, a cached
-copy). Don't loop on one source. Budget ≈ **10 execution steps / ~8 sources** — if you hit it, stop and
-set `budget.capHit = true`.
+## 4. Re-plan on block / empty — distinguish the cause
+- **JS-heavy** (content empty / a SPA / a search form, e.g. qPublic): do NOT fall back to slow generic
+  browsing. Use Firecrawl scrape with `waitFor` (let JS render) and its **interact** actions
+  (click/type/wait) to drive the search form. This handles most county sites.
+- **Anti-bot blocked** (Cloudflare / Datadome / CAPTCHA / 403 — typical of people-search sites): use the
+  **stealth browser** (Browser Use) if it's configured; otherwise note it and try an alternate source
+  (GIS API, a different site, a cached copy). Don't loop on one source.
+Budget ≈ **10 execution steps / ~8 sources** — if you hit it, stop and set `budget.capHit = true`.
 
 ## 5. Evidence rules (critical)
 Record EVERY fact as an `EvidenceItem`:

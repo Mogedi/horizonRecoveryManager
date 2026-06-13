@@ -89,15 +89,13 @@ export async function POST(req: NextRequest, { params }: Params) {
             docStatuses: docStatuses?.map(d => `${d.type}:${d.linked}`),
           })
           if (verdict.checked) {
-            const { screenshotBase64: _, ...checkData } = verdict
-            await updateDealHubspotCheck(id, { ...checkData, structured, summary }, null, docStatuses)
+            await updateDealHubspotCheck(id, { ...verdict, structured, summary }, null, docStatuses)
           }
         },
       )
 
       if (!verdictSent) {
-        const { screenshotBase64: _, ...checkData } = result
-        await writer.write(sse({ type: 'verdict', ...checkData, screenshotBase64: null }))
+        await writer.write(sse({ type: 'verdict', ...result, screenshotBase64: null }))
         log.info('hubspot-check/stream: fallback verdict sent (not configured)', { hubspotId: id })
       }
 

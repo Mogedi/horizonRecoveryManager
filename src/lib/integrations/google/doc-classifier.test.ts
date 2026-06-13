@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { classifyFiles, type DocChecklist } from './doc-classifier'
+import { classifyFiles } from './doc-classifier'
 import type { DriveFileEntry } from './drive-index'
 
 function makeFile(name: string, mimeType = 'application/pdf'): DriveFileEntry {

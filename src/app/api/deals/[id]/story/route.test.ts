@@ -50,7 +50,7 @@ describe('GET /api/deals/[id]/story', () => {
     mockGetActivities.mockResolvedValue([
       { id: 1, type: 'note', body: 'Spoke with attorney.', authorOwnerId: null, direction: null, timestamp: new Date('2026-06-05T14:00:00Z'), syncedAt: new Date() },
       { id: 2, type: 'note', body: 'Follow-up scheduled.', authorOwnerId: null, direction: null, timestamp: new Date('2026-06-05T10:00:00Z'), syncedAt: new Date() },
-    ] as Parameters<typeof mockGetActivities>[0] extends infer _R ? never : never)
+    ] as Awaited<ReturnType<typeof getActivitiesForDeal>>)
     const res = await GET(makeRequest(), { params: Promise.resolve({ id: 'deal-123' }) })
     const json = await res.json()
     expect(json.days).toHaveLength(1)
@@ -118,7 +118,7 @@ describe('GET /api/deals/[id]/story', () => {
   it('serializes happenedAt as ISO string in events', async () => {
     mockGetActivities.mockResolvedValue([
       { id: 1, type: 'note', body: 'Test', authorOwnerId: null, direction: null, timestamp: new Date('2026-06-05T14:00:00Z'), syncedAt: new Date() },
-    ] as Parameters<typeof mockGetActivities>[0] extends infer _R ? never : never)
+    ] as Awaited<ReturnType<typeof getActivitiesForDeal>>)
     const res = await GET(makeRequest(), { params: Promise.resolve({ id: 'deal-123' }) })
     const json = await res.json()
     const event = json.days[0].events[0]

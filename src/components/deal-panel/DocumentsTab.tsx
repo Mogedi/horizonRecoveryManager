@@ -423,6 +423,7 @@ export function DocumentsTab({ hubspotId, dealName }: DocumentsTabProps) {
             >
               {showHubspotScreenshot ? (
                 <div className="relative">
+                  {/* eslint-disable-next-line @next/next/no-img-element -- base64 screenshot with dynamic dimensions; next/image is inappropriate for data URIs */}
                   <img
                     src={`data:image/jpeg;base64,${hubspotCheckResult.screenshotBase64}`}
                     alt="HubSpot deal page screenshot"
@@ -434,6 +435,7 @@ export function DocumentsTab({ hubspotId, dealName }: DocumentsTabProps) {
                 </div>
               ) : (
                 <div className="relative overflow-hidden h-24">
+                  {/* eslint-disable-next-line @next/next/no-img-element -- base64 screenshot with dynamic dimensions; next/image is inappropriate for data URIs */}
                   <img
                     src={`data:image/jpeg;base64,${hubspotCheckResult.screenshotBase64}`}
                     alt="HubSpot deal page screenshot"
@@ -912,6 +914,7 @@ export function DocumentsTab({ hubspotId, dealName }: DocumentsTabProps) {
                   rel="noopener noreferrer"
                   className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-lg hover:bg-gray-100 text-xs text-gray-800"
                 >
+                  {/* eslint-disable-next-line @next/next/no-img-element -- tiny external Drive icon; not worth next/image + a remote-domain allowlist */}
                   {f.iconLink && <img src={f.iconLink} alt="" className="w-4 h-4 shrink-0" />}
                   <span className="truncate flex-1">{f.name}</span>
                   {f.modifiedAt && (

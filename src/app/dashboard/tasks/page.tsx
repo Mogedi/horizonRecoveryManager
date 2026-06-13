@@ -293,7 +293,7 @@ export default function TasksPage() {
         <>
           {openTasks.length === 0 ? (
             <div className="text-center py-16 text-gray-400 text-sm">
-              No open tasks. Click "+ Add Task" to create one.
+              No open tasks. Click &quot;+ Add Task&quot; to create one.
             </div>
           ) : (
             <div className="space-y-4">

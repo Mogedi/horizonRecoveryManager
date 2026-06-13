@@ -28,7 +28,7 @@ async function main() {
   const page = await ctx.newPage()
 
   await page.addInitScript(() => {
-    try { (window as any).chrome = { runtime: {}, loadTimes: () => {}, csi: () => {}, app: {} } } catch {}
+    try { (window as Window & { chrome?: unknown }).chrome = { runtime: {}, loadTimes: () => {}, csi: () => {}, app: {} } } catch {}
   })
 
   await page.goto('https://www.example.com', { waitUntil: 'domcontentloaded', timeout: 20_000 })

@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { cookies } from 'next/headers'
 import { syncJustCallSample, syncJustCallFull } from '@/lib/integrations/justcall/sync'
 import { prisma } from '@/lib/db/client'
 import { log } from '@/lib/logger'

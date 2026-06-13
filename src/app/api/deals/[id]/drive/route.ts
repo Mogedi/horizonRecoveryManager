@@ -10,7 +10,7 @@ import { googleClient } from '@/lib/integrations/google/client'
 import { mapDriveFile } from '@/lib/integrations/google/mapper'
 import { isGoogleConfigured } from '@/lib/integrations/google/auth'
 import { isAuthenticated, isCronRequest, unauthorizedResponse } from '@/lib/auth/require-session'
-import { findBestFolderMatch, getCasesFolderIds, type DriveFileEntry } from '@/lib/integrations/google/drive-index'
+import { findBestFolderMatch, type DriveFileEntry } from '@/lib/integrations/google/drive-index'
 import { classifyFiles, type DocChecklist } from '@/lib/integrations/google/doc-classifier'
 import { log } from '@/lib/logger'
 

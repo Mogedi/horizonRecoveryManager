@@ -1,4 +1,5 @@
 import { toFile } from 'openai'
+import type { TranscriptionVerbose } from 'openai/resources/audio/transcriptions'
 import { OpenAIError } from '@/lib/errors'
 import { getOpenAIClient, withRateLimit } from './client'
 
@@ -35,8 +36,9 @@ export async function transcribeAudio(
     timeoutPromise,
   ])
 
-  const text = (response as any).text as string
-  const duration = (response as any).duration as number | undefined
+  const verbose = response as TranscriptionVerbose
+  const text = verbose.text
+  const duration = verbose.duration as number | undefined
 
   if (typeof text !== 'string') {
     throw new OpenAIError('Whisper returned unexpected response shape')

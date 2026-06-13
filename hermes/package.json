@@ -12,6 +12,7 @@
     "bot": "node --env-file=.env src/bot.js",
     "mcp": "node --env-file=.env src/mcp-server.js",
     "heartbeat": "node --env-file=.env src/heartbeat.js",
+    "research-worker": "node --env-file=.env src/research-worker.js",
     "deploy": "bash deploy.sh"
   },
   "dependencies": {

@@ -15,6 +15,11 @@ export async function enqueueRequest(input: ResearchRequestInput) {
 
 // Claim the oldest pending request (mark it running). Hermes calls this to pull work.
 export async function claimNextRequest() {
+  // Self-heal: a request stuck 'running' (a crashed agentic run) goes back to pending for retry.
+  await prisma.researchRequest.updateMany({
+    where: { status: 'running', startedAt: { lt: new Date(Date.now() - 20 * 60 * 1000) } },
+    data: { status: 'pending', startedAt: null },
+  })
   const next = await prisma.researchRequest.findFirst({ where: { status: 'pending' }, orderBy: { createdAt: 'asc' } })
   if (!next) return null
   const updated = await prisma.researchRequest.updateMany({

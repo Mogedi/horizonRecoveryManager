@@ -2,7 +2,10 @@
 
 import { useState } from 'react'
 import useSWR from 'swr'
-import type { Band, EvidenceItem, ScoredCandidate, Address } from '@/lib/research/types'
+import type {
+  Band, EvidenceItem, ScoredCandidate, Address, ActionableContact, FamilyMember, RankedContact,
+  Conflict, Completeness, TimelineStep, SourceIntelEntry, RelationCategory, ContactRank, CandidatePerson,
+} from '@/lib/research/types'
 
 const fetcher = (url: string) => fetch(url).then(r => (r.ok ? r.json() : Promise.reject(new Error(r.statusText))))
 
@@ -128,10 +131,36 @@ function RequestDetail({ request, progress }: { request?: RequestRow; progress: 
 }
 
 type DossierDetailData = {
-  dossier: { subject: { name: string; deceased: boolean | null; dateOfDeath?: string }; candidatePeople: ScoredCandidate[]; confidence: { band: Band; score: number; justification: { note: string }[]; conflicts: { note: string }[] }; reviewStatus: string; documents: { id: number; kind: string; label: string | null; sourceUrl: string | null }[] }
-  evidence: { evidence: EvidenceItem[]; notes: string[] } | null
+  dossier: {
+    subject: { name: string; deceased: boolean | null; dateOfDeath?: string }
+    candidatePeople: ScoredCandidate[]
+    confidence: { band: Band; score: number; justification: { note: string }[]; conflicts: { note: string }[] }
+    reviewStatus: string
+    documents: { id: number; kind: string; label: string | null; sourceUrl: string | null }[]
+    // v3 sections — null for dossiers derived before Phase B
+    actionableContacts?: ActionableContact[] | null
+    familyStructure?: { members: FamilyMember[] } | null
+    completeness?: Completeness | null
+    conflicts?: Conflict[] | null
+    timeline?: TimelineStep[] | null
+    sourceIntel?: SourceIntelEntry[] | null
+  }
+  evidence: { evidence: EvidenceItem[]; candidates?: CandidatePerson[]; notes: string[] } | null
   cost: { usd: number; model: string | null; inTokens: number; outTokens: number; runSeconds: number } | null
 }
+
+const RANK: Record<ContactRank, string> = { high: 'bg-emerald-100 text-emerald-700', medium: 'bg-amber-100 text-amber-700', low: 'bg-gray-100 text-gray-500' }
+const CAT_ORDER: RelationCategory[] = ['spouse', 'child', 'grandchild', 'parent', 'grandparent', 'sibling', 'cousin', 'extended', 'friend', 'unknown']
+const CAT_LABEL: Record<RelationCategory, string> = { spouse: 'Spouse', child: 'Children', grandchild: 'Grandchildren', parent: 'Parents', grandparent: 'Grandparents', sibling: 'Siblings', cousin: 'Cousins', extended: 'Extended family', friend: 'Friends', unknown: 'Other relatives' }
+const Section = ({ title, n, children }: { title: string; n?: number; children: React.ReactNode }) => (
+  <div>
+    <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-2">{title}{n != null ? ` (${n})` : ''}</p>
+    {children}
+  </div>
+)
+const Flag = ({ ok, label }: { ok: boolean; label: string }) => (
+  <span className={`px-2 py-0.5 rounded text-[10px] font-medium ${ok ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{ok ? '✓' : '⚠'} {label}</span>
+)
 
 function evidenceText(e: EvidenceItem): string {
   switch (e.kind) {
@@ -146,12 +175,49 @@ function evidenceText(e: EvidenceItem): string {
   }
 }
 
+function ContactLine({ icon, c }: { icon: string; c: RankedContact }) {
+  return (
+    <div className="flex items-baseline gap-2 text-xs">
+      <span className="shrink-0">{icon}</span>
+      <span className="font-medium text-gray-800">{c.value}</span>
+      {c.label && <span className="text-[9px] text-gray-400 uppercase">{c.label}</span>}
+      <span className={`px-1 py-0.5 rounded text-[8px] font-bold uppercase ${RANK[c.rank]}`}>{c.rank}</span>
+      {c.contactMethodStatus && c.contactMethodStatus !== 'unverified' && <span className="text-[9px] text-blue-500">{c.contactMethodStatus}</span>}
+      <span className="text-[10px] text-gray-400 truncate">{c.reason}</span>
+    </div>
+  )
+}
+
 function DossierDetail({ id }: { id: number }) {
   const { data, isLoading } = useSWR<DossierDetailData>(`/api/research/dossier/${id}`, fetcher)
   if (isLoading || !data) return <div className="p-6 text-sm text-gray-400">Loading…</div>
   const { dossier, evidence, cost } = data
+  const actionable = dossier.actionableContacts ?? []
+  const family = dossier.familyStructure?.members ?? []
+  const conflicts = dossier.conflicts ?? []
+  const timeline = dossier.timeline ?? []
+  const completeness = dossier.completeness
+  const evItems = evidence?.evidence ?? []
+
+  // CRM vs researched tally (evidence provenance).
+  const crmCount = evItems.filter(e => e.provenance.isFromCrm).length
+  const researchedCount = evItems.length - crmCount
+
+  // Group evidence by person (candidate evidenceRefs); unreferenced items → "Other evidence".
+  const groups: { name: string; items: { e: EvidenceItem; i: number }[] }[] = []
+  if (evItems.length) {
+    const assigned = new Set<number>()
+    for (const c of evidence?.candidates ?? []) {
+      const items = (c.evidenceRefs ?? []).filter(r => evItems[r]).map(r => { assigned.add(r); return { e: evItems[r], i: r } })
+      if (items.length) groups.push({ name: c.name ?? c.localId, items })
+    }
+    const rest = evItems.map((e, i) => ({ e, i })).filter(x => !assigned.has(x.i))
+    if (rest.length) groups.push({ name: groups.length ? 'Other evidence' : 'Evidence', items: rest })
+  }
+
   return (
-    <div className="p-6 max-w-2xl space-y-5">
+    <div className="p-6 max-w-2xl space-y-6">
+      {/* Header */}
       <div>
         <div className="flex items-center gap-3">
           <h2 className="text-lg font-bold text-gray-900">{dossier.subject.name}</h2>
@@ -162,45 +228,138 @@ function DossierDetail({ id }: { id: number }) {
         {cost && <p className="text-[10px] text-gray-400 mt-0.5">{cost.model} · {cost.inTokens.toLocaleString()} in / {cost.outTokens.toLocaleString()} out</p>}
       </div>
 
-      {/* Candidates / heirs */}
-      <div>
-        <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-2">People ({dossier.candidatePeople.length})</p>
-        <div className="space-y-2">
-          {dossier.candidatePeople.map(c => (
-            <div key={c.localId} className="border border-gray-200 rounded-lg p-3">
-              <div className="flex justify-between text-sm">
-                <span className="font-medium text-gray-900">{c.name ?? '—'}{c.relationToSubject ? <span className="ml-2 text-xs text-gray-500">{c.relationToSubject}</span> : null}</span>
-                <span className="text-[11px] text-gray-400">score {c.score}</span>
-              </div>
-              {c.phones.length > 0 && <p className="text-xs text-gray-700 mt-1">📞 {c.phones.join(' · ')}</p>}
-              {c.emails.length > 0 && <p className="text-xs text-gray-700">✉ {c.emails.join(' · ')}</p>}
-              {c.addresses.map((a: Address, i) => <p key={i} className="text-xs text-gray-500">{a.line1}{a.city ? `, ${a.city}` : ''} {a.state ?? ''} <span className="text-[9px] text-gray-300">[{a.kind}]</span></p>)}
-            </div>
-          ))}
+      {/* 1. Conflicts banner + Completeness */}
+      {conflicts.length > 0 && (
+        <div className="border border-red-200 bg-red-50 rounded-lg p-3">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-red-600 mb-1">⚠ Conflicts — needs human review</p>
+          {conflicts.map((c, i) => <p key={i} className="text-xs text-red-700">{c.description}</p>)}
         </div>
-      </div>
+      )}
+      {completeness && (
+        <Section title="Research completeness">
+          <div className="flex flex-wrap gap-1.5">
+            <Flag ok={completeness.deathConfirmed} label="Death confirmed" />
+            <Flag ok={completeness.closeFamilyIdentified} label="Close family identified" />
+            <Flag ok={completeness.contactsFound} label="Contacts found" />
+            <Flag ok={completeness.propertyConfirmed} label="Property confirmed" />
+          </div>
+        </Section>
+      )}
 
-      {/* Evidence / sources */}
-      {evidence && evidence.evidence.length > 0 && (
-        <div>
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-2">Evidence ({evidence.evidence.length})</p>
-          <ul className="space-y-1">
-            {evidence.evidence.map((e, i) => (
-              <li key={i} className="text-xs text-gray-700 flex justify-between gap-3">
-                <span>{evidenceText(e)}</span>
-                <a href={e.provenance.url} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline shrink-0">{e.provenance.sourceId}</a>
+      {/* 2. Actionable Contacts (the top priority) */}
+      {actionable.length > 0 ? (
+        <Section title="Actionable contacts" n={actionable.length}>
+          <div className="space-y-2">
+            {actionable.map(c => (
+              <div key={c.localId} className="border border-gray-200 rounded-lg p-3">
+                <div className="flex justify-between items-center text-sm mb-1.5">
+                  <span className="font-medium text-gray-900">{c.name ?? '—'}{c.relationshipAsStated ? <span className="ml-2 text-xs text-gray-500">{c.relationshipAsStated}</span> : null}</span>
+                  <span className={`px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase ${BAND[c.confidence.band]}`}>{c.confidence.band}</span>
+                </div>
+                <div className="space-y-0.5">
+                  {c.phones.map((p, i) => <ContactLine key={`p${i}`} icon="📞" c={p} />)}
+                  {c.addresses.map((a, i) => <ContactLine key={`a${i}`} icon="🏠" c={a} />)}
+                  {c.emails.map((e, i) => <ContactLine key={`e${i}`} icon="✉" c={e} />)}
+                </div>
+                <div className="mt-1.5 flex flex-wrap gap-1">
+                  {c.confidence.checklist.map((ck, i) => <span key={i} className={`text-[9px] ${ck.present ? 'text-emerald-600' : 'text-gray-300'}`}>{ck.present ? '✓' : '✗'} {ck.label}</span>)}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Section>
+      ) : dossier.candidatePeople.length > 0 && (
+        // Fallback for pre-Phase-B dossiers
+        <Section title="People" n={dossier.candidatePeople.length}>
+          <div className="space-y-2">
+            {dossier.candidatePeople.map(c => (
+              <div key={c.localId} className="border border-gray-200 rounded-lg p-3">
+                <div className="flex justify-between text-sm"><span className="font-medium text-gray-900">{c.name ?? '—'}{c.relationToSubject ? <span className="ml-2 text-xs text-gray-500">{c.relationToSubject}</span> : null}</span><span className="text-[11px] text-gray-400">score {c.score}</span></div>
+                {c.phones.length > 0 && <p className="text-xs text-gray-700 mt-1">📞 {c.phones.join(' · ')}</p>}
+                {c.emails.length > 0 && <p className="text-xs text-gray-700">✉ {c.emails.join(' · ')}</p>}
+                {c.addresses.map((a: Address, i) => <p key={i} className="text-xs text-gray-500">{a.line1}{a.city ? `, ${a.city}` : ''} {a.state ?? ''} <span className="text-[9px] text-gray-300">[{a.kind}]</span></p>)}
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {/* 3. Family Structure (everyone, for understanding) */}
+      {family.length > 0 && (
+        <Section title="Family structure" n={family.length}>
+          <div className="space-y-3">
+            {CAT_ORDER.filter(cat => family.some(m => m.relationCategory === cat)).map(cat => (
+              <div key={cat}>
+                <p className="text-[10px] font-medium text-gray-500 mb-0.5">{CAT_LABEL[cat]}</p>
+                {family.filter(m => m.relationCategory === cat).map((m, i) => (
+                  <div key={i} className="flex items-baseline gap-2 text-xs">
+                    <span className="text-gray-800">{m.name}</span>
+                    {m.maidenName && <span className="text-[10px] text-gray-400">née {m.maidenName}</span>}
+                    <span className="text-[10px] text-gray-400">{m.relationshipAsStated}</span>
+                    {m.deceasedStatus === 'deceased' && <span className="text-[9px] text-red-500">†</span>}
+                    {m.isFromCrm && <span className="text-[8px] px-1 rounded bg-blue-50 text-blue-500 uppercase">CRM</span>}
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {/* 4. Research Timeline */}
+      {timeline.length > 0 && (
+        <Section title="Research timeline" n={timeline.length}>
+          <ol className="space-y-1">
+            {timeline.map((s, i) => (
+              <li key={i} className="text-xs flex gap-2">
+                <span className={`shrink-0 ${s.status === 'failed' || s.status === 'blocked' ? 'text-red-500' : s.status === 'done' ? 'text-emerald-500' : 'text-gray-300'}`}>{s.status === 'failed' || s.status === 'blocked' ? '✗' : s.status === 'done' ? '✓' : '•'}</span>
+                <span className="text-gray-700">{s.intent}{s.reason ? <span className="text-gray-400"> — {s.reason}</span> : null}</span>
               </li>
             ))}
-          </ul>
-        </div>
+          </ol>
+        </Section>
+      )}
+
+      {/* 5. Evidence grouped by person (raw quotes + attribution) */}
+      {groups.length > 0 && (
+        <Section title="Evidence" n={evItems.length}>
+          <div className="space-y-3">
+            {groups.map((g, gi) => (
+              <div key={gi}>
+                <p className="text-[10px] font-medium text-gray-500 mb-0.5">{g.name}</p>
+                <ul className="space-y-1.5">
+                  {g.items.map(({ e, i }) => (
+                    <li key={i} className="text-xs">
+                      <div className="flex justify-between gap-3">
+                        <span className="text-gray-700">{evidenceText(e)}</span>
+                        <a href={e.provenance.url} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline shrink-0">{e.provenance.sourceId}</a>
+                      </div>
+                      {e.provenance.sourceText && <p className="text-[10px] text-gray-400 italic">“{e.provenance.sourceText}”</p>}
+                      <div className="text-[9px] text-gray-300 flex gap-2">
+                        {e.provenance.sourceType && <span className="uppercase">{e.provenance.sourceType}</span>}
+                        {e.provenance.retrievedAt && <span>{e.provenance.retrievedAt.slice(0, 10)}</span>}
+                        {e.provenance.isFromCrm && <span className="text-blue-400">CRM</span>}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {/* 6. CRM vs researched + source intel */}
+      {evItems.length > 0 && (
+        <p className="text-[10px] text-gray-400">Sourced: {crmCount} from CRM · {researchedCount} researched
+          {dossier.sourceIntel?.length ? ` · ${dossier.sourceIntel.map(s => `${s.sourceType} ${s.items}/${s.attempts}t`).join(' · ')}` : ''}</p>
       )}
 
       {/* Documents */}
       {dossier.documents.length > 0 && (
-        <div>
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-2">Documents</p>
+        <Section title="Documents">
           {dossier.documents.map(d => <p key={d.id} className="text-xs text-gray-700">{d.kind}{d.label ? ` — ${d.label}` : ''}{d.sourceUrl ? <a href={d.sourceUrl} target="_blank" rel="noopener noreferrer" className="text-blue-500 ml-2">source</a> : null}</p>)}
-        </div>
+        </Section>
       )}
     </div>
   )

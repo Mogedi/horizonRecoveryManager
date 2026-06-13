@@ -79,7 +79,7 @@ export interface ResearchPlanStep {
   intent: string
   source?: string
   reason?: string // WHY this search — e.g. "'survived by several cousins' + maternal Meeks branch"
-  status: 'planned' | 'done' | 'failed' | 'replanned'
+  status: 'planned' | 'done' | 'failed' | 'blocked' | 'replanned'
 }
 export interface ResearchPlan {
   goal: Goal

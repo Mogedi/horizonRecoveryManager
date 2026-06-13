@@ -228,7 +228,7 @@ export async function getDossierDetail(id: number) {
   })
   if (!dossier) return null
   const evidence = dossier.evidencePackageId
-    ? await prisma.evidencePackage.findUnique({ where: { id: dossier.evidencePackageId }, select: { evidence: true, plan: true, notes: true } })
+    ? await prisma.evidencePackage.findUnique({ where: { id: dossier.evidencePackageId }, select: { evidence: true, candidates: true, plan: true, notes: true } })
     : null
   const request = await prisma.researchRequest.findFirst({ where: { dossierId: id }, select: { id: true } })
   const cost = request

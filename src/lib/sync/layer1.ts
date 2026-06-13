@@ -24,6 +24,10 @@ export type Layer1SyncResult = {
   dealsSynced: number
   apiCallsMade: number
   mode: 'smart' | 'full'
+  // hubspot_ids of the deals this sync touched. In 'smart' mode these are exactly the deals
+  // modified since the last sync — i.e. the "something changed" set, used to drive a targeted
+  // Layer 2 refresh without re-pulling all 150.
+  changedDealIds: string[]
 }
 
 // Smart sync: only pulls deals modified since last successful sync.
@@ -69,7 +73,7 @@ export async function runLayer1Sync(force = false): Promise<Layer1SyncResult> {
     await upsertDeals(deals)
 
     await completeSyncLog(logEntry.id, apiCallsMade, dealsSynced)
-    return { dealsSynced, apiCallsMade, mode }
+    return { dealsSynced, apiCallsMade, mode, changedDealIds: deals.map(d => d.hubspotId) }
   } catch (err) {
     await failSyncLog(logEntry.id, err instanceof Error ? err.message : String(err))
     throw err

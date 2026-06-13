@@ -110,12 +110,12 @@ export default function ResearchPage() {
 
 function RequestDetail({ request, progress }: { request?: RequestRow; progress: Progress[] }) {
   const last = progress[progress.length - 1]
-  // eslint-disable-next-line react-hooks/purity -- live "stalled?" check, recomputed each render (polled 5s)
-  const stalled = request?.status === 'running' && (!last || Date.now() - new Date(last.createdAt).getTime() > 4 * 60_000)
+  // eslint-disable-next-line react-hooks/purity -- live quiet-check, recomputed each render (polled 5s)
+  const quiet = request?.status === 'running' && (!last || Date.now() - new Date(last.createdAt).getTime() > 7 * 60_000)
   return (
     <div className="p-6 max-w-2xl">
       <h2 className="text-lg font-bold text-gray-900">{request?.query?.name ?? 'Run'}</h2>
-      <p className="text-xs text-gray-400 mb-4">#{request?.id} · {request?.goal} · {request?.status}{request ? ` · ${elapsed(request.createdAt)}` : ''}{stalled ? ' · ⚠ stalled?' : ''}</p>
+      <p className="text-xs text-gray-400 mb-4">#{request?.id} · {request?.goal} · {request?.status}{request ? ` · ${elapsed(request.createdAt)}` : ''}{quiet ? ' · quiet (still running)' : ''}</p>
       <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-2">Live progress</p>
       {progress.length === 0 ? <p className="text-sm text-gray-400">waiting for the agent to start…</p>
         : <ol className="space-y-1.5">{progress.map((p, i) => (

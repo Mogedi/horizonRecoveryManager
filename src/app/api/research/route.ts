@@ -1,25 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { isAuthedOrAgent, unauthorizedResponse } from '@/lib/auth/require-session'
-import { findPerson } from '@/lib/research/find-person'
-import type { PersonQuery } from '@/lib/research/types'
-import { log } from '@/lib/logger'
+import { isAuthenticated, isAuthedOrAgent, unauthorizedResponse } from '@/lib/auth/require-session'
+import { enqueueRequest, listRecentDossiers, listRequests } from '@/lib/db/research'
+import type { PersonQuery, Goal } from '@/lib/research/types'
 
-// Browser research can take a while (multiple sources, each a real page load + extraction).
-export const maxDuration = 60
+const GOALS: Goal[] = ['locate_owner', 'find_heirs', 'mailing_address', 'contact']
 
-// POST { name, address?, city?, state?, parcelId?, county?, ageHint?, relativesHint?, caseId? }
-// → the dossier (resolution + candidates + per-source telemetry). Session OR Hermes agent.
+// POST → enqueue a research request (returns instantly; Hermes drains the queue). Session or agent.
 export async function POST(req: NextRequest) {
   if (!(await isAuthedOrAgent(req))) return unauthorizedResponse()
-
-  let body: Partial<PersonQuery>
-  try {
-    body = await req.json()
-  } catch {
-    return NextResponse.json({ error: 'invalid json' }, { status: 400 })
-  }
+  let body: Partial<PersonQuery> & { goal?: string }
+  try { body = await req.json() } catch { return NextResponse.json({ error: 'invalid json' }, { status: 400 }) }
   if (!body.name?.trim()) return NextResponse.json({ error: 'name is required' }, { status: 400 })
 
+  const goal: Goal = GOALS.includes(body.goal as Goal) ? (body.goal as Goal) : 'find_heirs'
   const query: PersonQuery = {
     name: body.name.trim(),
     address: body.address?.trim() || undefined,
@@ -29,15 +22,16 @@ export async function POST(req: NextRequest) {
     county: body.county?.trim() || undefined,
     ageHint: typeof body.ageHint === 'number' ? body.ageHint : undefined,
     relativesHint: Array.isArray(body.relativesHint) ? body.relativesHint.filter(r => typeof r === 'string') : undefined,
+    goal,
     caseId: body.caseId ?? null,
   }
+  const request = await enqueueRequest({ query, goal, enqueuedBy: 'dashboard' })
+  return NextResponse.json({ requestId: request.id, status: request.status })
+}
 
-  try {
-    const { dossier, dossierId, skipped } = await findPerson(query)
-    return NextResponse.json({ dossierId, skipped, ...dossier })
-  } catch (e) {
-    const message = e instanceof Error ? e.message : String(e)
-    log.error('research find_person failed', { error: message })
-    return NextResponse.json({ error: message }, { status: 500 })
-  }
+// GET → recent dossiers + queue state, for the research view.
+export async function GET() {
+  if (!(await isAuthenticated())) return unauthorizedResponse()
+  const [dossiers, requests] = await Promise.all([listRecentDossiers(25), listRequests(25)])
+  return NextResponse.json({ dossiers, requests })
 }

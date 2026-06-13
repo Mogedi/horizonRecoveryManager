@@ -20,6 +20,7 @@ export function AiSummaryBlock({
   const generatedDate = new Date(generatedAt)
   const isStale = lastActivityDate && new Date(lastActivityDate) > generatedDate
 
+  // eslint-disable-next-line react-hooks/purity -- display-only relative time; intentionally recomputed on render so it stays fresh while the panel is open
   const diffMs = Date.now() - generatedDate.getTime()
   const diffMins = Math.floor(diffMs / 60_000)
   const timeAgo =

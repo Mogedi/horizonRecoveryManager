@@ -59,7 +59,9 @@ export class SkipTracingClient {
   }
 
   // TODO: implement when provider is chosen and API key is available
-  async lookupByName(_name: string, _address?: string): Promise<never> {
+  async lookupByName(name: string, address?: string): Promise<never> {
+    void name
+    void address
     throw new SkipTracingError('SkipTracingClient not yet implemented')
   }
 }

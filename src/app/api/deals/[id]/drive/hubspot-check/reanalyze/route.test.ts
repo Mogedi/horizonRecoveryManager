@@ -69,10 +69,10 @@ function makeRequest(id = 'deal-123') {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mockGetDealById.mockResolvedValue(dealWithScreenshot as any)
+  mockGetDealById.mockResolvedValue(dealWithScreenshot as unknown as Awaited<ReturnType<typeof getDealById>>)
   mockBuildExpectedFiles.mockReturnValue({ expectedFiles: ['Tax Deed.pdf'], classifiedDocs: [{ type: 'tax_sale_deed', label: 'Tax Sale Deed', fileName: 'Tax Deed.pdf' }] })
   mockRunVisionAnalysis.mockResolvedValue(visionResult)
-  mockBuildDocStatuses.mockReturnValue(docStatuses as any)
+  mockBuildDocStatuses.mockReturnValue(docStatuses as ReturnType<typeof buildDocStatuses>)
   mockBuildStructured.mockReturnValue(structured)
   mockBuildCheckSummary.mockReturnValue('1 of 1 required documents linked in HubSpot')
 })
@@ -85,7 +85,7 @@ describe('POST /reanalyze', () => {
   })
 
   it('returns 422 with code NO_SCREENSHOT when deal has no saved screenshot', async () => {
-    mockGetDealById.mockResolvedValue(dealWithoutScreenshot as any)
+    mockGetDealById.mockResolvedValue(dealWithoutScreenshot as unknown as Awaited<ReturnType<typeof getDealById>>)
     const res = await POST(makeRequest(), { params: Promise.resolve({ id: 'deal-123' }) })
     expect(res.status).toBe(422)
     const body = await res.json()

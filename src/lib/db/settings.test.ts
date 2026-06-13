@@ -28,7 +28,7 @@ beforeEach(() => {
 
 describe('saveSettings — validation', () => {
   beforeEach(() => {
-    mockUpsert.mockResolvedValue({} as any)
+    mockUpsert.mockResolvedValue({} as Awaited<ReturnType<typeof mockUpsert>>)
   })
 
   it('throws on unknown setting key', async () => {
@@ -88,7 +88,7 @@ describe('loadThresholds — DB fallback', () => {
   it('overrides defaults with valid DB values', async () => {
     mockFindMany.mockResolvedValue([
       { key: 'stage_stale_attempted_contact', value: '14' },
-    ] as any)
+    ] as Awaited<ReturnType<typeof mockFindMany>>)
     const t = await loadThresholds()
     // Attempted Contact maps to stage ID 3477730036
     expect(t.staleThresholds['3477730036']).toBe(14)
@@ -97,7 +97,7 @@ describe('loadThresholds — DB fallback', () => {
   it('ignores NaN DB values and falls back to the hardcoded default', async () => {
     mockFindMany.mockResolvedValue([
       { key: 'stage_stale_attempted_contact', value: 'not-a-number' },
-    ] as any)
+    ] as Awaited<ReturnType<typeof mockFindMany>>)
     const t = await loadThresholds()
     // Default for attempted_contact is 7
     expect(t.staleThresholds['3477730036']).toBe(7)
@@ -106,7 +106,7 @@ describe('loadThresholds — DB fallback', () => {
   it('ignores zero DB values and falls back to the hardcoded default', async () => {
     mockFindMany.mockResolvedValue([
       { key: 'stage_stale_attempted_contact', value: '0' },
-    ] as any)
+    ] as Awaited<ReturnType<typeof mockFindMany>>)
     const t = await loadThresholds()
     expect(t.staleThresholds['3477730036']).toBe(7)
   })

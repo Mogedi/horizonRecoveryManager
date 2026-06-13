@@ -12,7 +12,7 @@ import { verifyAllFiles } from '@/lib/ai/doc-verify'
 import type { DriveFileEntry } from '@/lib/integrations/google/drive-index'
 import { log } from '@/lib/logger'
 
-export async function GET(req: NextRequest) {
+export async function GET() {
   if (!await isAuthenticated()) return unauthorizedResponse()
 
   const pending = await getDealsNeedingVerification()

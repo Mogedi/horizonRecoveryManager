@@ -43,6 +43,11 @@ type SortKey = 'name' | 'tier' | 'amount' | 'contacts' | 'phones'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+function SortArrow({ col, sort, sortAsc }: { col: SortKey; sort: SortKey; sortAsc: boolean }) {
+  if (sort !== col) return <span className="text-gray-300 ml-1">↕</span>
+  return <span className="text-blue-500 ml-1">{sortAsc ? '↑' : '↓'}</span>
+}
+
 function Badge({ children, className }: { children: React.ReactNode; className: string }) {
   return (
     <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium ${className}`}>
@@ -133,11 +138,6 @@ export default function ContactsPage() {
     else { setSort(key); setSortAsc(true) }
   }
 
-  function SortArrow({ col }: { col: SortKey }) {
-    if (sort !== col) return <span className="text-gray-300 ml-1">↕</span>
-    return <span className="text-blue-500 ml-1">{sortAsc ? '↑' : '↓'}</span>
-  }
-
   const tabCounts = useMemo(() => ({
     all:           rows.length,
     owner_reached: rows.filter(r => r.ownerReached).length,
@@ -217,7 +217,7 @@ export default function ContactsPage() {
                 <tr>
                   <th className="text-left px-4 py-3">
                     <button onClick={() => toggleSort('name')} className="flex items-center text-[11px] font-semibold uppercase tracking-wider text-gray-400 hover:text-gray-600">
-                      Deal <SortArrow col="name" />
+                      Deal <SortArrow col="name" sort={sort} sortAsc={sortAsc} />
                     </button>
                   </th>
                   <th className="text-left px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
@@ -225,24 +225,24 @@ export default function ContactsPage() {
                   </th>
                   <th className="text-center px-4 py-3">
                     <button onClick={() => toggleSort('tier')} className="flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider text-gray-400 hover:text-gray-600">
-                      Quality <SortArrow col="tier" />
+                      Quality <SortArrow col="tier" sort={sort} sortAsc={sortAsc} />
                     </button>
                   </th>
                   <th className="text-center px-3 py-3">
                     <button onClick={() => toggleSort('contacts')} className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 hover:text-gray-600">
-                      Contacts <SortArrow col="contacts" />
+                      Contacts <SortArrow col="contacts" sort={sort} sortAsc={sortAsc} />
                     </button>
                   </th>
                   <th className="text-center px-3 py-3">
                     <button onClick={() => toggleSort('phones')} className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 hover:text-gray-600">
-                      Phones <SortArrow col="phones" />
+                      Phones <SortArrow col="phones" sort={sort} sortAsc={sortAsc} />
                     </button>
                   </th>
                   <th className="text-center px-3 py-3 text-[11px] font-semibold uppercase tracking-wider text-gray-400">Tried</th>
                   <th className="text-center px-3 py-3 text-[11px] font-semibold uppercase tracking-wider text-gray-400">Live</th>
                   <th className="text-right px-4 py-3">
                     <button onClick={() => toggleSort('amount')} className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 hover:text-gray-600">
-                      Value <SortArrow col="amount" />
+                      Value <SortArrow col="amount" sort={sort} sortAsc={sortAsc} />
                     </button>
                   </th>
                   <th className="text-center px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-gray-400">Action</th>

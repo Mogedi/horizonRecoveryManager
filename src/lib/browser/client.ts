@@ -71,7 +71,7 @@ export async function openPage(url: string, cookies: Cookie[] = []): Promise<Pag
         })
       } catch { /* ignore */ }
       try {
-        // @ts-ignore
+        // @ts-expect-error - window.chrome is not typed in the page context
         window.chrome = { runtime: {}, loadTimes: () => {}, csi: () => {}, app: {} }
       } catch { /* ignore */ }
     })

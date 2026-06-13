@@ -91,7 +91,7 @@ export async function POST(req: NextRequest, { params }: Params) {
   } catch (err) {
     log.error('hubspot-check: failed', {
       hubspotId: id,
-      step: (err as any)?.step ?? 'unknown',
+      step: (err as { step?: string } | null)?.step ?? 'unknown',
       err: err instanceof Error ? { name: err.name, message: err.message } : err,
     })
     return NextResponse.json(

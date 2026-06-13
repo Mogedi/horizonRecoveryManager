@@ -35,7 +35,9 @@ export interface Address {
 export type SourceType = 'obituary' | 'people_search' | 'property' | 'government' | 'crm' | 'probate' | 'funeral' | 'other'
 export type DeceasedStatus = 'living' | 'deceased' | 'unknown'
 // Best-effort grouping bucket. `relationshipAsStated` is the source of truth; this is for grouping only.
-export type RelationCategory = 'parent' | 'sibling' | 'spouse' | 'child' | 'grandparent' | 'cousin' | 'extended' | 'friend' | 'unknown'
+// `grandchild` covers any descendant generation below child (great-grandchildren map here too — we don't
+// split generations); `grandparent` covers ascendants above parent.
+export type RelationCategory = 'parent' | 'sibling' | 'spouse' | 'child' | 'grandchild' | 'grandparent' | 'cousin' | 'extended' | 'friend' | 'unknown'
 // Designed for the future phone-validation API: it flips unverified → valid/stale/invalid. Default 'unverified'.
 export type ContactMethodStatus = 'unverified' | 'valid' | 'stale' | 'invalid'
 
@@ -88,6 +90,7 @@ export type AttemptStatus = 'success' | 'blocked' | 'captcha' | 'empty' | 'error
 export type BlockReason = 'cloudflare' | 'captcha' | 'http_403' | 'http_429' | 'redirect' | 'empty' | 'parse'
 export interface SourceAttempt {
   sourceId: string
+  sourceType?: SourceType // what KIND of source was attempted — lets source intel group blocked/empty tries
   requestId?: number | null
   caseId?: string | null
   status: AttemptStatus
@@ -139,12 +142,98 @@ export interface Confidence {
   conflicts: { signal: string; sources: string[]; weight: number; note: string }[]
 }
 
+// ── v3 derived structures (Phase B) ─────────────────────────────────────────────
+// evidenceStrength is DERIVED from sourceType (never captured) — see strengthOf() in derive.ts.
+export type EvidenceStrength = 'strong' | 'medium' | 'weak'
+export type ContactRank = 'high' | 'medium' | 'low'
+
+// One ranked contact datum. We keep ALL of them — never collapse to a single "best" phone.
+export interface RankedContact {
+  value: string
+  label?: string
+  rank: ContactRank
+  sources: string[] // distinct sourceIds asserting it (corroboration)
+  strength: EvidenceStrength // strongest source backing it
+  lastReportedAt?: string // recency signal, when the source provides it
+  contactMethodStatus?: ContactMethodStatus
+  reason: string // transparent, human-readable ("2 sources, last reported 2024")
+}
+
+export interface ChecklistItem { label: string; present: boolean }
+export interface ConfidenceChecklist {
+  band: Band
+  checklist: ChecklistItem[] // ✓/✗ evidence present — explainable, no false precision
+  explanation: string
+  score: number // internal sortable heuristic; UI shows the checklist + band
+}
+
+// A person we can act on NOW (living/unknown + at least one contact method). All contacts kept + ranked.
+export interface ActionableContact {
+  localId: string
+  name: string | null
+  normalizedName: string
+  relationshipAsStated?: string
+  relationCategory?: RelationCategory
+  phones: RankedContact[]
+  addresses: RankedContact[]
+  emails: RankedContact[]
+  confidence: ConfidenceChecklist
+}
+
+// A family member — EVERYONE (living + deceased), for understanding the family/surnames. Informational.
+export interface FamilyMember {
+  name: string
+  normalizedName: string
+  relationshipAsStated: string
+  relationCategory: RelationCategory
+  deceasedStatus: DeceasedStatus
+  maidenName?: string
+  isFromCrm: boolean
+  confidence: ConfidenceChecklist // per-relationship confidence (each relationship explains itself)
+}
+export interface FamilyStructure { members: FamilyMember[] } // view groups by relationCategory
+
+export interface Conflict {
+  type: 'death_date' | 'living_status' | 'relationship' | 'address' | 'identity' | 'other'
+  description: string
+  evidenceIds: number[] // indices into EvidencePackage.evidence
+}
+
+export interface Completeness {
+  deathConfirmed: boolean
+  closeFamilyIdentified: boolean // NOT "direct descendants" — avoids implying a legal heir class
+  contactsFound: boolean
+  propertyConfirmed: boolean
+}
+
+export interface TimelineStep {
+  n: number
+  intent: string
+  reason?: string // WHY this search ran (from plan step)
+  source?: string
+  status: ResearchPlanStep['status'] // done | failed | replanned | planned (failed = saved failed search)
+}
+
+export interface SourceIntelEntry {
+  sourceType: SourceType | 'unknown'
+  items: number // evidence items contributed
+  sources: string[] // distinct sourceIds of this type
+  attempts: number // matching source_attempts (telemetry), when present
+}
+
 export interface Dossier {
   subject: { name: string; deceased: boolean | null; dateOfDeath?: string }
   heirGraph: HeirGraph
   candidatePeople: ScoredCandidate[]
   contactRankings: ContactRanking[]
   confidence: Confidence
+  // v3 additions (Phase B) — additive so older dossiers + the current view stay valid.
+  actionableContacts: ActionableContact[]
+  familyStructure: FamilyStructure
+  completeness: Completeness
+  conflicts: Conflict[]
+  timeline: TimelineStep[]
+  sourceIntel: SourceIntelEntry[]
   reviewStatus: 'pending' | 'approved' | 'rejected' | 'needs_more'
   generatedAt: string
 }

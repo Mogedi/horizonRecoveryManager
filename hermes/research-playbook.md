@@ -48,11 +48,15 @@ c. **Heirs / relatives** (if deceased). Research the **living** relatives **IN P
    returns page content — one step). For EACH relative, call `report_progress` ("researching JoAnn
    Johnson → found phone") so the live view keeps updating.
 
-d. **Contacts — always get phones.** We are always going to be calling people, so **always pursue
-   phone numbers** for every living person, plus **valid emails** and mailing addresses. Store **ALL**
-   phones/addresses/emails (never pick just one) — each with its own provenance and, where the source
-   shows it, a `lastReportedAt` recency signal (the most recent number matters most). Set
-   `contactMethodStatus: 'unverified'` on phones/emails (a later validation step flips it).
+d. **Contacts — always get phones, from MULTIPLE sources.** We are always going to be calling people,
+   so **always pursue phone numbers** for every living person, plus **valid emails** and mailing
+   addresses. Store **ALL** phones/addresses/emails (never pick just one) — each with its own provenance
+   and, where the source shows it, a `lastReportedAt` recency signal (the most recent number matters most).
+   - **Check 2–3 people-search sources per person** (e.g. fastpeoplesearch, truepeoplesearch,
+     cyberbackgroundchecks). This surfaces MORE numbers AND lets Horizon corroborate: a phone seen on
+     ≥2 independent sources ranks HIGH; a single-source phone ranks LOW. Record the SAME number from each
+     source separately (same number, different `sourceId`) — that's how corroboration is counted.
+   - Set `contactMethodStatus: 'unverified'` on phones/emails (a later validation step flips it).
 
 ## 4. Re-plan on block / empty — distinguish the cause
 - **JS-heavy** (content empty / a SPA / a search form, e.g. qPublic): do NOT fall back to slow generic
@@ -85,7 +89,8 @@ Record EVERY fact as an `EvidenceItem`:
 - identity `{name, normalizedName, maidenName?, ageOrDob?, deceasedStatus?}`
 - relationship `{person, normalizedName, relationshipAsStated, relationCategory?, deceasedStatus?, maidenName?}`
   - `relationshipAsStated` = the words the source used ("step-son of her uncle Jerry"). This is the truth.
-  - `relationCategory` = a coarse bucket for grouping: `parent|sibling|spouse|child|grandparent|cousin|extended|friend|unknown`.
+  - `relationCategory` = a coarse bucket for grouping: `parent|sibling|spouse|child|grandchild|grandparent|cousin|extended|friend|unknown`.
+    Use `grandchild` for grandchildren AND great-grandchildren (we don't split generations); `grandparent` for any ascendant above a parent.
 - phone `{number, label?, lastReportedAt?, contactMethodStatus?}` · email `{address, lastReportedAt?, contactMethodStatus?}`
 - address `{line1, city?, state?, zip?, kind: property|mailing|current|prior, lastReportedAt?}`
 - deceased `{deceasedStatus: living|deceased|unknown, dateOfDeath?, basis}` · property `{owner, parcelId?, situsAddress?, deedBook?}`
@@ -102,6 +107,9 @@ Record EVERY fact as an `EvidenceItem`:
 ## 6. Submit
 Call `submit_evidence_package` with:
 `{ requestId, query, plan, candidates, evidence, documents, telemetry, notes, budget }`
+- **`telemetry`** = one entry per source you tried (incl. blocked / empty ones), each
+  `{ sourceId, sourceType, status, blockReason?, candidateCount }`. **Always set `sourceType`** so
+  Horizon can report success/block rates by source category (even for sources that yielded no evidence).
 Then stop. (Horizon stores it immutably and derives the dossier.)
 
 ## Tools

@@ -486,6 +486,7 @@ model EvidencePackage {
 model SourceAttempt {
   id             Int      @id @default(autoincrement())
   sourceId       String   @map("source_id")
+  sourceType     String?  @map("source_type") // obituary | people_search | property | government | crm | probate | funeral | other
   requestId      Int?     @map("request_id")
   caseId         String?  @map("case_id")
   status         String   // success | blocked | captcha | empty | error
@@ -510,6 +511,13 @@ model ResearchDossier {
   candidatePeople   Json      @map("candidate_people")
   contactRankings   Json      @map("contact_rankings")
   confidence        Json
+  // v3 derived sections (Phase B) — nullable so older dossiers remain valid.
+  actionableContacts Json?    @map("actionable_contacts")
+  familyStructure    Json?    @map("family_structure")
+  completeness       Json?
+  conflicts          Json?
+  timeline           Json?
+  sourceIntel        Json?    @map("source_intel")
   reviewStatus      String    @default("pending") @map("review_status") // pending | approved | rejected | needs_more
   reviewedBy        String?   @map("reviewed_by")
   reviewedAt        DateTime? @map("reviewed_at") @db.Timestamptz(6)

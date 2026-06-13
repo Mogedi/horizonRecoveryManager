@@ -182,6 +182,10 @@ export async function saveDossier(d: Dossier, evidencePackageId: number | null, 
       caseId: caseId ?? null,
       subject: json(d.subject), heirGraph: json(d.heirGraph), candidatePeople: json(d.candidatePeople),
       contactRankings: json(d.contactRankings), confidence: json(d.confidence), reviewStatus: d.reviewStatus,
+      // v3 derived sections (Phase B)
+      actionableContacts: json(d.actionableContacts), familyStructure: json(d.familyStructure),
+      completeness: json(d.completeness), conflicts: json(d.conflicts),
+      timeline: json(d.timeline), sourceIntel: json(d.sourceIntel),
     },
     select: { id: true },
   })
@@ -241,7 +245,7 @@ export async function markDossierReviewed(id: number, reviewStatus: string, revi
 export async function logSourceAttempt(a: SourceAttempt) {
   return prisma.sourceAttempt.create({
     data: {
-      sourceId: a.sourceId, requestId: a.requestId ?? null, caseId: a.caseId ?? null, status: a.status,
+      sourceId: a.sourceId, sourceType: a.sourceType ?? null, requestId: a.requestId ?? null, caseId: a.caseId ?? null, status: a.status,
       blockReason: a.blockReason ?? null, url: a.url ?? null, latencyMs: Math.round(a.latencyMs),
       candidateCount: a.candidateCount, proxyUsed: a.proxyUsed,
     },

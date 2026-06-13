@@ -249,9 +249,9 @@ relationships with their raw quotes, and CRM/researched visibly separated.
       `sourceType`, `normalizedName`, per-step `reason`)
 - [x] A3 idempotency: case-level skip + `get_prior_evidence` (by `normalizedName`) + force override
       — *backend done; live end-to-end verification pending VPS deploy*
-- [ ] B1–B5 derivation: two sections, ranking, confidence checklists, completeness, **conflict objects**, CRM split
-- [ ] B6 timeline (with step reasons) + source intelligence by `sourceType`
-- [ ] B7 `sourceType → evidenceStrength` mapping
+- [x] B1–B5 derivation: two sections, ranking, confidence checklists, completeness, **conflict objects**, CRM split
+- [x] B6 timeline (with step reasons) + source intelligence by `sourceType`
+- [x] B7 `sourceType → evidenceStrength` mapping
 - [ ] C view: six-section detail panel + conflicts banner
 - [ ] D verify: batch, idempotency, Browser Use engagement
 - [ ] `npm test` green throughout; PR (no direct push to main)

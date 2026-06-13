@@ -10,12 +10,17 @@
     "read": "node --env-file=.env src/cli.js read",
     "triage": "node --env-file=.env src/cli.js triage",
     "bot": "node --env-file=.env src/bot.js",
+    "mcp": "node --env-file=.env src/mcp-server.js",
+    "heartbeat": "node --env-file=.env src/heartbeat.js",
     "deploy": "bash deploy.sh"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.102.0",
+    "@modelcontextprotocol/sdk": "^1.6.1",
     "discord.js": "^14.16.3",
+    "express": "^4.21.2",
     "node-cron": "^3.0.3",
-    "pg": "^8.21.0"
+    "pg": "^8.21.0",
+    "zod": "^3.23.8"
   }
 }

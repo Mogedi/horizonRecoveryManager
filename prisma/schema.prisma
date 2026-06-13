@@ -408,3 +408,73 @@ model SyncSource {
 
   @@map("sync_sources")
 }
+
+// ─── Research agent (find_person) ───────────────────────────────────────────────
+// Browser-based people/property research for surplus recovery. Telemetry is first-class:
+// every source call is logged so we can answer "which source is reliable / degrading?".
+// caseId is the deal hubspot_id when tied to a deal, or null for ad-hoc searches from the
+// research page. No hard FK — research can run standalone. See docs/research-agent-design.md.
+
+model SourceAttempt {
+  id             Int      @id @default(autoincrement())
+  sourceId       String   @map("source_id")
+  caseId         String?  @map("case_id")
+  status         String   // success | blocked | captcha | empty | error
+  blockReason    String?  @map("block_reason") // cloudflare | captcha | http_403 | http_429 | redirect | empty | parse
+  url            String?
+  latencyMs      Int      @map("latency_ms")
+  candidateCount Int      @default(0) @map("candidate_count")
+  proxyUsed      Boolean  @default(false) @map("proxy_used")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([sourceId, createdAt])
+  @@map("source_attempts")
+}
+
+model ResearchDossier {
+  id         Int       @id @default(autoincrement())
+  caseId     String?   @map("case_id")
+  query      Json
+  resolution Json
+  candidates Json
+  attempts   Json
+  reviewed   Boolean   @default(false)
+  reviewedBy String?   @map("reviewed_by")
+  reviewedAt DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  documents ResearchDocument[]
+
+  @@index([caseId, createdAt])
+  @@map("research_dossiers")
+}
+
+model ResearchDocument {
+  id        Int      @id @default(autoincrement())
+  caseId    String?  @map("case_id")
+  dossierId Int?     @map("dossier_id")
+  sourceId  String   @map("source_id")
+  kind      String   // tax_deed | lien | property_card | obituary | screenshot
+  label     String?
+  mimeType  String   @map("mime_type")
+  bytes     Bytes
+  sourceUrl String?  @map("source_url")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  dossier ResearchDossier? @relation(fields: [dossierId], references: [id], onDelete: Cascade)
+
+  @@index([caseId, createdAt])
+  @@map("research_documents")
+}
+
+model SuggestedSource {
+  id        Int      @id @default(autoincrement())
+  host      String   @unique
+  url       String
+  note      String?
+  seenCount Int      @default(1) @map("seen_count")
+  status    String   @default("new") // new | approved | rejected
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("suggested_sources")
+}

@@ -448,17 +448,19 @@ model ResearchProgress {
 
 // Per-run cost (token usage from Hermes's session store + Firecrawl calls). Tracked over time.
 model ResearchCost {
-  id            Int      @id @default(autoincrement())
-  requestId     Int      @map("request_id")
-  model         String?
-  inTokens      Int      @default(0) @map("in_tokens")
-  outTokens     Int      @default(0) @map("out_tokens")
-  firecrawlCalls Int     @default(0) @map("firecrawl_calls")
-  usd           Float    @default(0)
-  runSeconds    Int      @default(0) @map("run_seconds")
-  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  id             Int      @id @default(autoincrement())
+  sessionId      String?  @map("session_id") // Hermes session = one run; dedupe in app logic
+  requestId      Int?     @map("request_id")
+  model          String?
+  inTokens       Int      @default(0) @map("in_tokens")
+  outTokens      Int      @default(0) @map("out_tokens")
+  firecrawlCalls Int      @default(0) @map("firecrawl_calls")
+  usd            Float    @default(0)
+  runSeconds     Int      @default(0) @map("run_seconds")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@index([createdAt])
+  @@index([sessionId])
   @@map("research_costs")
 }
 

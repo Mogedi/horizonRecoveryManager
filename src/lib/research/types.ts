@@ -26,25 +26,40 @@ export interface Address {
   state?: string
   zip?: string
   kind: AddressKind
+  lastReportedAt?: string // recency signal from the source ("last reported 2023"), for ranking
 }
+
+// ── Captured-fact enums (Hermes writes these; interpretation is DERIVED, never captured) ─────────
+// What KIND of source a fact came from. Powers source-category analytics AND the derived
+// evidenceStrength mapping (see derive.ts) — strength itself is NEVER captured by the agent.
+export type SourceType = 'obituary' | 'people_search' | 'property' | 'government' | 'crm' | 'probate' | 'funeral' | 'other'
+export type DeceasedStatus = 'living' | 'deceased' | 'unknown'
+// Best-effort grouping bucket. `relationshipAsStated` is the source of truth; this is for grouping only.
+export type RelationCategory = 'parent' | 'sibling' | 'spouse' | 'child' | 'grandparent' | 'cousin' | 'extended' | 'friend' | 'unknown'
+// Designed for the future phone-validation API: it flips unverified → valid/stale/invalid. Default 'unverified'.
+export type ContactMethodStatus = 'unverified' | 'valid' | 'stale' | 'invalid'
 
 // ── Evidence (Hermes → Horizon) ────────────────────────────────────────────────
 // Every claim carries provenance. Evidence is the permanent asset; business objects are derived.
 export interface Provenance {
-  sourceId: string // e.g. 'qpublic:gordon', 'fastpeoplesearch', 'legacy.com'
+  sourceId: string // DATA-SOURCE host, NEVER the tool — e.g. 'qpublic:gordon', 'fastpeoplesearch', 'legacy.com'
+  sourceType: SourceType // captured fact: what KIND of source this is
   url: string
   retrievedAt: string // ISO
-  snippet?: string // the raw text the claim came from
+  sourceText: string // RAW QUOTE — the exact snippet supporting this item (required so it can't be skipped)
+  isFromCrm?: boolean // true if this came from our CRM, not external research
   documentId?: number // if backed by a captured document
 }
 
+// normalizedName = lowercased, trimmed, punctuation-stripped name — the identity key for
+// person-level idempotency (get_prior_evidence). Capture now; the cross-case merge engine is deferred.
 export type EvidenceItem =
-  | { kind: 'identity'; value: { name: string; ageOrDob?: string }; provenance: Provenance }
+  | { kind: 'identity'; value: { name: string; normalizedName: string; maidenName?: string; ageOrDob?: string; deceasedStatus?: DeceasedStatus }; provenance: Provenance }
   | { kind: 'address'; value: Address; provenance: Provenance }
-  | { kind: 'phone'; value: { number: string; label?: string }; provenance: Provenance }
-  | { kind: 'email'; value: { address: string }; provenance: Provenance }
-  | { kind: 'relationship'; value: { person: string; relationToSubject: string }; provenance: Provenance }
-  | { kind: 'deceased'; value: { isDeceased: boolean; dateOfDeath?: string; basis: string }; provenance: Provenance }
+  | { kind: 'phone'; value: { number: string; label?: string; lastReportedAt?: string; contactMethodStatus?: ContactMethodStatus }; provenance: Provenance }
+  | { kind: 'email'; value: { address: string; lastReportedAt?: string; contactMethodStatus?: ContactMethodStatus }; provenance: Provenance }
+  | { kind: 'relationship'; value: { person: string; normalizedName: string; relationshipAsStated: string; relationCategory?: RelationCategory; deceasedStatus?: DeceasedStatus; maidenName?: string }; provenance: Provenance }
+  | { kind: 'deceased'; value: { deceasedStatus: DeceasedStatus; dateOfDeath?: string; basis: string }; provenance: Provenance }
   | { kind: 'property'; value: { parcelId?: string; owner: string; situsAddress?: string; deedBook?: string }; provenance: Provenance }
   | { kind: 'note'; value: { text: string }; provenance: Provenance }
 
@@ -61,6 +76,7 @@ export interface ResearchPlanStep {
   n: number
   intent: string
   source?: string
+  reason?: string // WHY this search — e.g. "'survived by several cousins' + maternal Meeks branch"
   status: 'planned' | 'done' | 'failed' | 'replanned'
 }
 export interface ResearchPlan {

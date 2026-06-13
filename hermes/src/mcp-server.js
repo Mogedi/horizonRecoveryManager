@@ -19,6 +19,7 @@ import {
   emailIntake, syncJustCall, syncGmail, syncDrive, getDigest, classifyCalls,
   triggerLayer1, triggerLayer2, verifyDealDocs, activeDealsWithDocs,
   claimResearchRequest, submitEvidencePackage, getCountySources, upsertCountySource, reportProgress,
+  getPriorEvidence,
 } from './hm-api.js'
 
 const PORT = Number(process.env.MCP_PORT || 8848)
@@ -183,6 +184,10 @@ tool('verify_deal_docs',
 tool('next_research_request',
   { title: 'Claim a research request', description: 'Pull the next pending research request from the queue (marks it running). Returns {request} or {request:null} when empty. The request has query (name/address/etc.) + goal.', inputSchema: {}, annotations: { ...writeHint, idempotentHint: false } },
   () => claimResearchRequest())
+
+tool('get_prior_evidence',
+  { title: 'Prior contact data for a person', description: 'Contact data we ALREADY hold for a name (phones/addresses/emails from prior research). Call this BEFORE any paid Browser Use / people-search — if recent data is returned, reuse it and skip paying for the search. Each result includes ageDays so you can judge staleness.', inputSchema: { name: z.string() }, annotations: readOnly },
+  ({ name }) => getPriorEvidence(name))
 
 tool('get_county_sources',
   { title: 'County source registry', description: 'Verified, learned methods for finding records in a county (consult BEFORE searching blind). Returns rows with method/entryUrl/searchHint/successRate/status.', inputSchema: { state: z.string().optional(), county: z.string().optional() }, annotations: readOnly },

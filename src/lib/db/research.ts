@@ -13,6 +13,68 @@ export async function enqueueRequest(input: ResearchRequestInput) {
   })
 }
 
+// Lowercase, trim, strip punctuation — the identity key (matches EvidenceItem.normalizedName).
+const normName = (s?: string | null) => (s ?? '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim()
+
+// ── Idempotency (conservative — prevents duplicate runs and duplicate PAID searches) ──────────────
+// Case-level: has this case already been researched recently? Callers skip re-running unless forced.
+export async function findRecentDossierForCase(caseId: string, withinDays = 14) {
+  if (!caseId) return null
+  const since = new Date(Date.now() - withinDays * 86_400_000)
+  return prisma.researchDossier.findFirst({
+    where: { caseId, createdAt: { gte: since } },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true, createdAt: true, reviewStatus: true },
+  })
+}
+
+// Person-level: what contact data do we ALREADY hold for this name (from prior evidence packages)?
+// Hermes calls this before any paid Browser Use search and reuses what's here instead of paying again.
+// Returns matches with their age so the agent can judge staleness (we don't decide for it — conservative).
+export interface PriorContact { value: string; sourceId: string; lastReportedAt?: string; ageDays: number }
+export interface PriorEvidence { name: string | null; phones: PriorContact[]; addresses: PriorContact[]; emails: PriorContact[] }
+export async function getPriorEvidenceByName(name: string, withinDays = 180): Promise<PriorEvidence> {
+  const target = normName(name)
+  const out: PriorEvidence = { name, phones: [], addresses: [], emails: [] }
+  if (!target) return out
+  const since = new Date(Date.now() - withinDays * 86_400_000)
+  const pkgs = await prisma.evidencePackage.findMany({
+    where: { completedAt: { gte: since } },
+    orderBy: { completedAt: 'desc' },
+    take: 300,
+    select: { completedAt: true, candidates: true, evidence: true },
+  })
+  type Ev = { kind: string; value: Record<string, unknown>; provenance?: { sourceId?: string } }
+  type Cand = { name?: string | null; evidenceRefs?: number[] }
+  const seen = new Set<string>() // dedupe by kind+value across packages (newest wins, since pkgs is desc)
+  for (const pkg of pkgs) {
+    const ageDays = Math.floor((Date.now() - pkg.completedAt.getTime()) / 86_400_000)
+    const evidence = (pkg.evidence as unknown as Ev[]) ?? []
+    const candidates = (pkg.candidates as unknown as Cand[]) ?? []
+    for (const cand of candidates) {
+      if (normName(cand.name) !== target) continue
+      for (const ref of cand.evidenceRefs ?? []) {
+        const it = evidence[ref]
+        if (!it) continue
+        const sourceId = it.provenance?.sourceId ?? 'unknown'
+        const push = (bucket: PriorContact[], value?: unknown) => {
+          const v = typeof value === 'string' ? value.trim() : ''
+          if (!v) return
+          const key = `${it.kind}:${v.toLowerCase()}`
+          if (seen.has(key)) return
+          seen.add(key)
+          bucket.push({ value: v, sourceId, lastReportedAt: it.value.lastReportedAt as string | undefined, ageDays })
+        }
+        if (it.kind === 'phone') push(out.phones, it.value.number)
+        else if (it.kind === 'email') push(out.emails, it.value.address)
+        else if (it.kind === 'address') push(out.addresses, it.value.line1)
+      }
+      if (!out.name && cand.name) out.name = cand.name
+    }
+  }
+  return out
+}
+
 // Claim the oldest pending request (mark it running). Hermes calls this to pull work.
 export async function claimNextRequest() {
   // Self-heal: a request stuck 'running' (a crashed agentic run) goes back to pending for retry.

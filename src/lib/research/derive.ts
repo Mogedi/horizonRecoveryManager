@@ -53,7 +53,7 @@ function aggregate(pkg: EvidencePackage, cand: CandidatePerson): Aggregate {
       case 'address': agg.addresses.push(it.value); break
       case 'phone': agg.phones.push(it.value.number); break
       case 'email': agg.emails.push(it.value.address); break
-      case 'relationship': agg.relationToSubject = it.value.relationToSubject; break
+      case 'relationship': agg.relationToSubject = it.value.relationshipAsStated; break
     }
   }
   agg.phones = uniq(agg.phones)
@@ -102,7 +102,7 @@ function scoreCandidate(q: PersonQuery, agg: Aggregate): { justification: Justif
 export function deriveDossier(pkg: EvidencePackage): Dossier {
   const q = pkg.query
   // Subject alive/deceased from deceased-evidence (any confirmed death wins).
-  const deceasedEv = pkg.evidence.find(e => e.kind === 'deceased' && e.value.isDeceased)
+  const deceasedEv = pkg.evidence.find(e => e.kind === 'deceased' && e.value.deceasedStatus === 'deceased')
   const deceased = deceasedEv ? true : pkg.evidence.some(e => e.kind === 'deceased') ? false : null
   const dateOfDeath = deceasedEv && deceasedEv.kind === 'deceased' ? deceasedEv.value.dateOfDeath : undefined
 

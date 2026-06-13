@@ -2,8 +2,9 @@
 // discover → codify → register → run lifecycle).
 import type { SourceAdapter, PersonQuery, SourceKind } from '../types'
 import { qpublicAdapter } from './qpublic'
+import { fastPeopleSearchAdapter } from './fastpeoplesearch'
 
-export const ADAPTERS: SourceAdapter[] = [qpublicAdapter]
+export const ADAPTERS: SourceAdapter[] = [qpublicAdapter, fastPeopleSearchAdapter]
 
 // Public records first, contact/social last.
 const KIND_ORDER: SourceKind[] = ['property', 'tax', 'deed', 'probate', 'obituary', 'people_search', 'social']

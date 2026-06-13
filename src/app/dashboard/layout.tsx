@@ -34,6 +34,9 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
             Tasks
             <TaskCountBadge />
           </Link>
+          <Link href="/dashboard/research" className="flex items-center px-3 py-2 text-sm text-gray-700 rounded-md hover:bg-gray-50">
+            Research
+          </Link>
           <Link href="/dashboard/settings" className="flex items-center px-3 py-2 text-sm text-gray-700 rounded-md hover:bg-gray-50">
             Settings
           </Link>

@@ -112,3 +112,6 @@ export const submitEvidencePackage = (pkg) => req('POST', '/api/research/evidenc
 export const getCountySources = (state = 'GA', county) =>
   req('GET', `/api/research/county-sources?state=${enc(state)}${county ? `&county=${enc(county)}` : ''}`, {})
 export const upsertCountySource = (source) => req('POST', '/api/research/county-sources', { body: source })
+// Live progress narration (shown in the dashboard while a run is in flight).
+export const reportProgress = (requestId, message, step) =>
+  req('POST', '/api/research/progress', { body: { requestId, message, step } })

@@ -103,3 +103,12 @@ export function newWorkflow(correlationId = `hermes:${randomUUID()}`) {
     triggerSummary: (dealId) => req('POST', `/api/deals/${dealId}/summary`, { corr: correlationId }),
   }
 }
+
+// ── Research agent bridge (Hermes ↔ Horizon) ─────────────────────────────────────
+// Hermes pulls work, writes back IMMUTABLE evidence (Horizon derives the dossier), and reads/updates
+// the verified county registry. Hermes can write evidence only — never a business object.
+export const claimResearchRequest = () => req('GET', '/api/research/next', {})
+export const submitEvidencePackage = (pkg) => req('POST', '/api/research/evidence', { body: pkg })
+export const getCountySources = (state = 'GA', county) =>
+  req('GET', `/api/research/county-sources?state=${enc(state)}${county ? `&county=${enc(county)}` : ''}`, {})
+export const upsertCountySource = (source) => req('POST', '/api/research/county-sources', { body: source })

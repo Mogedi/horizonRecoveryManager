@@ -18,6 +18,7 @@ import {
   getAttentionQueue, getDealDocuments, refreshCase, newWorkflow,
   emailIntake, syncJustCall, syncGmail, syncDrive, getDigest, classifyCalls,
   triggerLayer1, triggerLayer2, verifyDealDocs, activeDealsWithDocs,
+  claimResearchRequest, submitEvidencePackage, getCountySources, upsertCountySource,
 } from './hm-api.js'
 
 const PORT = Number(process.env.MCP_PORT || 8848)
@@ -174,6 +175,43 @@ tool('active_deals_with_docs',
 tool('verify_deal_docs',
   { title: 'Verify case documents', description: 'Run document verification for ONE deal (screenshot + Claude Vision). ~25s per deal.', inputSchema: { deal_id: z.string() }, annotations: { ...writeHint, idempotentHint: false } },
   ({ deal_id }) => verifyDealDocs(deal_id))
+
+// ── Research agent bridge (Hermes is the runtime; Horizon stores + derives) ──────
+// Hermes claims a request, researches it agentically (plan→execute→re-plan using its own browser +
+// web search), then submits an IMMUTABLE evidence package. Horizon derives the dossier. Hermes can
+// write evidence ONLY — never a score or business object (the boundary that prevents logic drift).
+tool('next_research_request',
+  { title: 'Claim a research request', description: 'Pull the next pending research request from the queue (marks it running). Returns {request} or {request:null} when empty. The request has query (name/address/etc.) + goal.', inputSchema: {}, annotations: { ...writeHint, idempotentHint: false } },
+  () => claimResearchRequest())
+
+tool('get_county_sources',
+  { title: 'County source registry', description: 'Verified, learned methods for finding records in a county (consult BEFORE searching blind). Returns rows with method/entryUrl/searchHint/successRate/status.', inputSchema: { state: z.string().optional(), county: z.string().optional() }, annotations: readOnly },
+  ({ state, county }) => getCountySources(state ?? 'GA', county))
+
+tool('upsert_county_source',
+  { title: 'Record a working source method', description: 'After confirming a method works for a county, record it (durable learning, not memory). Future runs reuse it.', inputSchema: { state: z.string(), county: z.string(), sourceKind: z.enum(['property', 'deed', 'probate', 'obituary']), method: z.enum(['gis_api', 'qpublic', 'custom_site', 'propertyradar']), entryUrl: z.string(), searchHint: z.string().optional() }, annotations: writeHint },
+  (a) => upsertCountySource({ ...a, searchHint: a.searchHint ?? '' }))
+
+tool('submit_evidence_package',
+  { title: 'Submit research evidence', description: 'Write the IMMUTABLE evidence package for a completed research request. Horizon stores it and derives the dossier (scoring/heir-graph). Provide evidence items WITH provenance (sourceId, url, retrievedAt). Do NOT compute scores or business objects — only evidence.', inputSchema: {
+      requestId: z.number().optional(),
+      query: z.object({ name: z.string() }).passthrough(),
+      plan: z.object({}).passthrough().optional(),
+      candidates: z.array(z.object({}).passthrough()).optional(),
+      evidence: z.array(z.object({}).passthrough()).optional(),
+      documents: z.array(z.object({}).passthrough()).optional(),
+      telemetry: z.array(z.object({}).passthrough()).optional(),
+      notes: z.array(z.string()).optional(),
+      budget: z.object({}).passthrough().optional(),
+    }, annotations: { ...writeHint, idempotentHint: false } },
+  (a) => submitEvidencePackage({
+    requestId: a.requestId, query: a.query,
+    plan: a.plan ?? { goal: a.query?.goal ?? 'find_heirs', steps: [] },
+    candidates: a.candidates ?? [], evidence: a.evidence ?? [], documents: a.documents ?? [],
+    telemetry: a.telemetry ?? [], notes: a.notes ?? [],
+    budget: a.budget ?? { stepsUsed: 0, sourcesHit: 0, capHit: false },
+    completedAt: new Date().toISOString(),
+  }))
 
 // ── Stateless Streamable HTTP transport ────────────────────────────────────────
 const app = express()

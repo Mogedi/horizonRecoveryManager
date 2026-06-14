@@ -76,6 +76,12 @@ describe('deriveDossier', () => {
     expect(Array.isArray(d.confidence.justification)).toBe(true)
   })
 
+  it('find_heirs with multiple distinct heirs is NOT flagged conflicting (heirs are expected, not identity rivals)', () => {
+    // Regression: the identity-rivalry heuristic used to mark every multi-heir find_heirs dossier
+    // "conflicting" just because the heirs have different names. With no TYPED conflict, it shouldn't.
+    expect(d.confidence.band).not.toBe('conflicting')
+  })
+
   it('reviewStatus starts pending (human decides)', () => {
     expect(d.reviewStatus).toBe('pending')
   })

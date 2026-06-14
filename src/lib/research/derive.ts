@@ -504,9 +504,13 @@ export function deriveDossier(pkg: EvidencePackage): Dossier {
     conflicts.push({ type: 'ownership', description: `property could not be linked to "${q.name}" — found owner "${propertyRecord.ownerOfRecord ?? 'unknown'}"`, evidenceIds: propIdx >= 0 ? [propIdx] : [] })
   }
 
-  // Confidence from the top candidate; conflicts = a different-identity candidate that also scores.
+  // Confidence from the top candidate; the "rival" = a different-identity candidate that also scores —
+  // an IDENTITY-disambiguation signal (which of these is the ONE person we want?). It only makes sense
+  // when the goal targets a single subject. For find_heirs (and property_records), multiple distinct
+  // people are the EXPECTED output (the heirs), not a conflict — so skip the rival there.
   const top = scored[0]
-  const rival = scored.find(c => top && c.localId !== top.localId && nameSimilarity(top.name, c.name) < 0.6 && c.score > 0)
+  const singleSubjectGoal = q.goal !== 'find_heirs' && q.goal !== 'property_records'
+  const rival = singleSubjectGoal ? scored.find(c => top && c.localId !== top.localId && nameSimilarity(top.name, c.name) < 0.6 && c.score > 0) : undefined
   const conflictScore = rival?.score ?? 0
   const distinctSources = top ? new Set(pkg.candidates.find(c => c.localId === top.localId)?.evidenceRefs.map(r => pkg.evidence[r]?.provenance.sourceId).filter(Boolean)).size : 0
   const confidence: Confidence = {

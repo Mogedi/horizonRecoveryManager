@@ -227,36 +227,8 @@ exports[`deriveDossier — full-output snapshot > matches the locked derivation 
     "propertyConfirmed": true,
   },
   "confidence": {
-    "band": "conflicting",
-    "conflicts": [
-      {
-        "note": "name weak (0.33)",
-        "signal": "nameWeak",
-        "sources": [
-          "legacy.com",
-          "fastpeoplesearch",
-        ],
-        "weight": 8,
-      },
-      {
-        "note": "relation: son",
-        "signal": "relationship",
-        "sources": [
-          "legacy.com",
-          "fastpeoplesearch",
-        ],
-        "weight": 18,
-      },
-      {
-        "note": "1 phone(s)",
-        "signal": "phone",
-        "sources": [
-          "legacy.com",
-          "fastpeoplesearch",
-        ],
-        "weight": 8,
-      },
-    ],
+    "band": "medium",
+    "conflicts": [],
     "justification": [
       {
         "note": "state: GA",

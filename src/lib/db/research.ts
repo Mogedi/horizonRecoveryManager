@@ -28,6 +28,26 @@ export async function findRecentDossierForCase(caseId: string, withinDays = 14) 
   })
 }
 
+// Property-level: has this case already had a recent property-records run? A property search is a
+// SEPARATE goal from the person dossier, so it must NOT be skipped just because a person dossier exists
+// (findRecentDossierForCase) — it has its own idempotency keyed on recent property-kind evidence.
+export async function findRecentPropertyEvidenceForCase(caseId: string, withinDays = 14) {
+  if (!caseId) return null
+  const since = new Date(Date.now() - withinDays * 86_400_000)
+  const pkgs = await prisma.evidencePackage.findMany({
+    where: { caseId, completedAt: { gte: since } },
+    orderBy: { completedAt: 'desc' },
+    select: { id: true, completedAt: true, evidence: true },
+  })
+  for (const p of pkgs) {
+    const ev = p.evidence as unknown
+    if (Array.isArray(ev) && ev.some((it) => (it as { kind?: string })?.kind === 'property')) {
+      return { id: p.id, completedAt: p.completedAt }
+    }
+  }
+  return null
+}
+
 // Person-level: what contact data do we ALREADY hold for this name (from prior evidence packages)?
 // Hermes calls this before any paid Browser Use search and reuses what's here instead of paying again.
 // Returns matches with their age so the agent can judge staleness (we don't decide for it — conservative).
@@ -186,6 +206,7 @@ export async function saveDossier(d: Dossier, evidencePackageId: number | null, 
       actionableContacts: json(d.actionableContacts), familyStructure: json(d.familyStructure),
       completeness: json(d.completeness), conflicts: json(d.conflicts),
       timeline: json(d.timeline), sourceIntel: json(d.sourceIntel),
+      propertyRecord: json(d.propertyRecord),
     },
     select: { id: true },
   })
@@ -234,7 +255,11 @@ export async function getDossierDetail(id: number) {
   const cost = request
     ? await prisma.researchCost.findFirst({ where: { requestId: request.id }, select: { usd: true, model: true, inTokens: true, outTokens: true, runSeconds: true } })
     : null
-  return { dossier, evidence, cost }
+  // The case's Horizon-managed case type — drives whether the "Run property search now" button shows.
+  const caseType = dossier.caseId
+    ? (await prisma.deal.findUnique({ where: { hubspotId: dossier.caseId }, select: { caseType: true } }))?.caseType ?? null
+    : null
+  return { dossier, evidence, cost, caseType }
 }
 
 export async function markDossierReviewed(id: number, reviewStatus: string, reviewedBy: string) {

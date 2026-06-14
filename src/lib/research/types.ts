@@ -3,8 +3,10 @@
 // The seam between Hermes (runtime) and Horizon (business brain) is two contracts:
 //   • EvidencePackage — what Hermes writes. IMMUTABLE, provenance-tracked, NO business objects.
 //   • Dossier         — what Horizon DERIVES from a package. Re-derivable; never authored by Hermes.
+import type { CaseType } from './case-type'
+export type { CaseType } from './case-type' // re-export so the contract's consumers import case type from one place
 
-export type Goal = 'locate_owner' | 'find_heirs' | 'mailing_address' | 'contact'
+export type Goal = 'locate_owner' | 'find_heirs' | 'mailing_address' | 'contact' | 'property_records'
 
 export interface PersonQuery {
   name: string
@@ -15,7 +17,9 @@ export interface PersonQuery {
   relativesHint?: string[]
   parcelId?: string
   county?: string
+  zip?: string
   goal?: Goal
+  caseType?: CaseType // the run's category (tax_sale | mortgage_foreclosure | state_funds | estate_sale | unknown) — drives the research profile
   caseId?: string | null // deal hubspot_id when tied to a deal; null for ad-hoc
 }
 
@@ -62,8 +66,58 @@ export type EvidenceItem =
   | { kind: 'email'; value: { address: string; lastReportedAt?: string; contactMethodStatus?: ContactMethodStatus }; provenance: Provenance }
   | { kind: 'relationship'; value: { person: string; normalizedName: string; relationshipAsStated: string; relationCategory?: RelationCategory; deceasedStatus?: DeceasedStatus; maidenName?: string }; provenance: Provenance }
   | { kind: 'deceased'; value: { deceasedStatus: DeceasedStatus; dateOfDeath?: string; basis: string }; provenance: Provenance }
-  | { kind: 'property'; value: { parcelId?: string; owner: string; situsAddress?: string; deedBook?: string }; provenance: Provenance }
+  | { kind: 'property'; value: PropertyValue; provenance: Provenance }
+  | { kind: 'lien'; value: LienValue; provenance: Provenance }
+  | { kind: 'tax_event'; value: TaxEventValue; provenance: Provenance }
+  | { kind: 'transaction'; value: TransactionValue; provenance: Provenance }
   | { kind: 'note'; value: { text: string }; provenance: Provenance }
+
+// Property-record facts (captured AS STATED; owner-match / surplus relevance are DERIVED, never here).
+// normalizedOwner = lowercased/trimmed/punctuation-stripped owner name — the key derivation uses to
+// compare owner-of-record against the subject/heirs (the surplus-case "record owner ≠ claimant" check).
+export interface PropertyValue {
+  owner: string
+  normalizedOwner?: string // derivation key (owner-vs-claimant match); computed in derive if the agent omits it
+  parcelId?: string
+  situsAddress?: string
+  deedBook?: string
+  deedPage?: string
+  assessedValue?: number
+  landUse?: string
+  lastSaleDate?: string
+  lastSalePrice?: number
+  taxStatus?: string // AS STATED by the source ("delinquent", "current") — not interpreted
+}
+export interface LienValue {
+  holder: string
+  normalizedHolder?: string
+  amount?: number
+  recordedDate?: string
+  instrumentType?: string // e.g. "tax lien", "mortgage", "judgment" — as stated
+  released?: boolean      // true if the source says it's satisfied/released/cancelled — as stated
+  deedBook?: string
+  deedPage?: string
+}
+export type TaxEventKind = 'tax_sale' | 'tax_deed' | 'redemption' | 'delinquency'
+export interface TaxEventValue {
+  kind: TaxEventKind
+  date?: string
+  amount?: number
+  surplusStated?: number // the surplus figure AS STATED by the source — never computed here
+  deedBook?: string
+  deedPage?: string
+}
+// A deed/transaction in the property's chain — proves how the subject is tied (often as a PRIOR owner).
+export type TransactionType = 'sale' | 'deed' | 'foreclosure' | 'tax_sale' | 'other'
+export interface TransactionValue {
+  date?: string
+  type?: TransactionType
+  grantor?: string // seller / party transferring out (the subject, when they lost the property)
+  grantee?: string // buyer / party receiving
+  price?: number
+  deedBook?: string
+  deedPage?: string
+}
 
 export type EvidenceKind = EvidenceItem['kind']
 
@@ -194,9 +248,55 @@ export interface FamilyMember {
 export interface FamilyStructure { members: FamilyMember[] } // view groups by relationCategory
 
 export interface Conflict {
-  type: 'death_date' | 'living_status' | 'relationship' | 'address' | 'identity' | 'other'
+  type: 'death_date' | 'living_status' | 'relationship' | 'address' | 'identity' | 'ownership' | 'other'
   description: string
   evidenceIds: number[] // indices into EvidencePackage.evidence
+}
+
+// Derived property dossier (Phase P-B/V1). Built from property/lien/tax_event/transaction evidence; all
+// match/linkage/total/surplus-relevance/coverage is DERIVED here, never captured. Stated dollar figures
+// stay labeled "stated" — we never compute a surplus.
+export interface PropertyLien { holder: string; amount?: number; recordedDate?: string; instrumentType?: string; released?: boolean; evidenceId: number }
+export interface PropertyTaxEvent { kind: TaxEventKind; date?: string; amount?: number; surplusStated?: number; evidenceId: number }
+export interface PropertyTransaction { date?: string; type?: TransactionType; grantor?: string; grantee?: string; price?: number; deedBook?: string; deedPage?: string; evidenceId: number }
+
+// V1 — subject ↔ property linkage. The subject is OFTEN a prior owner (lost the property at sale → owed
+// the surplus), so "current owner == claimant" is the wrong test. We answer "is the subject tied, and how".
+export type LinkageType = 'current_owner' | 'prior_owner' | 'related_party' | 'possible' | 'unlinked'
+export type RelationshipBasis = 'deed_history' | 'tax_record' | 'probate_record' | 'court_record' | 'marriage_record' | 'trust_record' | 'corporate_record' | 'manual_inference'
+// Another candidate parcel the agent considered — ranked by TRANSPARENT signals, never a confidence %.
+export interface PropertyCandidate { parcelId?: string; situsAddress?: string; owner?: string; signals: string[]; sourceIds: string[] }
+export interface PropertyLinkage {
+  type: LinkageType
+  linkedThrough?: { name: string; relationshipAsStated?: string } // for related_party: the owner they connect through
+  relationshipBasis: RelationshipBasis[] // DERIVED from the evidence kinds backing the linkage
+  evidence: string[]                     // human-readable support ("subject is grantor in 2019 deed, Book 123 Pg 45")
+  corroboratingSources: number           // distinct sources agreeing on the linkage key
+  band: Band
+  alternatives: PropertyCandidate[]      // other parcels considered (catch wrong matches on common names)
+}
+// V1 — research coverage ("how hard did we look?"), DERIVED from telemetry + plan.steps. Distinct from
+// confidence. A checklist, not a score: searched-but-empty is different from never-attempted.
+export type CoverageStatus = 'searched' | 'empty' | 'not_attempted'
+export interface CoverageItem { label: string; status: CoverageStatus }
+export interface PropertyCoverage { items: CoverageItem[]; transactionsFound: number }
+
+export interface PropertyRecord {
+  parcelId?: string
+  situsAddress?: string
+  ownerOfRecord?: string
+  assessedValue?: number
+  taxStatus?: string
+  ownerMatchesSubject: boolean | null // normalizedOwner vs subject/heirs; null when no owner captured
+  linkage: PropertyLinkage | null     // V1 — how the subject is tied to the parcel
+  transactions: PropertyTransaction[] // V1 — deed/ownership chain
+  coverage: PropertyCoverage          // V1 — how hard we looked
+  liens: PropertyLien[]
+  lienTotalStated?: number             // sum of AS-STATED lien amounts (undefined if none stated)
+  taxEvents: PropertyTaxEvent[]
+  surplusRelevant: boolean             // a tax_sale / tax_deed event is present
+  surplusStated?: number               // max surplus a source PRINTED (labeled "stated", never computed)
+  documents: { kind: string; sourceUrl: string }[]
 }
 
 export interface Completeness {
@@ -234,6 +334,7 @@ export interface Dossier {
   conflicts: Conflict[]
   timeline: TimelineStep[]
   sourceIntel: SourceIntelEntry[]
+  propertyRecord: PropertyRecord | null // P-B: null until a property_records run adds property evidence
   reviewStatus: 'pending' | 'approved' | 'rejected' | 'needs_more'
   generatedAt: string
 }

@@ -33,7 +33,9 @@ fi
 #   - "prisma:error" — Prisma client validation / query errors
 #   - "⨯ Error" — Next.js unhandled error formatting
 #   - " 500 in " — HTTP 500 response lines from Next.js access log
-PLAINTEXT=$(echo "$RECENT" | grep -E '(prisma:error|⨯ Error|\] Error| 500 in )' | grep -v 'node_modules')
+#   - "Parsing CSS source code failed" / "not recognized as a valid pseudo" — Turbopack CSS parse
+#     warnings (only the real build parser catches these; standalone postcss/lightningcss don't)
+PLAINTEXT=$(echo "$RECENT" | grep -E '(prisma:error|⨯ Error|\] Error| 500 in |Parsing CSS source code failed|not recognized as a valid pseudo)' | grep -v 'node_modules')
 
 HITS=$(printf '%s\n%s' "$STRUCTURED" "$PLAINTEXT" | grep -v '^$')
 

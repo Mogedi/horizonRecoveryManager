@@ -17,6 +17,7 @@ import { TaskPromptInline } from './deal-panel/TaskPromptInline'
 import { getPipelineGroup, defaultTabForPipelineGroup } from '@/lib/utils/pipeline-group'
 import type { PanelData, OutreachMatrix } from './deal-panel/types'
 import { SNOOZE_CATEGORY_LABELS } from './deal-panel/types'
+import { CASE_TYPES, CASE_TYPE_LABELS } from '@/lib/research/case-type'
 
 type TabId = 'story' | 'tasks' | 'contacts' | 'calls' | 'emails' | 'documents' | 'notes'
 const TAB_IDS: TabId[] = ['story', 'tasks', 'contacts', 'calls', 'emails', 'documents', 'notes']
@@ -205,6 +206,22 @@ export default function DealPanel({
                 {deal.parcelId}
               </p>
             )}
+            <div className="mt-1.5 flex items-center gap-1.5">
+              <span className="text-[10px] uppercase tracking-wider text-gray-400">Case type</span>
+              <select
+                value={deal.caseType ?? 'unknown'}
+                onChange={async (e) => {
+                  await fetch(`/api/deals/${hubspotId}/case-type`, {
+                    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ caseType: e.target.value }),
+                  })
+                  fetchDeal()
+                }}
+                className="text-[11px] border border-gray-200 rounded px-1.5 py-0.5 bg-white text-gray-700"
+              >
+                {CASE_TYPES.map(ct => <option key={ct} value={ct}>{CASE_TYPE_LABELS[ct]}</option>)}
+              </select>
+            </div>
             {data?.enriched && (
               <DealBadges enriched={data.enriched} />
             )}

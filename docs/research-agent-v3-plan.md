@@ -253,5 +253,14 @@ relationships with their raw quotes, and CRM/researched visibly separated.
 - [x] B6 timeline (with step reasons) + source intelligence by `sourceType`
 - [x] B7 `sourceType → evidenceStrength` mapping
 - [x] C view: six-section detail panel + conflicts banner
-- [ ] D verify: batch, idempotency, Browser Use engagement
-- [ ] `npm test` green throughout; PR (no direct push to main)
+- [x] D verify (from existing-run telemetry, 0 credits): batch extraction ✓ (full family one pass);
+      Firecrawl/HTTP scoped to obituary/property + GIS-API preferred ✓; idempotency wired (case-skip in
+      `/api/research`, `get_prior_evidence` has real reuse data — 26 phones). **Gap found + fixed:**
+      ingest never fanned `telemetry → source_attempts` (source intel read an empty table) →
+      `src/lib/research/telemetry.ts` normalizer + ingest fan-out + 7-package backfill (48 attempts).
+      **Open finding (Mo's call):** Browser Use is getting **blocked on anti-bot people-search**
+      (fastpeoplesearch/truepeoplesearch) and falling back to search snippets — the one source it's
+      scoped for. people_search = 40% success / 33% blocked. Decide whether to invest in proxy/Browser-Use
+      config before relying on it. Firecrawl credit usage is NOT recorded in `research_costs.firecrawl_calls`
+      (still 0 despite 138/150 real credits used) — wire Hermes cost-sync to report it.
+- [ ] `npm test` green throughout (668 pass); PR (no direct push to main)

@@ -30,6 +30,10 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
+        {/* CSS Custom Highlight API styling for search results (see search-highlight.ts). Injected as a
+            raw <style> so the browser parses ::highlight() natively — Turbopack's CSS parser rejects it
+            in globals.css and logs a parse warning. React 19 hoists this to <head>. */}
+        <style dangerouslySetInnerHTML={{ __html: '::highlight(search-hl){background-color:#fef08a;color:#78350f}' }} />
         <BulkVerifyProvider>
           <BulkHubspotCheckProvider>{children}</BulkHubspotCheckProvider>
         </BulkVerifyProvider>

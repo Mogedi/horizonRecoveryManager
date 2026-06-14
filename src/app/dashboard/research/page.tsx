@@ -5,7 +5,9 @@ import useSWR from 'swr'
 import type {
   Band, EvidenceItem, ScoredCandidate, Address, ActionableContact, FamilyMember, RankedContact,
   Conflict, Completeness, TimelineStep, SourceIntelEntry, RelationCategory, ContactRank, CandidatePerson,
+  PropertyRecord, LinkageType, CoverageStatus,
 } from '@/lib/research/types'
+import { caseTypeWantsProperty, CASE_TYPES, CASE_TYPE_LABELS, type CaseType } from '@/lib/research/case-type'
 
 const fetcher = (url: string) => fetch(url).then(r => (r.ok ? r.json() : Promise.reject(new Error(r.statusText))))
 
@@ -27,7 +29,7 @@ function elapsed(iso: string) {
 const money = (u: number | null | undefined) => (u == null ? '—' : `$${u.toFixed(2)}`)
 
 export default function ResearchPage() {
-  const [form, setForm] = useState({ name: '', address: '', city: '', state: 'GA', parcelId: '', county: '', goal: 'find_heirs' })
+  const [form, setForm] = useState({ name: '', address: '', goal: 'find_heirs', caseType: 'unknown' })
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
   const [sel, setSel] = useState<Selected>(null)
@@ -38,6 +40,8 @@ export default function ResearchPage() {
   async function enqueue(e: React.FormEvent) {
     e.preventDefault()
     if (!form.name.trim()) { setMsg('Name is required'); return }
+    // Ask for an address only when the run actually needs one (a property search).
+    if (form.goal === 'property_records' && !form.address.trim()) { setMsg('Add the full property address for a property search'); return }
     setBusy(true); setMsg(null)
     try {
       const res = await fetch('/api/research', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) })
@@ -55,12 +59,14 @@ export default function ResearchPage() {
       <form onSubmit={enqueue} className="shrink-0 px-6 pt-5 pb-4 border-b border-gray-200 bg-white">
         <div className="max-w-5xl flex flex-wrap items-end gap-3">
           <input className={`${input} w-44`} value={form.name} onChange={set('name')} placeholder="Name (Last, First) *" />
-          <input className={`${input} w-56`} value={form.address} onChange={set('address')} placeholder="Property address" />
-          <input className={`${input} w-32`} value={form.city} onChange={set('city')} placeholder="City" />
-          <input className={`${input} w-16`} value={form.state} onChange={set('state')} placeholder="GA" />
+          <input className={`${input} w-80`} value={form.address} onChange={set('address')} placeholder="Full property address (e.g. 301 Lowell St, Atlanta, GA 30310)" />
+          <select className={input} value={form.caseType} onChange={set('caseType')} title="Case type — drives whether property research runs">
+            {CASE_TYPES.map(ct => <option key={ct} value={ct}>{CASE_TYPE_LABELS[ct]}</option>)}
+          </select>
           <select className={input} value={form.goal} onChange={set('goal')}>
             <option value="find_heirs">Find heirs</option><option value="locate_owner">Locate owner</option>
             <option value="mailing_address">Mailing address</option><option value="contact">Contact</option>
+            <option value="property_records">Property records</option>
           </select>
           <button type="submit" disabled={busy} className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50">{busy ? 'Queuing…' : 'Research'}</button>
           {msg && <span className="text-xs text-gray-500">{msg}</span>}
@@ -132,6 +138,7 @@ function RequestDetail({ request, progress }: { request?: RequestRow; progress: 
 
 type DossierDetailData = {
   dossier: {
+    caseId: string | null
     subject: { name: string; deceased: boolean | null; dateOfDeath?: string }
     candidatePeople: ScoredCandidate[]
     confidence: { band: Band; score: number; justification: { note: string }[]; conflicts: { note: string }[] }
@@ -144,9 +151,11 @@ type DossierDetailData = {
     conflicts?: Conflict[] | null
     timeline?: TimelineStep[] | null
     sourceIntel?: SourceIntelEntry[] | null
+    propertyRecord?: PropertyRecord | null
   }
   evidence: { evidence: EvidenceItem[]; candidates?: CandidatePerson[]; notes: string[] } | null
   cost: { usd: number; model: string | null; inTokens: number; outTokens: number; runSeconds: number } | null
+  caseType: string | null
 }
 
 const RANK: Record<ContactRank, string> = { high: 'bg-emerald-100 text-emerald-700', medium: 'bg-amber-100 text-amber-700', low: 'bg-gray-100 text-gray-500' }
@@ -162,6 +171,38 @@ const Flag = ({ ok, label }: { ok: boolean; label: string }) => (
   <span className={`px-2 py-0.5 rounded text-[10px] font-medium ${ok ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{ok ? '✓' : '⚠'} {label}</span>
 )
 
+const LINKAGE_LABEL: Record<LinkageType, string> = { current_owner: 'Current owner', prior_owner: 'Prior owner', related_party: 'Related party', possible: 'Possible match', unlinked: 'Not linked' }
+const LINKAGE_STYLE: Record<LinkageType, string> = { current_owner: 'bg-emerald-100 text-emerald-700', prior_owner: 'bg-emerald-100 text-emerald-700', related_party: 'bg-blue-100 text-blue-700', possible: 'bg-amber-100 text-amber-700', unlinked: 'bg-red-100 text-red-700' }
+const COVERAGE_MARK: Record<CoverageStatus, { m: string; c: string }> = { searched: { m: '✓', c: 'text-emerald-600' }, empty: { m: '∅', c: 'text-gray-400' }, not_attempted: { m: '⚠', c: 'text-amber-600' } }
+
+// One-line summary of a property/lien/tax/transaction fact for the "verify by source" cards.
+function propertyFactSummary(e: EvidenceItem): string {
+  if (e.kind === 'property') {
+    const v = e.value
+    return [
+      v.owner && `Owner: ${v.owner}`,
+      v.parcelId && `Parcel: ${v.parcelId}`,
+      v.assessedValue != null && `Assessed: $${v.assessedValue.toLocaleString()}`,
+      v.taxStatus && `Tax: ${v.taxStatus}`,
+      v.situsAddress && `Situs: ${v.situsAddress}`,
+    ].filter(Boolean).join(' · ')
+  }
+  if (e.kind === 'lien') {
+    const v = e.value
+    return `Lien: ${v.holder}${v.amount != null ? ` $${v.amount.toLocaleString()}` : ''}${v.instrumentType ? ` (${v.instrumentType})` : ''}`
+  }
+  if (e.kind === 'tax_event') {
+    const v = e.value
+    return `Tax ${v.kind}${v.date ? ` ${v.date}` : ''}${v.surplusStated != null ? ` · surplus $${v.surplusStated.toLocaleString()} (stated)` : ''}`
+  }
+  if (e.kind === 'transaction') {
+    const v = e.value
+    const bp = v.deedBook ? ` · Book ${v.deedBook}${v.deedPage ? ` Pg ${v.deedPage}` : ''}` : ''
+    return `${v.type ?? 'transfer'}${v.date ? ` ${v.date}` : ''}${v.grantor ? ` · grantor ${v.grantor}` : ''}${v.grantee ? ` → ${v.grantee}` : ''}${bp}`
+  }
+  return ''
+}
+
 function evidenceText(e: EvidenceItem): string {
   switch (e.kind) {
     case 'identity': return `Identity: ${e.value.name}${e.value.ageOrDob ? ` (${e.value.ageOrDob})` : ''}`
@@ -171,7 +212,10 @@ function evidenceText(e: EvidenceItem): string {
     case 'relationship': return `Relationship: ${e.value.person} — ${e.value.relationshipAsStated}`
     case 'deceased': return `Deceased: ${e.value.deceasedStatus}${e.value.dateOfDeath ? ` (${e.value.dateOfDeath})` : ''} [${e.value.basis}]`
     case 'property': return `Property: ${e.value.owner}${e.value.parcelId ? ` · parcel ${e.value.parcelId}` : ''}`
-    default: return e.value.text
+    case 'lien': return `Lien: ${e.value.holder}${e.value.amount != null ? ` · $${e.value.amount.toLocaleString()}` : ''}`
+    case 'tax_event': return `Tax ${e.value.kind}${e.value.surplusStated != null ? ` · surplus $${e.value.surplusStated.toLocaleString()}` : ''}`
+    case 'note': return e.value.text
+    default: return ''
   }
 }
 
@@ -190,6 +234,8 @@ function ContactLine({ icon, c }: { icon: string; c: RankedContact }) {
 
 function DossierDetail({ id }: { id: number }) {
   const { data, isLoading } = useSWR<DossierDetailData>(`/api/research/dossier/${id}`, fetcher)
+  const [propBusy, setPropBusy] = useState(false)
+  const [propMsg, setPropMsg] = useState<string | null>(null)
   if (isLoading || !data) return <div className="p-6 text-sm text-gray-400">Loading…</div>
   const { dossier, evidence, cost } = data
   const actionable = dossier.actionableContacts ?? []
@@ -197,7 +243,30 @@ function DossierDetail({ id }: { id: number }) {
   const conflicts = dossier.conflicts ?? []
   const timeline = dossier.timeline ?? []
   const completeness = dossier.completeness
+  const property = dossier.propertyRecord
   const evItems = evidence?.evidence ?? []
+
+  // "Run property search now" — a property-records run on THIS case, seeded from data we already hold
+  // (subject + any known property parcel/address), so we don't re-pay for the people search.
+  const propEv = evItems.find(e => e.kind === 'property')
+  const propAddrEv = evItems.find(e => e.kind === 'address' && e.value.kind === 'property')
+  const propAnchor = {
+    parcelId: propEv?.kind === 'property' ? propEv.value.parcelId : undefined,
+    address: (propEv?.kind === 'property' ? propEv.value.situsAddress : undefined)
+      ?? (propAddrEv?.kind === 'address' ? propAddrEv.value.line1 : undefined),
+  }
+  async function runPropertySearch() {
+    setPropBusy(true); setPropMsg(null)
+    try {
+      const res = await fetch('/api/research', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: dossier.subject.name, goal: 'property_records', caseId: dossier.caseId, ...propAnchor }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error ?? `Error ${res.status}`)
+      setPropMsg(json.skipped ? 'Recent property data already on file' : `Queued property run #${json.requestId}`)
+    } catch (err) { setPropMsg(err instanceof Error ? err.message : 'Failed') } finally { setPropBusy(false) }
+  }
 
   // CRM vs researched tally (evidence provenance).
   const crmCount = evItems.filter(e => e.provenance.isFromCrm).length
@@ -223,8 +292,19 @@ function DossierDetail({ id }: { id: number }) {
           <h2 className="text-lg font-bold text-gray-900">{dossier.subject.name}</h2>
           <span className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase ${BAND[dossier.confidence.band]}`}>{dossier.confidence.band}</span>
           {dossier.subject.deceased === true && <span className="text-xs text-red-600">deceased{dossier.subject.dateOfDeath ? ` ${dossier.subject.dateOfDeath}` : ''}</span>}
-          <span className="ml-auto text-xs text-gray-400">{cost ? `${money(cost.usd)} · ${cost.runSeconds}s` : ''}</span>
+          <div className="ml-auto flex items-center gap-2">
+            {caseTypeWantsProperty(data.caseType) ? (
+              <button onClick={runPropertySearch} disabled={propBusy}
+                className="px-3 py-1.5 bg-emerald-600 text-white text-xs font-medium rounded-lg hover:bg-emerald-700 disabled:opacity-50">
+                {propBusy ? 'Queuing…' : '🏠 Run property search now'}
+              </button>
+            ) : (
+              <span className="text-[10px] text-gray-400">property research n/a for {CASE_TYPE_LABELS[(data.caseType ?? 'unknown') as CaseType] ?? data.caseType}</span>
+            )}
+            <span className="text-xs text-gray-400">{cost ? `${money(cost.usd)} · ${cost.runSeconds}s` : ''}</span>
+          </div>
         </div>
+        {propMsg && <p className="text-[11px] text-emerald-700 mt-1">{propMsg}</p>}
         {cost && <p className="text-[10px] text-gray-400 mt-0.5">{cost.model} · {cost.inTokens.toLocaleString()} in / {cost.outTokens.toLocaleString()} out</p>}
       </div>
 
@@ -245,6 +325,107 @@ function DossierDetail({ id }: { id: number }) {
           </div>
         </Section>
       )}
+
+      {/* 1b. Property record (parcel, owner-of-record, liens, tax/surplus) */}
+      {property && (
+        <Section title="Property record">
+          <div className="border border-gray-200 rounded-lg p-3 space-y-2">
+            {/* Subject ↔ property linkage — how the subject is tied (prior owner is the happy path) */}
+            {property.linkage && (
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${LINKAGE_STYLE[property.linkage.type]}`}>{LINKAGE_LABEL[property.linkage.type]}</span>
+                  {property.linkage.linkedThrough && <span className="text-[11px] text-gray-600">through {property.linkage.linkedThrough.name}{property.linkage.linkedThrough.relationshipAsStated ? ` (${property.linkage.linkedThrough.relationshipAsStated})` : ''}</span>}
+                  {property.linkage.corroboratingSources > 0 && <span className="text-[10px] text-gray-400">{property.linkage.corroboratingSources} source{property.linkage.corroboratingSources > 1 ? 's' : ''}</span>}
+                  {property.linkage.relationshipBasis.map(b => <span key={b} className="text-[9px] text-gray-400 uppercase tracking-wide">{b.replace(/_/g, ' ')}</span>)}
+                </div>
+                {property.linkage.evidence.map((ev, i) => <p key={i} className="text-[11px] text-gray-500">{ev}</p>)}
+              </div>
+            )}
+            <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-xs text-gray-700">
+              {property.ownerOfRecord && <div><span className="text-gray-400">Owner of record:</span> {property.ownerOfRecord}</div>}
+              {property.parcelId && <div><span className="text-gray-400">Parcel:</span> {property.parcelId}</div>}
+              {property.situsAddress && <div className="col-span-2"><span className="text-gray-400">Situs:</span> {property.situsAddress}</div>}
+              {property.assessedValue != null && <div><span className="text-gray-400">Assessed:</span> ${property.assessedValue.toLocaleString()}</div>}
+              {property.taxStatus && <div><span className="text-gray-400">Tax status:</span> {property.taxStatus}</div>}
+            </div>
+            {property.transactions && property.transactions.length > 0 && (
+              <div className="text-xs">
+                <p className="text-gray-400 mb-0.5">Transaction / deed history</p>
+                {property.transactions.map((t, i) => (
+                  <p key={i} className="text-gray-700">• {t.type ?? 'transfer'}{t.date ? ` ${t.date}` : ''}{t.grantor ? ` · ${t.grantor}` : ''}{t.grantee ? ` → ${t.grantee}` : ''}{t.deedBook ? ` · Book ${t.deedBook}${t.deedPage ? ` Pg ${t.deedPage}` : ''}` : ''}</p>
+                ))}
+              </div>
+            )}
+            {property.liens.length > 0 && (
+              <div className="text-xs">
+                <p className="text-gray-400 mb-0.5">Liens{property.lienTotalStated != null ? ` · $${property.lienTotalStated.toLocaleString()} stated total` : ''}</p>
+                {property.liens.map((l, i) => <p key={i} className="text-gray-700">• {l.holder}{l.amount != null ? ` — $${l.amount.toLocaleString()}` : ''}{l.instrumentType ? ` (${l.instrumentType})` : ''}{l.recordedDate ? ` · ${l.recordedDate}` : ''}{l.released ? <span className="ml-1 text-[9px] text-gray-400 uppercase">released</span> : ''}</p>)}
+              </div>
+            )}
+            {property.taxEvents.length > 0 && (
+              <div className="text-xs">
+                <p className="text-gray-400 mb-0.5">Tax events{property.surplusRelevant ? <span className="ml-1 text-emerald-700 font-semibold">surplus-relevant</span> : ''}{property.surplusStated != null ? ` · $${property.surplusStated.toLocaleString()} surplus (stated)` : ''}</p>
+                {property.taxEvents.map((t, i) => <p key={i} className="text-gray-700">• {t.kind}{t.date ? ` ${t.date}` : ''}{t.surplusStated != null ? ` — surplus $${t.surplusStated.toLocaleString()} (stated)` : ''}</p>)}
+              </div>
+            )}
+            {property.documents.length > 0 && (
+              <div className="text-xs flex flex-wrap gap-2">
+                {property.documents.map((d, i) => <a key={i} href={d.sourceUrl} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">📄 {d.kind}</a>)}
+              </div>
+            )}
+            {/* Coverage — how hard we looked (distinct from confidence). Checklist, not a score. */}
+            {property.coverage && (
+              <div className="text-[10px] text-gray-400 flex flex-wrap gap-x-3 gap-y-0.5 pt-1 border-t border-gray-100">
+                <span className="uppercase tracking-wider">Coverage:</span>
+                {property.coverage.items.map(ci => (
+                  <span key={ci.label} className={COVERAGE_MARK[ci.status].c}>{COVERAGE_MARK[ci.status].m} {ci.label}{ci.status === 'not_attempted' ? ' (not searched)' : ci.status === 'empty' ? ' (none found)' : ''}</span>
+                ))}
+                <span>· {property.coverage.transactionsFound} transaction{property.coverage.transactionsFound === 1 ? '' : 's'}</span>
+              </div>
+            )}
+          </div>
+        </Section>
+      )}
+
+      {/* 1c. Verify — property facts grouped by source (value + raw quote + link to confirm) */}
+      {(() => {
+        const propEv = evItems.map((e, i) => ({ e, i })).filter(x => x.e.kind === 'property' || x.e.kind === 'lien' || x.e.kind === 'tax_event' || x.e.kind === 'transaction')
+        if (!propEv.length) return null
+        const bySource = new Map<string, { e: EvidenceItem; i: number }[]>()
+        for (const x of propEv) {
+          const k = x.e.provenance.sourceId || 'unknown'
+          const arr = bySource.get(k) ?? []
+          arr.push(x); bySource.set(k, arr)
+        }
+        return (
+          <Section title="Verify — property sources" n={bySource.size}>
+            <div className="space-y-2">
+              {[...bySource.entries()].map(([sourceId, items]) => {
+                const url = items.find(x => x.e.provenance.url)?.e.provenance.url
+                return (
+                  <div key={sourceId} className="border border-gray-200 rounded-lg p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-semibold text-gray-700">{sourceId}
+                        <span className="ml-1.5 text-[9px] text-gray-400 uppercase">{items[0].e.provenance.sourceType}</span>
+                      </span>
+                      {url && <a href={url} target="_blank" rel="noreferrer" className="text-[11px] text-blue-600 hover:underline shrink-0">Open source ↗</a>}
+                    </div>
+                    <div className="mt-1.5 space-y-1.5">
+                      {items.map(({ e, i }) => (
+                        <div key={i} className="text-xs">
+                          <div className="text-gray-700">{propertyFactSummary(e)}</div>
+                          {e.provenance.sourceText && <div className="text-[10px] text-gray-400 italic">&ldquo;{e.provenance.sourceText}&rdquo;</div>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </Section>
+        )
+      })()}
 
       {/* 2. Actionable Contacts (the top priority) */}
       {actionable.length > 0 ? (

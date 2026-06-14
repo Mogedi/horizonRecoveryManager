@@ -1,0 +1,553 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`deriveDossier — full-output snapshot > matches the locked derivation for the reference fixture 1`] = `
+{
+  "actionableContacts": [
+    {
+      "addresses": [
+        {
+          "contactMethodStatus": undefined,
+          "label": "current",
+          "lastReportedAt": undefined,
+          "rank": "low",
+          "reason": "1 source (fastpeoplesearch)",
+          "sources": [
+            "fastpeoplesearch",
+          ],
+          "strength": "weak",
+          "value": "12 Oak St, Marietta, GA",
+        },
+      ],
+      "confidence": {
+        "band": "high",
+        "checklist": [
+          {
+            "label": "Relationship to owner known",
+            "present": true,
+          },
+          {
+            "label": "Living status confirmed",
+            "present": true,
+          },
+          {
+            "label": "Phone found",
+            "present": true,
+          },
+          {
+            "label": "Mailing address found",
+            "present": true,
+          },
+          {
+            "label": "Corroborated (2+ sources)",
+            "present": true,
+          },
+        ],
+        "explanation": "Strong, corroborated evidence for a single person.",
+        "score": 100,
+      },
+      "emails": [],
+      "localId": "jane",
+      "name": "Jane Burchett",
+      "normalizedName": "jane burchett",
+      "phones": [
+        {
+          "contactMethodStatus": "unverified",
+          "label": undefined,
+          "lastReportedAt": "2024",
+          "rank": "high",
+          "reason": "2 sources (fastpeoplesearch, truepeoplesearch), last reported 2024",
+          "sources": [
+            "fastpeoplesearch",
+            "truepeoplesearch",
+          ],
+          "strength": "weak",
+          "value": "770-555-0101",
+        },
+      ],
+      "relationCategory": "child",
+      "relationshipAsStated": "daughter",
+    },
+    {
+      "addresses": [],
+      "confidence": {
+        "band": "high",
+        "checklist": [
+          {
+            "label": "Relationship to owner known",
+            "present": true,
+          },
+          {
+            "label": "Living status confirmed",
+            "present": true,
+          },
+          {
+            "label": "Phone found",
+            "present": true,
+          },
+          {
+            "label": "Mailing address found",
+            "present": false,
+          },
+          {
+            "label": "Corroborated (2+ sources)",
+            "present": true,
+          },
+        ],
+        "explanation": "Strong, corroborated evidence for a single person.",
+        "score": 80,
+      },
+      "emails": [],
+      "localId": "bob",
+      "name": "Bob Burchett",
+      "normalizedName": "bob burchett",
+      "phones": [
+        {
+          "contactMethodStatus": "unverified",
+          "label": undefined,
+          "lastReportedAt": undefined,
+          "rank": "low",
+          "reason": "1 source (fastpeoplesearch)",
+          "sources": [
+            "fastpeoplesearch",
+          ],
+          "strength": "weak",
+          "value": "404-555-0199",
+        },
+      ],
+      "relationCategory": "child",
+      "relationshipAsStated": "son",
+    },
+  ],
+  "candidatePeople": [
+    {
+      "addresses": [
+        {
+          "city": "Marietta",
+          "kind": "current",
+          "line1": "12 Oak St",
+          "state": "GA",
+        },
+      ],
+      "emails": [],
+      "justification": [
+        {
+          "note": "state: GA",
+          "signal": "state",
+          "sources": [
+            "legacy.com",
+            "fastpeoplesearch",
+            "truepeoplesearch",
+          ],
+          "weight": 6,
+        },
+        {
+          "note": "name weak (0.33)",
+          "signal": "nameWeak",
+          "sources": [
+            "legacy.com",
+            "fastpeoplesearch",
+            "truepeoplesearch",
+          ],
+          "weight": 9,
+        },
+        {
+          "note": "relation: daughter",
+          "signal": "relationship",
+          "sources": [
+            "legacy.com",
+            "fastpeoplesearch",
+            "truepeoplesearch",
+          ],
+          "weight": 21,
+        },
+        {
+          "note": "1 phone(s)",
+          "signal": "phone",
+          "sources": [
+            "legacy.com",
+            "fastpeoplesearch",
+            "truepeoplesearch",
+          ],
+          "weight": 9,
+        },
+      ],
+      "localId": "jane",
+      "name": "Jane Burchett",
+      "phones": [
+        "770-555-0101",
+      ],
+      "relationToSubject": "daughter",
+      "score": 45,
+    },
+    {
+      "addresses": [],
+      "emails": [],
+      "justification": [
+        {
+          "note": "name weak (0.33)",
+          "signal": "nameWeak",
+          "sources": [
+            "legacy.com",
+            "fastpeoplesearch",
+          ],
+          "weight": 8,
+        },
+        {
+          "note": "relation: son",
+          "signal": "relationship",
+          "sources": [
+            "legacy.com",
+            "fastpeoplesearch",
+          ],
+          "weight": 18,
+        },
+        {
+          "note": "1 phone(s)",
+          "signal": "phone",
+          "sources": [
+            "legacy.com",
+            "fastpeoplesearch",
+          ],
+          "weight": 8,
+        },
+      ],
+      "localId": "bob",
+      "name": "Bob Burchett",
+      "phones": [
+        "404-555-0199",
+      ],
+      "relationToSubject": "son",
+      "score": 34,
+    },
+  ],
+  "completeness": {
+    "closeFamilyIdentified": true,
+    "contactsFound": true,
+    "deathConfirmed": true,
+    "propertyConfirmed": true,
+  },
+  "confidence": {
+    "band": "medium",
+    "conflicts": [],
+    "justification": [
+      {
+        "note": "state: GA",
+        "signal": "state",
+        "sources": [
+          "legacy.com",
+          "fastpeoplesearch",
+          "truepeoplesearch",
+        ],
+        "weight": 6,
+      },
+      {
+        "note": "name weak (0.33)",
+        "signal": "nameWeak",
+        "sources": [
+          "legacy.com",
+          "fastpeoplesearch",
+          "truepeoplesearch",
+        ],
+        "weight": 9,
+      },
+      {
+        "note": "relation: daughter",
+        "signal": "relationship",
+        "sources": [
+          "legacy.com",
+          "fastpeoplesearch",
+          "truepeoplesearch",
+        ],
+        "weight": 21,
+      },
+      {
+        "note": "1 phone(s)",
+        "signal": "phone",
+        "sources": [
+          "legacy.com",
+          "fastpeoplesearch",
+          "truepeoplesearch",
+        ],
+        "weight": 9,
+      },
+    ],
+    "score": 45,
+  },
+  "conflicts": [],
+  "contactRankings": [
+    {
+      "emails": [],
+      "person": "Jane Burchett",
+      "phones": [
+        "770-555-0101",
+      ],
+      "rank": 1,
+    },
+    {
+      "emails": [],
+      "person": "Bob Burchett",
+      "phones": [
+        "404-555-0199",
+      ],
+      "rank": 2,
+    },
+  ],
+  "familyStructure": {
+    "members": [
+      {
+        "confidence": {
+          "band": "medium",
+          "checklist": [
+            {
+              "label": "Relationship stated by a source",
+              "present": true,
+            },
+            {
+              "label": "Corroborated by 2+ sources",
+              "present": false,
+            },
+            {
+              "label": "Strong or medium source",
+              "present": true,
+            },
+          ],
+          "explanation": "Some matching evidence — verify before acting.",
+          "score": 67,
+        },
+        "deceasedStatus": "unknown",
+        "isFromCrm": false,
+        "maidenName": undefined,
+        "name": "Jane Burchett",
+        "normalizedName": "jane burchett",
+        "relationCategory": "child",
+        "relationshipAsStated": "daughter",
+      },
+      {
+        "confidence": {
+          "band": "medium",
+          "checklist": [
+            {
+              "label": "Relationship stated by a source",
+              "present": true,
+            },
+            {
+              "label": "Corroborated by 2+ sources",
+              "present": false,
+            },
+            {
+              "label": "Strong or medium source",
+              "present": true,
+            },
+          ],
+          "explanation": "Some matching evidence — verify before acting.",
+          "score": 67,
+        },
+        "deceasedStatus": "unknown",
+        "isFromCrm": false,
+        "maidenName": undefined,
+        "name": "Bob Burchett",
+        "normalizedName": "bob burchett",
+        "relationCategory": "child",
+        "relationshipAsStated": "son",
+      },
+      {
+        "confidence": {
+          "band": "medium",
+          "checklist": [
+            {
+              "label": "Relationship stated by a source",
+              "present": true,
+            },
+            {
+              "label": "Corroborated by 2+ sources",
+              "present": false,
+            },
+            {
+              "label": "Strong or medium source",
+              "present": true,
+            },
+          ],
+          "explanation": "Some matching evidence — verify before acting.",
+          "score": 67,
+        },
+        "deceasedStatus": "deceased",
+        "isFromCrm": false,
+        "maidenName": undefined,
+        "name": "Earl Burchett",
+        "normalizedName": "earl burchett",
+        "relationCategory": "parent",
+        "relationshipAsStated": "father (preceded in death)",
+      },
+      {
+        "confidence": {
+          "band": "medium",
+          "checklist": [
+            {
+              "label": "Relationship stated by a source",
+              "present": true,
+            },
+            {
+              "label": "Corroborated by 2+ sources",
+              "present": false,
+            },
+            {
+              "label": "Strong or medium source",
+              "present": true,
+            },
+          ],
+          "explanation": "Some matching evidence — verify before acting.",
+          "score": 67,
+        },
+        "deceasedStatus": "unknown",
+        "isFromCrm": true,
+        "maidenName": undefined,
+        "name": "Carl Burchett",
+        "normalizedName": "carl burchett",
+        "relationCategory": "sibling",
+        "relationshipAsStated": "brother",
+      },
+    ],
+  },
+  "generatedAt": "<normalized>",
+  "heirGraph": {
+    "edges": [
+      {
+        "from": "subject",
+        "relation": "daughter",
+        "to": "jane",
+      },
+      {
+        "from": "subject",
+        "relation": "son",
+        "to": "bob",
+      },
+    ],
+    "nodes": [
+      {
+        "deceased": true,
+        "id": "subject",
+        "name": "Tammy L Burchett",
+      },
+      {
+        "id": "jane",
+        "name": "Jane Burchett",
+        "relationToSubject": "daughter",
+      },
+      {
+        "id": "bob",
+        "name": "Bob Burchett",
+        "relationToSubject": "son",
+      },
+    ],
+    "subject": "Tammy L Burchett",
+  },
+  "propertyRecord": {
+    "assessedValue": undefined,
+    "coverage": {
+      "items": [
+        {
+          "label": "Property / assessor",
+          "status": "searched",
+        },
+        {
+          "label": "Deed / court / tax (gov)",
+          "status": "empty",
+        },
+        {
+          "label": "Probate",
+          "status": "not_attempted",
+        },
+      ],
+      "transactionsFound": 0,
+    },
+    "documents": [],
+    "lienTotalStated": undefined,
+    "liens": [],
+    "linkage": {
+      "alternatives": [],
+      "band": "medium",
+      "corroboratingSources": 1,
+      "evidence": [
+        "Owner of record matches the subject: Tammy L Burchett",
+      ],
+      "linkedThrough": undefined,
+      "relationshipBasis": [
+        "tax_record",
+      ],
+      "type": "current_owner",
+    },
+    "ownerMatchesSubject": true,
+    "ownerOfRecord": "Tammy L Burchett",
+    "parcelId": "123",
+    "situsAddress": "235 Whipporwill Ln SE",
+    "surplusRelevant": false,
+    "surplusStated": undefined,
+    "taxEvents": [],
+    "taxStatus": undefined,
+    "transactions": [],
+  },
+  "reviewStatus": "pending",
+  "sourceIntel": [
+    {
+      "attempts": 0,
+      "items": 1,
+      "sourceType": "property",
+      "sources": [
+        "qpublic:gordon",
+      ],
+    },
+    {
+      "attempts": 0,
+      "items": 4,
+      "sourceType": "obituary",
+      "sources": [
+        "legacy.com",
+      ],
+    },
+    {
+      "attempts": 0,
+      "items": 6,
+      "sourceType": "people_search",
+      "sources": [
+        "fastpeoplesearch",
+        "truepeoplesearch",
+      ],
+    },
+    {
+      "attempts": 0,
+      "items": 1,
+      "sourceType": "crm",
+      "sources": [
+        "crm",
+      ],
+    },
+    {
+      "attempts": 1,
+      "items": 0,
+      "sourceType": "government",
+      "sources": [],
+    },
+  ],
+  "subject": {
+    "dateOfDeath": "2021-03-15",
+    "deceased": true,
+    "name": "Tammy L Burchett",
+  },
+  "timeline": [
+    {
+      "intent": "confirm property + owner",
+      "n": 1,
+      "reason": "anchor the case to the parcel",
+      "source": "qpublic:gordon",
+      "status": "done",
+    },
+    {
+      "intent": "people-search for Jane",
+      "n": 2,
+      "reason": "'survived by daughter Jane' — find current contact",
+      "source": undefined,
+      "status": "failed",
+    },
+  ],
+}
+`;

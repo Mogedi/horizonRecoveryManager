@@ -6,7 +6,9 @@ import type {
   ContactRanking, Confidence, PersonQuery, CandidatePerson,
   EvidenceStrength, SourceType, RankedContact, ContactRank, RelationCategory, DeceasedStatus,
   ContactMethodStatus, ActionableContact, FamilyStructure, FamilyMember, Conflict, Completeness,
-  TimelineStep, SourceIntelEntry, ChecklistItem,
+  TimelineStep, SourceIntelEntry, ChecklistItem, PropertyRecord, PropertyLien, PropertyTaxEvent,
+  PropertyTransaction, PropertyLinkage, PropertyCoverage, CoverageItem, CoverageStatus, LinkageType,
+  RelationshipBasis, Band, EvidenceItem,
 } from './types'
 import { deriveBand, buildChecklist } from './confidence'
 
@@ -22,6 +24,13 @@ type Justification = ScoredCandidate['justification']
 export function normalize(s?: string | null): string {
   return (s ?? '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim()
 }
+// Order-insensitive identity key: county records list owners "LAST FIRST MIDDLE" while our queries are
+// "First Middle Last", so a plain string compare misses the match. Sort the multi-char tokens (dropping
+// single-letter initials) so "BURCHETT TAMMY L" and "Tammy L Burchett" both → "burchett tammy".
+export function nameKey(s?: string | null): string {
+  return normalize(s).split(' ').filter(t => t.length > 1).sort().join(' ')
+}
+const sameName = (a?: string | null, b?: string | null): boolean => { const k = nameKey(a); return !!k && k === nameKey(b) }
 export function nameSimilarity(a?: string | null, b?: string | null): number {
   const ta = new Set(normalize(a).split(' ').filter(Boolean))
   const tb = new Set(normalize(b).split(' ').filter(Boolean))
@@ -335,6 +344,130 @@ function buildSourceIntel(pkg: EvidencePackage): SourceIntelEntry[] {
   return [...byType.entries()].map(([sourceType, a]) => ({ sourceType, items: a.items, sources: [...a.sources], attempts: a.attempts }))
 }
 
+// ── V1 Property record — derived from property/lien/tax_event/transaction evidence. Linkage, totals,
+// surplus relevance, coverage are DERIVED here; stated dollar figures stay labeled "stated". ─────────
+
+// Research coverage ("how hard did we look?") — DERIVED from telemetry + evidence. Searched-but-empty is
+// distinguished from never-attempted. A checklist, never a score.
+function buildPropertyCoverage(pkg: EvidencePackage, transactionsFound: number): PropertyCoverage {
+  const RELEVANT: { label: string; type: SourceType }[] = [
+    { label: 'Property / assessor', type: 'property' },
+    { label: 'Deed / court / tax (gov)', type: 'government' },
+    { label: 'Probate', type: 'probate' },
+  ]
+  const items: CoverageItem[] = RELEVANT.map(({ label, type }) => {
+    const atts = (pkg.telemetry ?? []).filter(a => a.sourceType === type)
+    const hasEvidence = pkg.evidence.some(e => e.provenance.sourceType === type)
+    let status: CoverageStatus = 'not_attempted'
+    if (hasEvidence || atts.some(a => a.status === 'success')) status = 'searched'
+    else if (atts.length) status = 'empty'
+    return { label, status }
+  })
+  return { items, transactionsFound }
+}
+
+// Subject ↔ property linkage. The subject is OFTEN a prior owner (not the current one), so we answer "how
+// are they tied" — current owner / prior owner (deed chain) / related party (heir/spouse of owner) /
+// possible (right property, tie unproven) / unlinked (what we found doesn't match the search). No %.
+function buildLinkage(
+  pkg: EvidencePackage,
+  owner: string | undefined,
+  transactions: PropertyTransaction[],
+  propItems: { e: EvidenceItem; i: number }[],
+): PropertyLinkage | null {
+  if (!propItems.length) return null
+
+  // Relatives of the subject (from relationship evidence), keyed order-insensitively (nameKey).
+  const relatives = new Map<string, { rel: string; sourceType: SourceType }>()
+  for (const e of pkg.evidence) if (e.kind === 'relationship' && e.value.person) relatives.set(nameKey(e.value.person), { rel: e.value.relationshipAsStated, sourceType: e.provenance.sourceType })
+
+  const propSources = new Set<string>()
+  for (const x of propItems) propSources.add(x.e.provenance.sourceId)
+  for (const t of transactions) { const ev = pkg.evidence[t.evidenceId]; if (ev) propSources.add(ev.provenance.sourceId) }
+
+  // Does the property we found match what was searched? (parcel exact, or address shares the street #.)
+  const q = pkg.query
+  const qParcel = (q.parcelId ?? '').trim()
+  const qAddrToken = normalize(q.address).split(' ').filter(Boolean)[0] // street number, best-effort
+  const matchesQuery = propItems.some(x => x.e.kind === 'property' && (
+    (!!qParcel && x.e.value.parcelId === qParcel) ||
+    (!!qAddrToken && !!x.e.value.situsAddress && normalize(x.e.value.situsAddress).includes(qAddrToken))
+  ))
+
+  const subjName = pkg.query.name
+  const subjInTxn = transactions.find(t => sameName(t.grantor, subjName) || sameName(t.grantee, subjName))
+  const ownerRel = owner ? relatives.get(nameKey(owner)) : undefined
+  const basis = new Set<RelationshipBasis>()
+  const evidence: string[] = []
+  let type: LinkageType
+  let linkedThrough: { name: string; relationshipAsStated?: string } | undefined
+
+  if (owner && sameName(owner, subjName)) {
+    type = 'current_owner'; basis.add('tax_record')
+    evidence.push(`Owner of record matches the subject: ${owner}`)
+  } else if (subjInTxn) {
+    type = 'prior_owner'; basis.add('deed_history')
+    const bp = subjInTxn.deedBook ? ` (Book ${subjInTxn.deedBook}${subjInTxn.deedPage ? ` Pg ${subjInTxn.deedPage}` : ''})` : ''
+    evidence.push(`Subject in the deed chain${bp}${subjInTxn.date ? `, ${subjInTxn.date}` : ''}`)
+  } else if (ownerRel) {
+    const r = ownerRel
+    type = 'related_party'; linkedThrough = { name: owner!, relationshipAsStated: r.rel }
+    basis.add(r.sourceType === 'probate' ? 'probate_record' : r.sourceType === 'government' ? 'court_record' : 'manual_inference')
+    evidence.push(`Tied through ${owner} (${r.rel}), the owner of record`)
+  } else if (matchesQuery) {
+    type = 'possible'; evidence.push('Property matches the searched address/parcel, but the subject is not yet tied to it')
+  } else {
+    type = 'unlinked'; evidence.push('Property found does not match the search and the subject is not tied to it — verify')
+  }
+
+  const n = propSources.size
+  const band: Band = type === 'unlinked' || type === 'possible' ? 'low' : n >= 2 ? 'high' : 'medium'
+  return { type, linkedThrough, relationshipBasis: [...basis], evidence, corroboratingSources: n, band, alternatives: [] }
+}
+
+function buildPropertyRecord(pkg: EvidencePackage, knownNames: Set<string>): PropertyRecord | null {
+  const idx = pkg.evidence.map((e, i) => ({ e, i }))
+  const propItems = idx.filter(x => x.e.kind === 'property')
+  const lienItems = idx.filter(x => x.e.kind === 'lien')
+  const taxItems = idx.filter(x => x.e.kind === 'tax_event')
+  const txnItems = idx.filter(x => x.e.kind === 'transaction')
+  if (!propItems.length && !lienItems.length && !taxItems.length && !txnItems.length) return null
+
+  const prop = propItems[0]?.e
+  const p = prop?.kind === 'property' ? prop.value : undefined
+  const owner = p?.owner
+  const normOwner = p ? (p.normalizedOwner ?? normalize(owner)) : undefined
+  // null when no owner captured; otherwise true iff the record owner matches the subject or a known heir.
+  const ownerMatchesSubject = !owner ? null : normOwner ? knownNames.has(normOwner) : false
+
+  const transactions: PropertyTransaction[] = txnItems.flatMap(x => x.e.kind === 'transaction'
+    ? [{ date: x.e.value.date, type: x.e.value.type, grantor: x.e.value.grantor, grantee: x.e.value.grantee, price: x.e.value.price, deedBook: x.e.value.deedBook, deedPage: x.e.value.deedPage, evidenceId: x.i }] : [])
+
+  const liens: PropertyLien[] = lienItems.flatMap(x => x.e.kind === 'lien'
+    ? [{ holder: x.e.value.holder, amount: x.e.value.amount, recordedDate: x.e.value.recordedDate, instrumentType: x.e.value.instrumentType, released: x.e.value.released, evidenceId: x.i }] : [])
+  const lienAmounts = liens.map(l => l.amount).filter((a): a is number => typeof a === 'number')
+  const lienTotalStated = lienAmounts.length ? lienAmounts.reduce((s, a) => s + a, 0) : undefined
+
+  const taxEvents: PropertyTaxEvent[] = taxItems.flatMap(x => x.e.kind === 'tax_event'
+    ? [{ kind: x.e.value.kind, date: x.e.value.date, amount: x.e.value.amount, surplusStated: x.e.value.surplusStated, evidenceId: x.i }] : [])
+  const surplusRelevant = taxEvents.some(t => t.kind === 'tax_sale' || t.kind === 'tax_deed')
+  const surplusVals = taxEvents.map(t => t.surplusStated).filter((a): a is number => typeof a === 'number')
+  const surplusStated = surplusVals.length ? Math.max(...surplusVals) : undefined
+
+  const refDocIds = new Set<number>()
+  for (const { e } of [...propItems, ...lienItems, ...taxItems, ...txnItems]) if (typeof e.provenance.documentId === 'number') refDocIds.add(e.provenance.documentId)
+  const documents = (pkg.documents ?? []).filter(d => refDocIds.has(d.documentId)).map(d => ({ kind: d.kind, sourceUrl: d.sourceUrl }))
+
+  return {
+    parcelId: p?.parcelId, situsAddress: p?.situsAddress, ownerOfRecord: owner,
+    assessedValue: p?.assessedValue, taxStatus: p?.taxStatus, ownerMatchesSubject,
+    linkage: buildLinkage(pkg, owner, transactions, propItems),
+    transactions,
+    coverage: buildPropertyCoverage(pkg, transactions.length),
+    liens, lienTotalStated, taxEvents, surplusRelevant, surplusStated, documents,
+  }
+}
+
 export function deriveDossier(pkg: EvidencePackage): Dossier {
   const q = pkg.query
   // Subject alive/deceased from deceased-evidence (any confirmed death wins).
@@ -369,9 +502,22 @@ export function deriveDossier(pkg: EvidencePackage): Dossier {
   const timeline = buildTimeline(pkg)
   const sourceIntel = buildSourceIntel(pkg)
 
-  // Confidence from the top candidate; conflicts = a different-identity candidate that also scores.
+  // V1 property record. The subject being a PRIOR owner / related party is EXPECTED — not a conflict.
+  // We only flag when the property is 'unlinked' (what we found doesn't match the search / no tie).
+  const knownNames = new Set<string>([normalize(q.name), ...aggs.map(a => a.normalizedName)])
+  const propertyRecord = buildPropertyRecord(pkg, knownNames)
+  if (propertyRecord?.linkage?.type === 'unlinked') {
+    const propIdx = pkg.evidence.findIndex(e => e.kind === 'property')
+    conflicts.push({ type: 'ownership', description: `property could not be linked to "${q.name}" — found owner "${propertyRecord.ownerOfRecord ?? 'unknown'}"`, evidenceIds: propIdx >= 0 ? [propIdx] : [] })
+  }
+
+  // Confidence from the top candidate; the "rival" = a different-identity candidate that also scores —
+  // an IDENTITY-disambiguation signal (which of these is the ONE person we want?). It only makes sense
+  // when the goal targets a single subject. For find_heirs (and property_records), multiple distinct
+  // people are the EXPECTED output (the heirs), not a conflict — so skip the rival there.
   const top = scored[0]
-  const rival = scored.find(c => top && c.localId !== top.localId && nameSimilarity(top.name, c.name) < 0.6 && c.score > 0)
+  const singleSubjectGoal = q.goal !== 'find_heirs' && q.goal !== 'property_records'
+  const rival = singleSubjectGoal ? scored.find(c => top && c.localId !== top.localId && nameSimilarity(top.name, c.name) < 0.6 && c.score > 0) : undefined
   const conflictScore = rival?.score ?? 0
   const distinctSources = top ? new Set(pkg.candidates.find(c => c.localId === top.localId)?.evidenceRefs.map(r => pkg.evidence[r]?.provenance.sourceId).filter(Boolean)).size : 0
   const confidence: Confidence = {
@@ -394,6 +540,7 @@ export function deriveDossier(pkg: EvidencePackage): Dossier {
     conflicts,
     timeline,
     sourceIntel,
+    propertyRecord,
     reviewStatus: 'pending',
     generatedAt: new Date().toISOString(),
   }

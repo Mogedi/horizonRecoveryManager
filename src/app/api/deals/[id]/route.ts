@@ -40,6 +40,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       county: deal.county,
       parcelId: deal.parcelId,
       taxSaleDate: deal.taxSaleDate,
+      caseType: deal.caseType,
       contactCount: deal.contactCount,
       lastActivityDate: deal.lastActivityDate,
       stageEnteredAt: deal.stageEnteredAt,

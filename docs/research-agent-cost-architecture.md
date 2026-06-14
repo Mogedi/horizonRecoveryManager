@@ -75,6 +75,25 @@ You logged in via Browser Use, so the session/profile should now pass the login 
    have Google Drive integration + doc classification to build on.
 4. Tighten the source list (drop LoopNet-type junk); prefer deep-linkable canonical URLs.
 
+## 6b. Locked decisions (2026-06-15, after ChatGPT cross-check)
+
+Architecture stays — these are the cost-engineering rules going forward:
+1. **Hermes is API-only.** No Claude Pro/Max or ChatGPT/Codex subscription for production runs — the
+   April 4 2026 third-party-OAuth block + June 15 separate-credit-then-normal-rates change killed the
+   subscription-agent model. Pay-per-token API is the path.
+2. **Route by difficulty.** Cheap model for extraction / classification / normalization / parsing;
+   strong model only for probate reasoning, heir analysis, conflict resolution, final dossier.
+3. **Model selection is config-driven** — `cheap_model` / `reasoning_model` / `premium_model`, never
+   hardcoded (so we can swap providers/tiers without code changes).
+4. **Aggressive routing** — target **~90–95% of calls on the cheap model**; escalate only hard cases.
+5. **Cost tracking by category** — LLM, Browser Use, Firecrawl, PropertyRadar, GSCCCA, phone validation,
+   other enrichment. Browser + data-source cost may exceed model cost over time; measure all of it.
+6. **Caching/replay BEFORE model optimization** — cached county routes, person prior-evidence, extracted
+   records, and document summaries save more than any model swap. This is the 10× lever; do it first.
+
+**Engineering priority order:** caching/replay → routing → cost-by-category tracking → browser-cost
+reduction. Model swaps are last and low-impact.
+
 ## 7. The honest bottom line
 The current agentic flow **works and is cheap (<$1/run).** It's **slow and occasionally blocked.** Don't
 throw it out — **wrap it**: APIs first, agent to learn-then-cache, humans for the gov-PDF tail. That's how

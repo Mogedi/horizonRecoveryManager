@@ -36,7 +36,17 @@ Record the plan steps; you'll mark each done/failed/replanned. **Put a `reason` 
 you ran that search (e.g. `"searched Norman Taylor: 'survived by several cousins' + maternal Meeks
 branch"`). These breadcrumbs become the research timeline Mo reviews.
 
-## 3. Execute — GIS-API-first, and remember **search ≠ scrape**
+## 3. Execute — CACHE FIRST, then GIS-API-first, and remember **search ≠ scrape**
+
+**Cache-first protocol (do this BEFORE any paid search — it's the #1 cost lever):**
+1. **County route:** call `get_county_sources(state, county)` first. If a working method exists, use its
+   `entryUrl` + `searchHint` directly — do NOT re-discover the site. Only search blind on a cache miss.
+2. **Person:** before any paid Browser Use / people-search, call `get_prior_evidence(name)`. If recent
+   data exists, reuse it and skip the paid search.
+3. **Record after success:** the moment a county method works, call `upsert_county_source` so the next
+   run replays it for free. Treat recording the route as part of the task, not optional.
+Cheap/cached paths first; paid browser/search only when the cache misses.
+
 **search** finds the source; **scrape** extracts the evidence. Two separate steps.
 
 a. **Property / owner.** Call `get_county_sources(state, county)`. If a method exists, use its

@@ -54,10 +54,12 @@ function fireRun() {
   active++
   const t0 = Date.now()
   // Raw run output → a per-run host log (deep debug; the user-facing live view is report_progress).
+  // PYTHONUNBUFFERED=1 makes the Python agent flush per line, so the log is live-`tail -f`-able during
+  // the run (ephemeral monitoring; a cron deletes these after 12h — no DB footprint).
   const logFile = `${LOG_DIR}/run-${t0}.log`
   const out = createWriteStream(logFile, { flags: 'a' })
   log(`firing research run (active=${active}, log=${logFile})`)
-  const child = spawn('docker', ['exec', container, HERMES, '-z', DRAIN_PROMPT], { stdio: ['ignore', 'pipe', 'pipe'] })
+  const child = spawn('docker', ['exec', '-e', 'PYTHONUNBUFFERED=1', container, HERMES, '-z', DRAIN_PROMPT], { stdio: ['ignore', 'pipe', 'pipe'] })
   child.stdout.pipe(out); child.stderr.pipe(out)
   child.on('exit', (code) => { active--; out.end(); log(`run done (code=${code}, ${Math.round((Date.now() - t0) / 1000)}s, active=${active})`); tick() })
   child.on('error', (e) => { active--; log('spawn error:', e.message) })

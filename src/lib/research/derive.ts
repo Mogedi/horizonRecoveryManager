@@ -24,6 +24,13 @@ type Justification = ScoredCandidate['justification']
 export function normalize(s?: string | null): string {
   return (s ?? '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim()
 }
+// Order-insensitive identity key: county records list owners "LAST FIRST MIDDLE" while our queries are
+// "First Middle Last", so a plain string compare misses the match. Sort the multi-char tokens (dropping
+// single-letter initials) so "BURCHETT TAMMY L" and "Tammy L Burchett" both → "burchett tammy".
+export function nameKey(s?: string | null): string {
+  return normalize(s).split(' ').filter(t => t.length > 1).sort().join(' ')
+}
+const sameName = (a?: string | null, b?: string | null): boolean => { const k = nameKey(a); return !!k && k === nameKey(b) }
 export function nameSimilarity(a?: string | null, b?: string | null): number {
   const ta = new Set(normalize(a).split(' ').filter(Boolean))
   const tb = new Set(normalize(b).split(' ').filter(Boolean))
@@ -364,17 +371,15 @@ function buildPropertyCoverage(pkg: EvidencePackage, transactionsFound: number):
 // possible (right property, tie unproven) / unlinked (what we found doesn't match the search). No %.
 function buildLinkage(
   pkg: EvidencePackage,
-  subjectNorm: string,
   owner: string | undefined,
-  normOwner: string | undefined,
   transactions: PropertyTransaction[],
   propItems: { e: EvidenceItem; i: number }[],
 ): PropertyLinkage | null {
   if (!propItems.length) return null
 
-  // Relatives of the subject (from relationship evidence): normalizedName → relationship + source kind.
+  // Relatives of the subject (from relationship evidence), keyed order-insensitively (nameKey).
   const relatives = new Map<string, { rel: string; sourceType: SourceType }>()
-  for (const e of pkg.evidence) if (e.kind === 'relationship' && e.value.normalizedName) relatives.set(e.value.normalizedName, { rel: e.value.relationshipAsStated, sourceType: e.provenance.sourceType })
+  for (const e of pkg.evidence) if (e.kind === 'relationship' && e.value.person) relatives.set(nameKey(e.value.person), { rel: e.value.relationshipAsStated, sourceType: e.provenance.sourceType })
 
   const propSources = new Set<string>()
   for (const x of propItems) propSources.add(x.e.provenance.sourceId)
@@ -389,21 +394,23 @@ function buildLinkage(
     (!!qAddrToken && !!x.e.value.situsAddress && normalize(x.e.value.situsAddress).includes(qAddrToken))
   ))
 
-  const subjInTxn = transactions.find(t => normalize(t.grantor) === subjectNorm || normalize(t.grantee) === subjectNorm)
+  const subjName = pkg.query.name
+  const subjInTxn = transactions.find(t => sameName(t.grantor, subjName) || sameName(t.grantee, subjName))
+  const ownerRel = owner ? relatives.get(nameKey(owner)) : undefined
   const basis = new Set<RelationshipBasis>()
   const evidence: string[] = []
   let type: LinkageType
   let linkedThrough: { name: string; relationshipAsStated?: string } | undefined
 
-  if (normOwner && normOwner === subjectNorm) {
+  if (owner && sameName(owner, subjName)) {
     type = 'current_owner'; basis.add('tax_record')
     evidence.push(`Owner of record matches the subject: ${owner}`)
   } else if (subjInTxn) {
     type = 'prior_owner'; basis.add('deed_history')
     const bp = subjInTxn.deedBook ? ` (Book ${subjInTxn.deedBook}${subjInTxn.deedPage ? ` Pg ${subjInTxn.deedPage}` : ''})` : ''
     evidence.push(`Subject in the deed chain${bp}${subjInTxn.date ? `, ${subjInTxn.date}` : ''}`)
-  } else if (normOwner && relatives.has(normOwner)) {
-    const r = relatives.get(normOwner)!
+  } else if (ownerRel) {
+    const r = ownerRel
     type = 'related_party'; linkedThrough = { name: owner!, relationshipAsStated: r.rel }
     basis.add(r.sourceType === 'probate' ? 'probate_record' : r.sourceType === 'government' ? 'court_record' : 'manual_inference')
     evidence.push(`Tied through ${owner} (${r.rel}), the owner of record`)
@@ -454,7 +461,7 @@ function buildPropertyRecord(pkg: EvidencePackage, knownNames: Set<string>): Pro
   return {
     parcelId: p?.parcelId, situsAddress: p?.situsAddress, ownerOfRecord: owner,
     assessedValue: p?.assessedValue, taxStatus: p?.taxStatus, ownerMatchesSubject,
-    linkage: buildLinkage(pkg, normalize(pkg.query.name), owner, normOwner, transactions, propItems),
+    linkage: buildLinkage(pkg, owner, transactions, propItems),
     transactions,
     coverage: buildPropertyCoverage(pkg, transactions.length),
     liens, lienTotalStated, taxEvents, surplusRelevant, surplusStated, documents,

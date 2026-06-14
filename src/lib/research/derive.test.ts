@@ -153,6 +153,14 @@ describe('deriveDossier — property record & linkage (V1)', () => {
     expect(d.propertyRecord!.transactions).toHaveLength(1)
   })
 
+  it('prior_owner matched despite LAST-FIRST county name order (BURCHETT TAMMY L vs Tammy L Burchett)', () => {
+    // Regression: county deeds list owners "LAST FIRST MIDDLE"; our query is "First Middle Last".
+    const txn: EvidenceItem = { kind: 'transaction', value: { type: 'deed', date: '2007', grantor: 'Childers Paul C', grantee: 'SUMPTER CECIL', deedBook: '1438', deedPage: '258' }, provenance: prov('gsccca.org', 'government') }
+    const d = deriveDossier(base('DEED CO LLC', 'deed co llc', [txn]))
+    expect(d.propertyRecord!.linkage!.type).toBe('prior_owner')
+    expect(d.propertyRecord!.linkage!.relationshipBasis).toContain('deed_history')
+  })
+
   it('owner is a relative of the subject → related_party with linkedThrough', () => {
     const rel: EvidenceItem = { kind: 'relationship', value: { person: 'John Sumpter', normalizedName: 'john sumpter', relationshipAsStated: 'father', relationCategory: 'parent' }, provenance: prov('legacy.com', 'obituary') }
     const d = deriveDossier(base('John Sumpter', 'john sumpter', [rel]))

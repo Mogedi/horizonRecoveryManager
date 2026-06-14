@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { deriveDossier, nameSimilarity, strengthOf } from './derive'
-import type { EvidencePackage, Provenance, SourceType } from './types'
+import type { EvidencePackage, EvidenceItem, Provenance, SourceType } from './types'
 
 const prov = (sourceId: string, sourceType: SourceType = 'other'): Provenance =>
   ({ sourceId, sourceType, url: `https://${sourceId}/x`, retrievedAt: '2026-06-13T00:00:00Z', sourceText: `evidence from ${sourceId}` })
@@ -18,7 +18,7 @@ const fixture: EvidencePackage = {
     { localId: 'bob', name: 'Bob Burchett', evidenceRefs: [3, 7, 8] },
   ],
   evidence: [
-    { kind: 'property', value: { owner: 'Tammy L Burchett', situsAddress: '235 Whipporwill Ln SE', parcelId: '123' }, provenance: prov('qpublic:gordon', 'property') },
+    { kind: 'property', value: { owner: 'Tammy L Burchett', normalizedOwner: 'tammy l burchett', situsAddress: '235 Whipporwill Ln SE', parcelId: '123' }, provenance: prov('qpublic:gordon', 'property') },
     { kind: 'deceased', value: { deceasedStatus: 'deceased', dateOfDeath: '2021-03-15', basis: 'obituary' }, provenance: prov('legacy.com', 'obituary') },
     { kind: 'relationship', value: { person: 'Jane Burchett', normalizedName: 'jane burchett', relationshipAsStated: 'daughter', relationCategory: 'child' }, provenance: prov('legacy.com', 'obituary') },
     { kind: 'relationship', value: { person: 'Bob Burchett', normalizedName: 'bob burchett', relationshipAsStated: 'son', relationCategory: 'child' }, provenance: prov('legacy.com', 'obituary') },
@@ -87,6 +87,88 @@ describe('empty evidence', () => {
     expect(d.confidence.band).toBe('low')
     expect(d.subject.deceased).toBeNull()
     expect(d.heirGraph.nodes).toHaveLength(1)
+  })
+})
+
+// Snapshot guard: deriveDossier is a pure evidence→dossier function, so its FULL output can be locked.
+// Any change to derivation logic surfaces as a reviewable diff here (intended → update the snapshot;
+// unintended → you caught a regression). generatedAt is normalized out (it's the only non-deterministic
+// field). Cheap, zero new deps, high coverage of the "business brain".
+describe('deriveDossier — full-output snapshot', () => {
+  it('matches the locked derivation for the reference fixture', () => {
+    const d = deriveDossier(fixture)
+    expect({ ...d, generatedAt: '<normalized>' }).toMatchSnapshot()
+  })
+})
+
+// P-B: property record derivation (the property_records goal output).
+describe('deriveDossier — property record & linkage (V1)', () => {
+  const base = (owner: string, normalizedOwner: string, extra: EvidenceItem[] = [], situs = '301 Lowell St'): EvidencePackage => ({
+    requestId: 2,
+    query: { name: 'Cecil Sumpter', address: '301 Lowell St', state: 'GA', goal: 'property_records' },
+    plan: { goal: 'property_records', steps: [] },
+    candidates: [{ localId: 'subj', name: 'Cecil Sumpter', evidenceRefs: [0] }],
+    evidence: [
+      { kind: 'property', value: { owner, normalizedOwner, parcelId: '14F0071', situsAddress: situs, assessedValue: 120000, taxStatus: 'delinquent' }, provenance: prov('gismaps.fultoncountyga.gov', 'property') },
+      { kind: 'lien', value: { holder: 'Fulton County Tax', amount: 8500, instrumentType: 'tax lien', released: false }, provenance: prov('gsccca.org', 'government') },
+      { kind: 'lien', value: { holder: 'ABC Mortgage', amount: 60000, instrumentType: 'mortgage' }, provenance: prov('gsccca.org', 'government') },
+      { kind: 'tax_event', value: { kind: 'tax_sale', date: '2023-05', surplusStated: 45000 }, provenance: prov('fultoncountytaxes.org', 'government') },
+      ...extra,
+    ],
+    documents: [], telemetry: [], notes: [], budget: { stepsUsed: 3, sourcesHit: 2, capHit: false },
+    completedAt: '2026-06-14T00:00:00Z',
+  })
+
+  it('builds the record: parcel, stated lien total, surplus-relevant + stated surplus', () => {
+    const p = deriveDossier(base('Cecil Sumpter', 'cecil sumpter')).propertyRecord!
+    expect(p).toMatchObject({ parcelId: '14F0071', assessedValue: 120000, taxStatus: 'delinquent' })
+    expect(p.lienTotalStated).toBe(68500)
+    expect(p.surplusRelevant).toBe(true)
+    expect(p.surplusStated).toBe(45000)
+  })
+
+  it('owner == subject → linkage current_owner, no conflict', () => {
+    const d = deriveDossier(base('Cecil Sumpter', 'cecil sumpter'))
+    expect(d.propertyRecord!.linkage!.type).toBe('current_owner')
+    expect(d.conflicts.some(c => c.type === 'ownership')).toBe(false)
+  })
+
+  it('stranger owner but property matches the search → possible (NOT a conflict — prior owner is the norm)', () => {
+    const d = deriveDossier(base('Shoffner Zemia', 'shoffner zemia'))
+    expect(d.propertyRecord!.linkage!.type).toBe('possible')
+    expect(d.conflicts.some(c => c.type === 'ownership')).toBe(false)
+  })
+
+  it('subject in the deed chain as grantor → prior_owner (deed_history basis)', () => {
+    const txn: EvidenceItem = { kind: 'transaction', value: { type: 'tax_sale', date: '2023-05', grantor: 'Cecil Sumpter', grantee: 'Shoffner Zemia', deedBook: '123', deedPage: '45' }, provenance: prov('gsccca.org', 'government') }
+    const d = deriveDossier(base('Shoffner Zemia', 'shoffner zemia', [txn]))
+    expect(d.propertyRecord!.linkage!.type).toBe('prior_owner')
+    expect(d.propertyRecord!.linkage!.relationshipBasis).toContain('deed_history')
+    expect(d.propertyRecord!.transactions).toHaveLength(1)
+  })
+
+  it('owner is a relative of the subject → related_party with linkedThrough', () => {
+    const rel: EvidenceItem = { kind: 'relationship', value: { person: 'John Sumpter', normalizedName: 'john sumpter', relationshipAsStated: 'father', relationCategory: 'parent' }, provenance: prov('legacy.com', 'obituary') }
+    const d = deriveDossier(base('John Sumpter', 'john sumpter', [rel]))
+    expect(d.propertyRecord!.linkage!.type).toBe('related_party')
+    expect(d.propertyRecord!.linkage!.linkedThrough).toMatchObject({ name: 'John Sumpter', relationshipAsStated: 'father' })
+  })
+
+  it('property does NOT match the search + no tie → unlinked + ownership conflict + conflicting band', () => {
+    const d = deriveDossier(base('Shoffner Zemia', 'shoffner zemia', [], '999 Different Rd'))
+    expect(d.propertyRecord!.linkage!.type).toBe('unlinked')
+    expect(d.conflicts.some(c => c.type === 'ownership')).toBe(true)
+    expect(d.confidence.band).toBe('conflicting')
+  })
+
+  it('derives research coverage (searched property) + transaction count', () => {
+    const p = deriveDossier(base('Cecil Sumpter', 'cecil sumpter')).propertyRecord!
+    expect(p.coverage.items.find(i => i.label.startsWith('Property'))!.status).toBe('searched')
+    expect(p.coverage.transactionsFound).toBe(0)
+  })
+
+  it('no property/lien/tax/transaction evidence → propertyRecord is null', () => {
+    expect(deriveDossier({ ...fixture, evidence: [], candidates: [] }).propertyRecord).toBeNull()
   })
 })
 

@@ -71,6 +71,7 @@ export type DealDetail = {
   county: string | null
   parcelId: string | null
   taxSaleDate: string | null
+  caseType: string | null
   contactCount: number
   lastActivityDate: string | null
   syncedAt: string

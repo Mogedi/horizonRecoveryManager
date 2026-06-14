@@ -2,7 +2,7 @@ import 'server-only'
 import { SignJWT, jwtVerify } from 'jose'
 
 const SESSION_COOKIE = 'horizon_session'
-const SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000 // 30 days
+const SESSION_DURATION_MS = 365 * 24 * 60 * 60 * 1000 // 1 year — log in roughly once per device
 
 function getSecretKey(): Uint8Array {
   const secret = process.env.SESSION_SECRET

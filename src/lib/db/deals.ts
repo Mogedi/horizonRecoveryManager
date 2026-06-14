@@ -108,6 +108,7 @@ export async function getDealById(hubspotId: string) {
       county: true,
       parcelId: true,
       taxSaleDate: true,
+      caseType: true,
       contactCount: true,
       lastActivityDate: true,
       stageEnteredAt: true,
@@ -125,6 +126,17 @@ export async function getDealById(hubspotId: string) {
       hubspotDocStatus: true,
     },
   })
+}
+
+// Horizon-managed case type (NOT synced from HubSpot — upsertDeals never touches this column, so it
+// survives syncs). Drives the research profile (see lib/research/case-type.ts).
+export async function setDealCaseType(hubspotId: string, caseType: string) {
+  return prisma.deal.update({ where: { hubspotId }, data: { caseType }, select: { hubspotId: true, caseType: true } })
+}
+
+export async function getDealCaseType(hubspotId: string): Promise<string | null> {
+  const d = await prisma.deal.findUnique({ where: { hubspotId }, select: { caseType: true } })
+  return d?.caseType ?? null
 }
 
 // Upserts all deals in a single batched transaction with a 30s timeout.
@@ -258,16 +270,14 @@ export async function updateDealHubspotCheck(
   await prisma.deal.update({
     where: { hubspotId },
     data: {
-      hubspotCheck: JSON.parse(JSON.stringify(check)) as Prisma.InputJsonValue,
+      hubspotCheck: asJson(check),
       hubspotCheckAt: new Date(check.checkedAt),
       hubspotScreenshot: screenshotBase64,
       // Scalar summary columns — fast filtering/sorting without JSON extraction
       hubspotFilesLinked: check.checked ? check.filesLinked : null,
       hubspotMissingCount: check.checked ? check.missingFiles.length : null,
-      // Per-type breakdown — null when not provided (e.g. fallback "all files" mode)
-      hubspotDocStatus: docStatuses
-        ? (JSON.parse(JSON.stringify(docStatuses)) as Prisma.InputJsonValue)
-        : undefined,
+      // Per-type breakdown — undefined (left unchanged) when not provided (e.g. fallback "all files" mode)
+      hubspotDocStatus: asJson(docStatuses),
     },
   })
 }

@@ -99,6 +99,7 @@ model Deal {
   county           String?                            // enumeration: 25 GA counties + "Other"
   parcelId         String?   @map("parcel_id")        // parcel_id__deal
   taxSaleDate      DateTime? @map("tax_sale_date") @db.Date
+  caseType         String?   @map("case_type")        // Horizon-managed (NOT HubSpot): tax_sale | mortgage_foreclosure | state_funds | estate_sale | unknown — drives research profile (see lib/research/case-type.ts)
   hubspotUrl       String?   @map("hubspot_url")
   rawPayload       Json?     @map("raw_payload")
   syncedAt         DateTime  @default(now()) @map("synced_at") @db.Timestamptz(6)
@@ -518,6 +519,7 @@ model ResearchDossier {
   conflicts          Json?
   timeline           Json?
   sourceIntel        Json?    @map("source_intel")
+  propertyRecord     Json?    @map("property_record") // P-B: derived property dossier (parcel, liens, tax events)
   reviewStatus      String    @default("pending") @map("review_status") // pending | approved | rejected | needs_more
   reviewedBy        String?   @map("reviewed_by")
   reviewedAt        DateTime? @map("reviewed_at") @db.Timestamptz(6)

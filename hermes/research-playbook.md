@@ -114,7 +114,14 @@ and (b) **logged-in property sources (PropertyRadar, GSCCCA) via their saved pro
 authentication Firecrawl can't do. Use normal HTTP / Firecrawl for obituary, funeral-home, public
 property/GIS, and government pages — escalate to Browser Use only when one of those is actually blocked.
 
-Budget ≈ **10 execution steps / ~8 sources** — if you hit it, stop and set `budget.capHit = true`.
+Budget ≈ **10 execution steps / ~8 sources** — if you hit it, **call `submit_evidence_package` with
+what you have, THEN stop** and set `budget.capHit = true`. **NEVER stop without submitting** — evidence
+you don't submit is permanently lost, even if it's partial or a source was still open.
+
+**Property runs — submit the essentials FIRST.** Once you have parcel + owner-of-record + the
+transaction/deed chain + any tax-sale event, you already have the core surplus picture — **submit
+immediately.** Then, only if budget remains, enrich with GSCCCA liens. Do NOT let a slow logged-in
+source (GSCCCA) consume the whole budget before you've submitted the core.
 
 ## 5. Evidence rules (critical)
 Record EVERY fact as an `EvidenceItem`:
@@ -152,6 +159,10 @@ Record EVERY fact as an `EvidenceItem`:
 - Never fabricate. **"Not found" beats a guess.** Every claim needs provenance.
 
 ## 6. Submit
+**This is the most important step — a run that does not submit accomplished NOTHING.** Call
+`submit_evidence_package` before you stop, every time, even if the budget is exhausted, a source was
+blocked, or the picture is incomplete. Submit what you have.
+
 Call `submit_evidence_package` with:
 `{ requestId, query, plan, candidates, evidence, documents, telemetry, notes, budget }`
 - **`telemetry`** = one entry per source you tried (incl. blocked / empty ones), each **typed**:

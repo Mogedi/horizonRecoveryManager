@@ -186,7 +186,8 @@ export async function getCostTrend(days = 60) {
 // see scripts/research-ops.sh for account-level BU/Firecrawl spend. firecrawlCalls is a count, not $.)
 export interface RunCostByModel { model: string; usd: number; inTokens: number; outTokens: number }
 export interface RunTelemetry {
-  key: string; sessionId: string | null; requestId: number | null; name: string | null; goal: string | null
+  key: string; sessionId: string | null; requestId: number | null; dossierId: number | null
+  name: string | null; goal: string | null
   createdAt: Date; runSeconds: number; inTokens: number; outTokens: number; firecrawlCalls: number; usd: number
   byModel: RunCostByModel[]
 }
@@ -200,7 +201,7 @@ export async function getResearchRunTelemetry(limit = 60): Promise<RunTelemetry[
     const key = r.requestId != null ? `req:${r.requestId}` : (r.sessionId || `id:${r.id}`)
     let g = groups.get(key)
     if (!g) {
-      g = { key, sessionId: r.sessionId, requestId: r.requestId, name: null, goal: null, createdAt: r.createdAt,
+      g = { key, sessionId: r.sessionId, requestId: r.requestId, dossierId: null, name: null, goal: null, createdAt: r.createdAt,
         runSeconds: 0, inTokens: 0, outTokens: 0, firecrawlCalls: 0, usd: 0, byModel: [], _models: new Map() }
       groups.set(key, g)
     }
@@ -213,20 +214,27 @@ export async function getResearchRunTelemetry(limit = 60): Promise<RunTelemetry[
     mm.usd += r.usd; mm.inTokens += r.inTokens; mm.outTokens += r.outTokens
     g._models.set(m, mm)
   }
-  const list = [...groups.values()].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()).slice(0, limit)
-  const reqIds = list.map(g => g.requestId).filter((x): x is number => x != null)
-  const reqs = reqIds.length ? await prisma.researchRequest.findMany({ where: { id: { in: reqIds } }, select: { id: true, query: true, goal: true } }) : []
+  // Resolve requests for ALL groups first (need startedAt to order correctly), then sort + slice.
+  const all = [...groups.values()]
+  const reqIds = all.map(g => g.requestId).filter((x): x is number => x != null)
+  const reqs = reqIds.length ? await prisma.researchRequest.findMany({ where: { id: { in: reqIds } }, select: { id: true, query: true, goal: true, startedAt: true, dossierId: true } }) : []
   const reqMap = new Map(reqs.map(r => [r.id, r]))
-  return list.map(({ _models, ...g }) => {
+  const resolved = all.map(({ _models, ...g }) => {
     const req = g.requestId != null ? reqMap.get(g.requestId) : null
+    // Order/display by the ACTUAL run time (request.startedAt), NOT the cost-row createdAt — that's the
+    // sync time, which batches every backfilled run to one instant and breaks ordering.
+    const ranAt = req?.startedAt ?? g.createdAt
     return {
       ...g,
+      createdAt: ranAt,
+      dossierId: req?.dossierId ?? null,
       name: (req?.query as { name?: string } | null)?.name ?? null,
       goal: req?.goal ?? null,
       usd: +g.usd.toFixed(4),
       byModel: [..._models.values()].map(m => ({ ...m, usd: +m.usd.toFixed(4) })).sort((a, b) => b.usd - a.usd),
     }
   })
+  return resolved.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()).slice(0, limit)
 }
 
 // ── Immutable evidence package + derived dossier ────────────────────────────────

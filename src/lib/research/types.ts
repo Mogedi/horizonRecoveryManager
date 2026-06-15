@@ -235,6 +235,7 @@ export interface RankedContact {
   lastReportedAt?: string // recency signal, when the source provides it
   contactMethodStatus?: ContactMethodStatus
   validation?: PhoneValidationDerived // phones only: derived from phone_validation evidence (Trestle)
+  notTested?: boolean // phones only: deliberately skipped (a better number was confirmed) — saves $ vs testing all
   reason: string // transparent, human-readable ("2 sources, last reported 2024")
 }
 

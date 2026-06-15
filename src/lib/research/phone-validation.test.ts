@@ -49,4 +49,26 @@ describe('deriveDossier attaches phone validation to the matching ranked phone',
     expect(phone.validation?.nameMatch).toBe(true)
     expect(phone.contactMethodStatus).toBe('valid')
   })
+
+  it('marks sibling phones "not tested" when one was validated (stop-on-match saver)', () => {
+    const evidence = [
+      { kind: 'identity', value: { name: 'Jane Doe', normalizedName: 'jane doe', deceasedStatus: 'living' }, provenance: prov('fastpeoplesearch') },
+      { kind: 'phone', value: { number: '404-555-1111' }, provenance: prov('fastpeoplesearch') },
+      { kind: 'phone', value: { number: '404-555-2222' }, provenance: prov('truepeoplesearch') },
+      { kind: 'phone_validation', value: { number: '4045551111', isValid: true, activityScore: 88, lineType: 'Mobile', nameMatch: true, provider: 'trestle' }, provenance: prov('trestle') },
+    ]
+    const pkg = {
+      requestId: 1, query: { name: 'Jane Doe', goal: 'find_heirs' }, plan: { goal: 'find_heirs', steps: [] },
+      candidates: [{ localId: 'c1', name: 'Jane Doe', evidenceRefs: [0, 1, 2, 3] }],
+      evidence, documents: [], telemetry: [], notes: [], budget: {},
+    } as unknown as EvidencePackage
+
+    const jane = deriveDossier(pkg).actionableContacts.find(a => a.normalizedName === 'jane doe')!
+    const validated = jane.phones.find(p => p.value.includes('1111'))!
+    const skipped = jane.phones.find(p => p.value.includes('2222'))!
+    expect(validated.validation?.verdict).toBe('good')
+    expect(validated.notTested).toBeFalsy()
+    expect(skipped.validation).toBeUndefined()
+    expect(skipped.notTested).toBe(true) // deliberately skipped after the match
+  })
 })

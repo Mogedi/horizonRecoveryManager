@@ -130,3 +130,25 @@ Confirmed from Trestle docs; test harness: `scripts/trestle-test.mjs` (reads `TR
 - **Rate limits** on trial vs paid (for the `bottleneck` limiter config).
 - Real-world `name_match`/`contact_grade` behavior on a known-good vs known-bad pair (run the harness).
 - Trial window — confirm plan/limits before production reliance.
+
+## 14. Cost optimizations (built 2026-06-15 + future)
+Lookups are ~$0.03 each — trivial alone, but they compound across many cases/month. The savers:
+
+**Built:**
+1. **Stop-on-match.** Validate a person's numbers most-likely-first (most-corroborated → most-recent) and
+   **stop at the first `name_match: true`**. The rest are left untested — Horizon marks them "not tested"
+   (a confirmed number was found). One paid call per person in the common case, not 3–5.
+2. **Reuse-before-pay cache.** `GET /api/research/phone-validation?numbers=…` (`getRecentPhoneValidations`,
+   90-day window) returns numbers we already validated in any prior package. The agent re-emits those and
+   only pays Trestle for the uncached ones. Number-keyed by **last-10 digits** (so +1 prefixes still hit),
+   so the same number across *different cases* (shared relatives) is paid for once.
+3. **Only validate people we'd call** — claimant + heirs we'd contact, not every distant relative.
+4. **Cap ~3 paid lookups/person** even when nothing matches; skip obvious junk numbers.
+5. **Negative caching is automatic** — disconnected/wrong-owner results are cached too, so a known-dead
+   number is never re-tested.
+
+**Future (when volume justifies):**
+- **Dedicated `phone_validations` table** if scanning evidence packages gets slow (currently fine).
+- **Batch endpoint** — if Trestle supports validating N numbers per call, cut round-trips (verify in docs).
+- **Confidence-gated validation** — skip validation entirely for low-priority dossiers we won't action.
+- **Re-validation TTL tuning** — 90 days is the default; lengthen if phone status proves stable enough.

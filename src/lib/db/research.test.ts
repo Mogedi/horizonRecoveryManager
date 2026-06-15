@@ -2,19 +2,21 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // --- Mocks (before importing the module under test) ----------------------
 // vi.hoisted so these exist when the hoisted vi.mock factory runs.
-const { mockCostFindMany, mockReqFindMany } = vi.hoisted(() => ({
+const { mockCostFindMany, mockReqFindMany, mockPkgFindMany } = vi.hoisted(() => ({
   mockCostFindMany: vi.fn(),
   mockReqFindMany: vi.fn(),
+  mockPkgFindMany: vi.fn(),
 }))
 
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     researchCost: { findMany: mockCostFindMany },
     researchRequest: { findMany: mockReqFindMany },
+    evidencePackage: { findMany: mockPkgFindMany },
   },
 }))
 
-import { getResearchRunTelemetry } from './research'
+import { getResearchRunTelemetry, getRecentPhoneValidations } from './research'
 
 const d = (s: string) => new Date(s)
 beforeEach(() => vi.clearAllMocks())
@@ -74,5 +76,35 @@ describe('getResearchRunTelemetry', () => {
     const runs = await getResearchRunTelemetry(10)
 
     expect(runs.map(r => r.name)).toEqual(['Later', 'Earlier']) // newest run first, by startedAt
+  })
+})
+
+describe('getRecentPhoneValidations (reuse-before-pay cache)', () => {
+  it('returns cached validations by digits-only number, newest package wins, ignores unmatched', async () => {
+    mockPkgFindMany.mockResolvedValue([
+      // newest first (orderBy completedAt desc)
+      { evidence: [
+        { kind: 'phone_validation', value: { number: '(404) 555-1234', isValid: true, activityScore: 90, nameMatch: true } },
+        { kind: 'phone', value: { number: '4045559999' } }, // not a validation → ignored
+      ] },
+      { evidence: [
+        { kind: 'phone_validation', value: { number: '404-555-1234', isValid: false, activityScore: 10 } }, // older dup → loses
+        { kind: 'phone_validation', value: { number: '4045555678', isValid: true, activityScore: 70, nameMatch: false } },
+      ] },
+    ])
+
+    const r = await getRecentPhoneValidations(['+1 404 555 1234', '4045555678', '4045550000'])
+
+    expect(Object.keys(r).sort()).toEqual(['4045551234', '4045555678']) // 0000 absent (not validated)
+    expect(r['4045551234'].isValid).toBe(true)       // newest package wins (not the older false one)
+    expect(r['4045551234'].nameMatch).toBe(true)
+    expect(r['4045555678'].activityScore).toBe(70)
+  })
+
+  it('returns empty for no numbers without hitting the DB', async () => {
+    mockPkgFindMany.mockClear()
+    const r = await getRecentPhoneValidations([])
+    expect(r).toEqual({})
+    expect(mockPkgFindMany).not.toHaveBeenCalled()
   })
 })

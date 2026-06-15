@@ -236,6 +236,8 @@ function ContactLine({ icon, c }: { icon: string; c: RankedContact }) {
           {typeof v.nameMatch === 'boolean' && <span className={`text-[9px] font-medium ${v.nameMatch ? 'text-emerald-600' : 'text-red-500'}`}>{v.nameMatch ? 'name ✓' : 'name ✗'}</span>}
           {v.contactGrade && <span className="text-[9px] text-gray-400">grade {v.contactGrade}</span>}
         </>
+      ) : c.notTested ? (
+        <span className="px-1 py-0.5 rounded text-[9px] bg-gray-100 text-gray-400" title="A number was already confirmed for this person — skipped to save cost">not tested</span>
       ) : (
         c.contactMethodStatus && c.contactMethodStatus !== 'unverified' && <span className="text-[9px] text-blue-500">{c.contactMethodStatus}</span>
       )}

@@ -1,7 +1,7 @@
 // Persistence for the research agent (v2). All research DB access goes through here.
 import { prisma } from './client'
 import { Prisma } from '@prisma/client'
-import type { SourceAttempt, EvidencePackage, Dossier, ResearchRequestInput, CountySourceInput } from '@/lib/research/types'
+import type { SourceAttempt, EvidencePackage, Dossier, ResearchRequestInput, CountySourceInput, PhoneValidationValue } from '@/lib/research/types'
 
 // Safe JSON cast — surfaces non-serializable content immediately (per CLAUDE.md).
 const json = (v: unknown) => JSON.parse(JSON.stringify(v)) as Prisma.InputJsonValue
@@ -46,6 +46,35 @@ export async function findRecentPropertyEvidenceForCase(caseId: string, withinDa
     }
   }
   return null
+}
+
+// Reuse-before-pay: which of these numbers did we already validate recently? Returns the cached Trestle
+// result per number (digits-keyed, newest wins). The agent checks this before paying ~$0.03/lookup — phone
+// status changes slowly, so a 90-day cache avoids re-validating the same number across runs/months.
+export async function getRecentPhoneValidations(numbers: string[], withinDays = 90): Promise<Record<string, PhoneValidationValue>> {
+  // Key by last 10 digits so a +1/1 country-code prefix doesn't cause cache misses.
+  const digits = (n: string) => { const d = (n ?? '').replace(/\D/g, ''); return d.length > 10 ? d.slice(-10) : d }
+  const want = new Set(numbers.map(digits).filter(Boolean))
+  const out: Record<string, PhoneValidationValue> = {}
+  if (!want.size) return out
+  const since = new Date(Date.now() - withinDays * 86_400_000)
+  const pkgs = await prisma.evidencePackage.findMany({
+    where: { completedAt: { gte: since } },
+    orderBy: { completedAt: 'desc' },
+    take: 500,
+    select: { evidence: true },
+  })
+  for (const p of pkgs) {
+    const ev = p.evidence as unknown
+    if (!Array.isArray(ev)) continue
+    for (const it of ev) {
+      const item = it as { kind?: string; value?: PhoneValidationValue }
+      if (item?.kind !== 'phone_validation' || !item.value?.number) continue
+      const key = digits(item.value.number)
+      if (want.has(key) && !(key in out)) out[key] = item.value // pkgs are desc → first seen is newest
+    }
+  }
+  return out
 }
 
 // Person-level: what contact data do we ALREADY hold for this name (from prior evidence packages)?

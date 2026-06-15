@@ -100,7 +100,8 @@ function rankContacts(map: Map<string, ContactAccum>): RankedContact[] {
 }
 
 // ── Phone validation (Trestle facts → derived verdict) ──────────────────────────
-const digits = (s: string) => s.replace(/\D/g, '')
+// Key by the last 10 digits so a +1/1 country-code prefix doesn't break number matching.
+const phoneKey = (s: string) => { const d = s.replace(/\D/g, ''); return d.length > 10 ? d.slice(-10) : d }
 
 // Collect phone_validation evidence into a per-number map (latest checkedAt wins). Number-keyed, not
 // candidate-keyed: a validation applies to the number wherever it appears.
@@ -108,7 +109,7 @@ function buildPhoneValidationMap(pkg: EvidencePackage): Map<string, PhoneValidat
   const map = new Map<string, PhoneValidationValue>()
   for (const it of pkg.evidence) {
     if (it.kind !== 'phone_validation') continue
-    const key = digits(it.value.number)
+    const key = phoneKey(it.value.number)
     if (!key) continue
     const prev = map.get(key)
     if (!prev || recencyKey(it.value.checkedAt) >= recencyKey(prev.checkedAt)) map.set(key, it.value)
@@ -137,11 +138,18 @@ export function derivePhoneVerdict(v: PhoneValidationValue): { derived: PhoneVal
 function attachValidation(phones: RankedContact[], vmap: Map<string, PhoneValidationValue>): RankedContact[] {
   if (!vmap.size) return phones
   return phones.map((p) => {
-    const v = vmap.get(digits(p.value))
+    const v = vmap.get(phoneKey(p.value))
     if (!v) return p
     const { derived, status } = derivePhoneVerdict(v)
     return { ...p, validation: derived, contactMethodStatus: status }
   })
+}
+
+// Stop-on-match cost saver: once the agent confirms a number it skips the rest, so any phone WITHOUT a
+// validation (when at least one sibling WAS validated) was deliberately not tested — flag it, don't imply bad.
+function markNotTested(phones: RankedContact[]): RankedContact[] {
+  const anyTested = phones.some(p => p.validation)
+  return anyTested ? phones.map(p => (p.validation ? p : { ...p, notTested: true })) : phones
 }
 
 interface RichAggregate {
@@ -262,7 +270,7 @@ function buildActionableContacts(aggs: RichAggregate[], vmap: Map<string, PhoneV
   return aggs
     .filter(a => a.deceasedStatus !== 'deceased' && (a.phoneMap.size || a.addrMap.size || a.emailMap.size))
     .map((a): ActionableContact => {
-      const phones = attachValidation(rankContacts(a.phoneMap), vmap)
+      const phones = markNotTested(attachValidation(rankContacts(a.phoneMap), vmap))
       const addresses = rankContacts(a.addrMap)
       const emails = rankContacts(a.emailMap)
       const corroborated = a.sources.length >= 2 ||

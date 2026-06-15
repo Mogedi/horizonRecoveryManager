@@ -180,6 +180,55 @@ export async function getCostTrend(days = 60) {
   }
 }
 
+// Per-run telemetry for the standalone telemetry page: one row per run (Hermes session), cost summed
+// across all its LLM calls and SPLIT BY MODEL — so the Haiku-vs-Sonnet routing is visible per run.
+// (Browser Use $ is NOT here — those keys live on the VPS and BU sessions aren't tagged with our run id;
+// see scripts/research-ops.sh for account-level BU/Firecrawl spend. firecrawlCalls is a count, not $.)
+export interface RunCostByModel { model: string; usd: number; inTokens: number; outTokens: number }
+export interface RunTelemetry {
+  key: string; sessionId: string | null; requestId: number | null; name: string | null; goal: string | null
+  createdAt: Date; runSeconds: number; inTokens: number; outTokens: number; firecrawlCalls: number; usd: number
+  byModel: RunCostByModel[]
+}
+export async function getResearchRunTelemetry(limit = 60): Promise<RunTelemetry[]> {
+  const rows = await prisma.researchCost.findMany({ orderBy: { createdAt: 'desc' }, take: limit * 10 })
+  type G = RunTelemetry & { _models: Map<string, RunCostByModel> }
+  const groups = new Map<string, G>()
+  for (const r of rows) {
+    // Group by REQUEST (= one search Mo ran) when known — a request can span several Hermes sessions;
+    // fall back to session, then row id, for cost rows not yet linked to a request.
+    const key = r.requestId != null ? `req:${r.requestId}` : (r.sessionId || `id:${r.id}`)
+    let g = groups.get(key)
+    if (!g) {
+      g = { key, sessionId: r.sessionId, requestId: r.requestId, name: null, goal: null, createdAt: r.createdAt,
+        runSeconds: 0, inTokens: 0, outTokens: 0, firecrawlCalls: 0, usd: 0, byModel: [], _models: new Map() }
+      groups.set(key, g)
+    }
+    g.inTokens += r.inTokens; g.outTokens += r.outTokens; g.firecrawlCalls += r.firecrawlCalls; g.usd += r.usd
+    g.runSeconds = Math.max(g.runSeconds, r.runSeconds)
+    if (r.createdAt < g.createdAt) g.createdAt = r.createdAt
+    if (r.requestId != null && g.requestId == null) g.requestId = r.requestId
+    const m = r.model || 'unknown'
+    const mm = g._models.get(m) ?? { model: m, usd: 0, inTokens: 0, outTokens: 0 }
+    mm.usd += r.usd; mm.inTokens += r.inTokens; mm.outTokens += r.outTokens
+    g._models.set(m, mm)
+  }
+  const list = [...groups.values()].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()).slice(0, limit)
+  const reqIds = list.map(g => g.requestId).filter((x): x is number => x != null)
+  const reqs = reqIds.length ? await prisma.researchRequest.findMany({ where: { id: { in: reqIds } }, select: { id: true, query: true, goal: true } }) : []
+  const reqMap = new Map(reqs.map(r => [r.id, r]))
+  return list.map(({ _models, ...g }) => {
+    const req = g.requestId != null ? reqMap.get(g.requestId) : null
+    return {
+      ...g,
+      name: (req?.query as { name?: string } | null)?.name ?? null,
+      goal: req?.goal ?? null,
+      usd: +g.usd.toFixed(4),
+      byModel: [..._models.values()].map(m => ({ ...m, usd: +m.usd.toFixed(4) })).sort((a, b) => b.usd - a.usd),
+    }
+  })
+}
+
 // ── Immutable evidence package + derived dossier ────────────────────────────────
 export async function saveEvidencePackage(pkg: EvidencePackage, caseId?: string | null): Promise<number> {
   const row = await prisma.evidencePackage.create({
@@ -252,8 +301,18 @@ export async function getDossierDetail(id: number) {
     ? await prisma.evidencePackage.findUnique({ where: { id: dossier.evidencePackageId }, select: { evidence: true, candidates: true, plan: true, notes: true } })
     : null
   const request = await prisma.researchRequest.findFirst({ where: { dossierId: id }, select: { id: true } })
-  const cost = request
-    ? await prisma.researchCost.findFirst({ where: { requestId: request.id }, select: { usd: true, model: true, inTokens: true, outTokens: true, runSeconds: true } })
+  // A run has MULTIPLE cost rows (one per model) — sum them, don't take just the first (was undercounting).
+  const costRows = request
+    ? await prisma.researchCost.findMany({ where: { requestId: request.id }, select: { usd: true, model: true, inTokens: true, outTokens: true, runSeconds: true } })
+    : []
+  const cost = costRows.length
+    ? {
+        usd: +costRows.reduce((s, r) => s + r.usd, 0).toFixed(4),
+        model: [...new Set(costRows.map(r => r.model).filter(Boolean))].join(' + ') || null,
+        inTokens: costRows.reduce((s, r) => s + r.inTokens, 0),
+        outTokens: costRows.reduce((s, r) => s + r.outTokens, 0),
+        runSeconds: Math.max(0, ...costRows.map(r => r.runSeconds)),
+      }
     : null
   // The case's Horizon-managed case type — drives whether the "Run property search now" button shows.
   const caseType = dossier.caseId

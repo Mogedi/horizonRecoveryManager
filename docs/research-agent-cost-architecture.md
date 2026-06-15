@@ -94,6 +94,33 @@ Architecture stays — these are the cost-engineering rules going forward:
 **Engineering priority order:** caching/replay → routing → cost-by-category tracking → browser-cost
 reduction. Model swaps are last and low-impact.
 
+## 6c. Routing — implemented & validated (2026-06-15)
+
+**Live config** (Hermes `config.yaml`, set safely via `hermes config set auxiliary.<role>.model …`, backed up to `config.yaml.bak.routing`):
+```
+Sonnet 4.6  →  main model (reasoning) + auxiliary.compression
+Haiku 4.5   →  auxiliary: web_extract, vision, triage_specifier, title_generation,
+               profile_describer, curator, kanban_decomposer, skills_hub, approval, mcp
+```
+`compression` stays on Sonnet because context compaction is lossy and feeds the agent's *memory* —
+context drift is a top cause of long-run agent failure, and it's low-volume so the extra cost is negligible.
+
+**Validation — `scripts/extraction-eval.mjs`.** A controlled A/B: identical Georgia source text (property
+cards, tax deeds, obituaries, people-search, lien records) fed to Haiku 4.5 and Sonnet 4.6, scored against
+hand-verified answers. Deliberately includes **hallucination probes** (fields absent from the source → the
+correct answer is null), **mis-attribution probes** (grantor vs grantee, predeceased vs surviving), and a
+**long multi-parcel probe**. **Result (2 runs each): Haiku = Sonnet = 100%, zero hallucinations across all
+five record types.** Haiku fabricated nothing on the null-probes. Conclusion: routing extraction to Haiku is
+empirically safe — no gross deficiency, no fabrication on representative records.
+
+*Limits:* 10 representative items, not live-scraped 5k-token OCR'd PDFs (Haiku's documented weak spot —
+long, noisy inputs); that tail is covered by the production telemetry panel. Re-run anytime with `RUNS=3`;
+grow the set whenever a real failure appears (the "write a test for every bug" rule).
+
+*Why we can't replay past runs:* evidence packages store the extracted value + a one-line quote, **not** the
+raw page fed to extraction — so a clean offline eval needs either this controlled harness or new Hermes
+telemetry that captures raw inputs.
+
 ## 7. The honest bottom line
 The current agentic flow **works and is cheap (<$1/run).** It's **slow and occasionally blocked.** Don't
 throw it out — **wrap it**: APIs first, agent to learn-then-cache, humans for the gov-PDF tail. That's how

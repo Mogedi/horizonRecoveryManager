@@ -37,6 +37,9 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
           <Link href="/dashboard/research" className="flex items-center px-3 py-2 text-sm text-gray-700 rounded-md hover:bg-gray-50">
             Research
           </Link>
+          <Link href="/dashboard/research/telemetry" className="flex items-center px-3 py-2 pl-6 text-xs text-gray-500 rounded-md hover:bg-gray-50">
+            Telemetry
+          </Link>
           <Link href="/dashboard/settings" className="flex items-center px-3 py-2 text-sm text-gray-700 rounded-md hover:bg-gray-50">
             Settings
           </Link>

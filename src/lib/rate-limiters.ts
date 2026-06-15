@@ -48,6 +48,15 @@ export const anthropicLimiter = retryOnRateLimit(
   60_000,
 )
 
+// ─── Anthropic Admin (Usage & Cost API) ─────────────────────────────────────────
+// Org-level cost/usage reporting. Anthropic recommends polling ~once/min; bursts OK for
+// a few paginated/grouped calls per dashboard load. Conservative, retry 60s on 429.
+export const anthropicAdminLimiter = retryOnRateLimit(
+  new Bottleneck({ maxConcurrent: 2, minTime: 300 }),
+  'anthropic-admin',
+  60_000,
+)
+
 // ─── HubSpot ──────────────────────────────────────────────────────────────────
 // Starter plan: 100 req/10s = 10 req/s. Cap at 30% = 3 req/s → minTime 334ms.
 // maxConcurrent: 5 allows batched association lookups to parallelize within the cap.

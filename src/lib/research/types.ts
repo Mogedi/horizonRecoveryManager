@@ -53,6 +53,7 @@ export interface PhoneValidationValue {
   lineType?: string // Mobile | Landline | NonFixedVOIP | …
   carrier?: string
   nameMatch?: boolean // does the number belong to the person we asked about (Real Contact name_match)
+  matchedName?: string // the person name we validated against (name_match is person-specific)
   contactGrade?: string // A–F overall contactability (Real Contact)
   checkedAt?: string
   provider?: string // 'trestle' | …

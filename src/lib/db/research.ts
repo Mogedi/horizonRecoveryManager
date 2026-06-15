@@ -2,6 +2,7 @@
 import { prisma } from './client'
 import { Prisma } from '@prisma/client'
 import type { SourceAttempt, EvidencePackage, Dossier, ResearchRequestInput, CountySourceInput, PhoneValidationValue } from '@/lib/research/types'
+import { phoneKey, prefilterPhone, nameKey } from '@/lib/research/phone-rules'
 
 // Safe JSON cast — surfaces non-serializable content immediately (per CLAUDE.md).
 const json = (v: unknown) => JSON.parse(JSON.stringify(v)) as Prisma.InputJsonValue
@@ -48,33 +49,70 @@ export async function findRecentPropertyEvidenceForCase(caseId: string, withinDa
   return null
 }
 
-// Reuse-before-pay: which of these numbers did we already validate recently? Returns the cached Trestle
-// result per number (digits-keyed, newest wins). The agent checks this before paying ~$0.03/lookup — phone
-// status changes slowly, so a 90-day cache avoids re-validating the same number across runs/months.
-export async function getRecentPhoneValidations(numbers: string[], withinDays = 90): Promise<Record<string, PhoneValidationValue>> {
-  // Key by last 10 digits so a +1/1 country-code prefix doesn't cause cache misses.
-  const digits = (n: string) => { const d = (n ?? '').replace(/\D/g, ''); return d.length > 10 ? d.slice(-10) : d }
-  const want = new Set(numbers.map(digits).filter(Boolean))
-  const out: Record<string, PhoneValidationValue> = {}
-  if (!want.size) return out
-  const since = new Date(Date.now() - withinDays * 86_400_000)
-  const pkgs = await prisma.evidencePackage.findMany({
-    where: { completedAt: { gte: since } },
-    orderBy: { completedAt: 'desc' },
-    take: 500,
-    select: { evidence: true },
-  })
-  for (const p of pkgs) {
-    const ev = p.evidence as unknown
-    if (!Array.isArray(ev)) continue
-    for (const it of ev) {
-      const item = it as { kind?: string; value?: PhoneValidationValue }
-      if (item?.kind !== 'phone_validation' || !item.value?.number) continue
-      const key = digits(item.value.number)
-      if (want.has(key) && !(key in out)) out[key] = item.value // pkgs are desc → first seen is newest
-    }
+// ── Durable phone-validation store (reuse-before-pay; a number validated once is never re-run) ──────
+type PhoneValRow = {
+  number: string; isValid: boolean | null; activityScore: number | null; lineType: string | null
+  carrier: string | null; nameMatch: boolean | null; matchedName: string | null; matchedNameKey: string | null
+  contactGrade: string | null; provider: string | null; phoneKey: string; validatedAt: Date
+}
+function rowToValue(r: PhoneValRow): PhoneValidationValue {
+  return {
+    number: r.number, isValid: r.isValid ?? undefined, activityScore: r.activityScore ?? undefined,
+    lineType: r.lineType ?? undefined, carrier: r.carrier ?? undefined, nameMatch: r.nameMatch ?? undefined,
+    matchedName: r.matchedName ?? undefined, contactGrade: r.contactGrade ?? undefined,
+    provider: r.provider ?? undefined, checkedAt: r.validatedAt.toISOString(),
   }
+}
+
+// Persist one validation (called from ingest for each phone_validation evidence item). Latest wins.
+export async function upsertPhoneValidation(v: PhoneValidationValue): Promise<void> {
+  const key = phoneKey(v.number)
+  if (!key) return
+  const data = {
+    number: v.number, isValid: v.isValid ?? null, activityScore: v.activityScore ?? null,
+    lineType: v.lineType ?? null, carrier: v.carrier ?? null, nameMatch: v.nameMatch ?? null,
+    matchedName: v.matchedName ?? null, matchedNameKey: v.matchedName ? nameKey(v.matchedName) : null,
+    contactGrade: v.contactGrade ?? null, provider: v.provider ?? null,
+    rawPayload: json(v), validatedAt: v.checkedAt ? new Date(v.checkedAt) : new Date(),
+  }
+  await prisma.phoneValidation.upsert({ where: { phoneKey: key }, create: { phoneKey: key, ...data }, update: data })
+}
+
+// Table read: durable validations by number (digits-keyed).
+export async function getRecentPhoneValidations(numbers: string[]): Promise<Record<string, PhoneValidationValue>> {
+  const keys = [...new Set(numbers.map(phoneKey).filter(Boolean))]
+  const out: Record<string, PhoneValidationValue> = {}
+  if (!keys.length) return out
+  const rows = await prisma.phoneValidation.findMany({ where: { phoneKey: { in: keys } } })
+  for (const r of rows) out[r.phoneKey] = rowToValue(r)
   return out
+}
+
+// THE pre-pay decision the agent makes per number: validate | reuse | skip (+ why + any cached result).
+// Bakes the rules server-side (deterministic, testable): pre-filters (toll-free/junk), known-dead skip,
+// same-person reuse, someone-else's-number skip. The agent only pays for the 'validate' ones.
+export interface PhoneDecision { number: string; key: string; decision: 'validate' | 'reuse' | 'skip'; reason: string; cached?: PhoneValidationValue }
+export async function decidePhoneValidations(numbers: string[], personName: string, opts?: { business?: boolean }): Promise<PhoneDecision[]> {
+  const pk = nameKey(personName)
+  const keyByNum = new Map<string, string>()
+  for (const n of numbers) { const k = phoneKey(n); if (k) keyByNum.set(n, k) }
+  const rows = keyByNum.size
+    ? await prisma.phoneValidation.findMany({ where: { phoneKey: { in: [...new Set(keyByNum.values())] } } })
+    : []
+  const byKey = new Map(rows.map(r => [r.phoneKey, r]))
+  return numbers.map((n): PhoneDecision => {
+    const k = keyByNum.get(n) ?? ''
+    if (!k) return { number: n, key: '', decision: 'skip', reason: 'unparseable' }
+    const pf = prefilterPhone(n, opts)
+    if (pf.skip) return { number: n, key: k, decision: 'skip', reason: pf.reason ?? 'prefiltered' }
+    const row = byKey.get(k)
+    if (!row) return { number: n, key: k, decision: 'validate', reason: 'never validated' }
+    const cached = rowToValue(row)
+    if (row.isValid === false || row.activityScore === 0) return { number: n, key: k, decision: 'skip', reason: 'known disconnected', cached }
+    if (row.matchedNameKey && row.matchedNameKey === pk) return { number: n, key: k, decision: 'reuse', reason: 'already validated for this person', cached }
+    if (row.nameMatch === true && row.matchedNameKey && row.matchedNameKey !== pk) return { number: n, key: k, decision: 'skip', reason: `belongs to ${row.matchedName ?? 'someone else'}`, cached }
+    return { number: n, key: k, decision: 'validate', reason: 'live but not matched to this person', cached }
+  })
 }
 
 // Person-level: what contact data do we ALREADY hold for this name (from prior evidence packages)?

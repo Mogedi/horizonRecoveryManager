@@ -135,20 +135,27 @@ Confirmed from Trestle docs; test harness: `scripts/trestle-test.mjs` (reads `TR
 Lookups are ~$0.03 each — trivial alone, but they compound across many cases/month. The savers:
 
 **Built:**
-1. **Stop-on-match.** Validate a person's numbers most-likely-first (most-corroborated → most-recent) and
-   **stop at the first `name_match: true`**. The rest are left untested — Horizon marks them "not tested"
-   (a confirmed number was found). One paid call per person in the common case, not 3–5.
-2. **Reuse-before-pay cache.** `GET /api/research/phone-validation?numbers=…` (`getRecentPhoneValidations`,
-   90-day window) returns numbers we already validated in any prior package. The agent re-emits those and
-   only pays Trestle for the uncached ones. Number-keyed by **last-10 digits** (so +1 prefixes still hit),
-   so the same number across *different cases* (shared relatives) is paid for once.
-3. **Only validate people we'd call** — claimant + heirs we'd contact, not every distant relative.
-4. **Cap ~3 paid lookups/person** even when nothing matches; skip obvious junk numbers.
-5. **Negative caching is automatic** — disconnected/wrong-owner results are cached too, so a known-dead
-   number is never re-tested.
+1. **Durable store — never re-run a number.** Dedicated `phone_validations` table, unique by **last-10
+   digits** (country-code safe). Populated on ingest from `phone_validation` evidence
+   (`upsertPhoneValidation`). A number validated once is recorded permanently and reused — across runs,
+   cases, and months (shared relatives' numbers are paid for once).
+2. **Pre-pay decision endpoint.** `GET /api/research/phone-validation?name=&numbers=` → per number:
+   `validate | reuse | skip` (`decidePhoneValidations` — server-side + unit-tested). Agent only pays for
+   `validate`. Rules:
+   - **skip toll-free/business** (800/833/844/855/866/877/888…) unless a business case; **skip junk**
+     (wrong length, all-same digit, 555-01xx). [`phone-rules.ts`]
+   - **skip known-disconnected** (`isValid:false` / `activity:0`) — a dead line is dead for everyone.
+   - **reuse** when already validated for **this** person (order-insensitive name match).
+   - **skip** when the number is confirmed to be **someone else's**.
+3. **Stop-on-match.** Validate most-likely-first and stop at the first `name_match: true`; the rest stay
+   untested → Horizon shows "not tested". One paid call/person in the common case, not 3–5.
+4. **Pre-score from free signals.** Corroboration (seen on N sources) + recency ("active YYYY–YYYY" /
+   `lastReportedAt`) set the *order* so the first paid call is most likely the keeper — they don't replace
+   the liveness check, they make it end sooner.
+5. **Only validate people we'd call**; cap ~3 paid/person.
 
 **Future (when volume justifies):**
-- **Dedicated `phone_validations` table** if scanning evidence packages gets slow (currently fine).
 - **Batch endpoint** — if Trestle supports validating N numbers per call, cut round-trips (verify in docs).
 - **Confidence-gated validation** — skip validation entirely for low-priority dossiers we won't action.
-- **Re-validation TTL tuning** — 90 days is the default; lengthen if phone status proves stable enough.
+- **Re-validation TTL** — store has no expiry today (status changes slowly); add one if it proves stale.
+- **Activity-window capture** — store the source-reported active-year range to sharpen the pre-score.

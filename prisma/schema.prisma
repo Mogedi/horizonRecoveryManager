@@ -578,3 +578,27 @@ model SuggestedSource {
 
   @@map("suggested_sources")
 }
+
+// Durable phone-validation store (Trestle). Written from phone_validation evidence on ingest; read before
+// any paid lookup so a number validated once is NEVER re-run. Keyed by last-10 digits (country-code safe).
+// Liveness fields (isValid/activityScore/lineType/carrier) are number-intrinsic — a dead number is dead for
+// everyone. nameMatch + matchedNameKey are person-specific (which person we checked it against).
+model PhoneValidation {
+  id            Int      @id @default(autoincrement())
+  phoneKey      String   @unique @map("phone_key") // last-10 digits
+  number        String // E.164 / as captured
+  isValid       Boolean? @map("is_valid")
+  activityScore Int?     @map("activity_score")
+  lineType      String?  @map("line_type")
+  carrier       String?
+  nameMatch     Boolean? @map("name_match")
+  matchedName   String?  @map("matched_name") // the person name we validated against
+  matchedNameKey String? @map("matched_name_key") // normalized matchedName for comparison
+  contactGrade  String?  @map("contact_grade")
+  provider      String?  // 'trestle'
+  rawPayload    Json?    @map("raw_payload")
+  validatedAt   DateTime @map("validated_at") @db.Timestamptz(6)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("phone_validations")
+}

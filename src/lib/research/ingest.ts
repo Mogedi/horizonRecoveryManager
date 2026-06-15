@@ -3,7 +3,7 @@
 import type { EvidencePackage } from './types'
 import { deriveDossier } from './derive'
 import { normalizeTelemetry } from './telemetry'
-import { saveEvidencePackage, saveDossier, completeRequest, logSourceAttempt } from '@/lib/db/research'
+import { saveEvidencePackage, saveDossier, completeRequest, logSourceAttempt, upsertPhoneValidation } from '@/lib/db/research'
 import { log } from '@/lib/logger'
 
 export async function ingestEvidencePackage(pkg: EvidencePackage): Promise<{ evidencePackageId: number; dossierId: number }> {
@@ -22,6 +22,15 @@ export async function ingestEvidencePackage(pkg: EvidencePackage): Promise<{ evi
       }),
     )
   }
+  // Populate the durable phone-validation store from this package's facts, so the same number is never
+  // re-validated (this run or any future one). Best-effort — never fails the ingest.
+  for (const it of pkg.evidence) {
+    if (it.kind !== 'phone_validation') continue
+    await upsertPhoneValidation(it.value).catch((err) =>
+      log.warn('upsertPhoneValidation failed during ingest', { error: err instanceof Error ? err.message : String(err) }),
+    )
+  }
+
   if (pkg.requestId) {
     // Best-effort: evidence + dossier are already persisted, so a failure here only leaves the
     // originating request row un-finalized. Log it rather than swallowing silently.

@@ -2,21 +2,21 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // --- Mocks (before importing the module under test) ----------------------
 // vi.hoisted so these exist when the hoisted vi.mock factory runs.
-const { mockCostFindMany, mockReqFindMany, mockPkgFindMany } = vi.hoisted(() => ({
+const { mockCostFindMany, mockReqFindMany, mockPvFindMany } = vi.hoisted(() => ({
   mockCostFindMany: vi.fn(),
   mockReqFindMany: vi.fn(),
-  mockPkgFindMany: vi.fn(),
+  mockPvFindMany: vi.fn(),
 }))
 
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     researchCost: { findMany: mockCostFindMany },
     researchRequest: { findMany: mockReqFindMany },
-    evidencePackage: { findMany: mockPkgFindMany },
+    phoneValidation: { findMany: mockPvFindMany },
   },
 }))
 
-import { getResearchRunTelemetry, getRecentPhoneValidations } from './research'
+import { getResearchRunTelemetry, getRecentPhoneValidations, decidePhoneValidations } from './research'
 
 const d = (s: string) => new Date(s)
 beforeEach(() => vi.clearAllMocks())
@@ -79,32 +79,46 @@ describe('getResearchRunTelemetry', () => {
   })
 })
 
-describe('getRecentPhoneValidations (reuse-before-pay cache)', () => {
-  it('returns cached validations by digits-only number, newest package wins, ignores unmatched', async () => {
-    mockPkgFindMany.mockResolvedValue([
-      // newest first (orderBy completedAt desc)
-      { evidence: [
-        { kind: 'phone_validation', value: { number: '(404) 555-1234', isValid: true, activityScore: 90, nameMatch: true } },
-        { kind: 'phone', value: { number: '4045559999' } }, // not a validation → ignored
-      ] },
-      { evidence: [
-        { kind: 'phone_validation', value: { number: '404-555-1234', isValid: false, activityScore: 10 } }, // older dup → loses
-        { kind: 'phone_validation', value: { number: '4045555678', isValid: true, activityScore: 70, nameMatch: false } },
-      ] },
+const vrow = (o: Record<string, unknown>) => ({
+  number: '', isValid: null, activityScore: null, lineType: null, carrier: null, nameMatch: null,
+  matchedName: null, matchedNameKey: null, contactGrade: null, provider: 'trestle', validatedAt: new Date('2026-06-15T00:00:00Z'), ...o,
+})
+
+describe('getRecentPhoneValidations (durable store read)', () => {
+  it('reads the table, keyed by last-10 digits; empty input skips the DB', async () => {
+    mockPvFindMany.mockResolvedValue([vrow({ phoneKey: '4045551234', number: '(404) 555-1234', isValid: true, activityScore: 90 })])
+    const r = await getRecentPhoneValidations(['+1 404 555 1234'])
+    expect(r['4045551234'].isValid).toBe(true)
+
+    mockPvFindMany.mockClear()
+    expect(await getRecentPhoneValidations([])).toEqual({})
+    expect(mockPvFindMany).not.toHaveBeenCalled()
+  })
+})
+
+describe('decidePhoneValidations (the pre-pay rules)', () => {
+  it('skips toll-free + junk, reuses same-person, skips known-dead + someone-else, validates the rest', async () => {
+    mockPvFindMany.mockResolvedValue([
+      vrow({ phoneKey: '4045551111', number: '4045551111', isValid: true, activityScore: 88, nameMatch: true, matchedName: 'Jane Doe', matchedNameKey: 'doe jane' }),
+      vrow({ phoneKey: '4045552222', number: '4045552222', isValid: false, activityScore: 0 }), // dead
+      vrow({ phoneKey: '4045553333', number: '4045553333', isValid: true, activityScore: 70, nameMatch: true, matchedName: 'Bob Roe', matchedNameKey: 'bob roe' }), // someone else
     ])
-
-    const r = await getRecentPhoneValidations(['+1 404 555 1234', '4045555678', '4045550000'])
-
-    expect(Object.keys(r).sort()).toEqual(['4045551234', '4045555678']) // 0000 absent (not validated)
-    expect(r['4045551234'].isValid).toBe(true)       // newest package wins (not the older false one)
-    expect(r['4045551234'].nameMatch).toBe(true)
-    expect(r['4045555678'].activityScore).toBe(70)
+    const d = await decidePhoneValidations(
+      ['404-555-1111', '4045552222', '4045553333', '8005559999', '5555555555', '4045554444'],
+      'Jane Doe',
+    )
+    const by = Object.fromEntries(d.map(x => [x.key || x.number, x.decision]))
+    expect(by['4045551111']).toBe('reuse')        // same person
+    expect(by['4045552222']).toBe('skip')         // known disconnected
+    expect(by['4045553333']).toBe('skip')         // belongs to Bob Roe
+    expect(by['8005559999']).toBe('skip')         // toll-free
+    expect(by['5555555555']).toBe('skip')         // junk (all same digit)
+    expect(by['4045554444']).toBe('validate')     // never seen
   })
 
-  it('returns empty for no numbers without hitting the DB', async () => {
-    mockPkgFindMany.mockClear()
-    const r = await getRecentPhoneValidations([])
-    expect(r).toEqual({})
-    expect(mockPkgFindMany).not.toHaveBeenCalled()
+  it('order-insensitive person match (Smith, John ↔ John Smith)', async () => {
+    mockPvFindMany.mockResolvedValue([vrow({ phoneKey: '4045551111', number: '4045551111', isValid: true, activityScore: 80, nameMatch: true, matchedName: 'John Smith', matchedNameKey: 'john smith' })])
+    const d = await decidePhoneValidations(['4045551111'], 'Smith, John')
+    expect(d[0].decision).toBe('reuse')
   })
 })

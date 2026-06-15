@@ -220,13 +220,27 @@ function evidenceText(e: EvidenceItem): string {
 }
 
 function ContactLine({ icon, c }: { icon: string; c: RankedContact }) {
+  const v = c.validation
   return (
-    <div className="flex items-baseline gap-2 text-xs">
+    <div className="flex items-baseline gap-2 text-xs flex-wrap">
       <span className="shrink-0">{icon}</span>
       <span className="font-medium text-gray-800">{c.value}</span>
       {c.label && <span className="text-[9px] text-gray-400 uppercase">{c.label}</span>}
       <span className={`px-1 py-0.5 rounded text-[8px] font-bold uppercase ${RANK[c.rank]}`}>{c.rank}</span>
-      {c.contactMethodStatus && c.contactMethodStatus !== 'unverified' && <span className="text-[9px] text-blue-500">{c.contactMethodStatus}</span>}
+      {v ? (
+        <>
+          <span className={`px-1 py-0.5 rounded text-[9px] font-semibold ${v.verdict === 'good' ? 'bg-emerald-100 text-emerald-700' : v.verdict === 'bad' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`} title="Trestle phone validation">
+            {v.verdict === 'good' ? '✓ live' : v.verdict === 'bad' ? '✗ dead' : '? uncertain'}
+            {typeof v.activityScore === 'number' ? ` ${v.activityScore}` : ''}{v.lineType ? ` · ${v.lineType}` : ''}
+          </span>
+          {typeof v.nameMatch === 'boolean' && <span className={`text-[9px] font-medium ${v.nameMatch ? 'text-emerald-600' : 'text-red-500'}`}>{v.nameMatch ? 'name ✓' : 'name ✗'}</span>}
+          {v.contactGrade && <span className="text-[9px] text-gray-400">grade {v.contactGrade}</span>}
+        </>
+      ) : c.notTested ? (
+        <span className="px-1 py-0.5 rounded text-[9px] bg-gray-100 text-gray-400" title="A number was already confirmed for this person — skipped to save cost">not tested</span>
+      ) : (
+        c.contactMethodStatus && c.contactMethodStatus !== 'unverified' && <span className="text-[9px] text-blue-500">{c.contactMethodStatus}</span>
+      )}
       <span className="text-[10px] text-gray-400 truncate">{c.reason}</span>
     </div>
   )

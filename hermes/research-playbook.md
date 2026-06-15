@@ -80,6 +80,38 @@ d. **Contacts — always get phones, from MULTIPLE sources.** We are always goin
      source separately (same number, different `sourceId`) — that's how corroboration is counted.
    - Set `contactMethodStatus: 'unverified'` on phones/emails (a later validation step flips it).
 
+d2. **Validate phones — Trestle Real Contact, CHEAPLY (stop-on-match).** Each lookup is ~$0.03 and adds up
+   across many cases, so be frugal — the goal is ONE confirmed number per person, not all of them:
+   1. **Only** validate people we'd actually call (claimant + heirs you'd contact) — not every distant relative.
+   2. **Pre-score the order (free signals):** validate most-likely-first — numbers seen on the **most
+      independent sources** first, then **most recently reported** (`lastReportedAt` / "active YYYY–YYYY").
+      A number corroborated across several sites and recently active is the most likely live + theirs, so
+      testing it first usually ends the loop in one call.
+   3. **ALWAYS ask the durable store first** — one call gets the decision per number:
+      `GET /api/research/phone-validation?name=<person>&numbers=<comma-separated E164s>` (add `&business=1`
+      only for business cases). Each number comes back as:
+      - `reuse` → we already validated it for this person: **re-emit** the returned `cached` as a
+        `phone_validation` item, **do NOT pay**.
+      - `skip` → pre-filtered (toll-free/junk), known-disconnected, or confirmed to be someone else's
+        number: **do nothing, never pay.**
+      - `validate` → not in the store: pay Trestle (below).
+   4. **Validate the `validate` numbers one at a time, and STOP at the first `name_match: true`.** Once a
+      number is confirmed tied to the person, do NOT look up their remaining numbers — leave them untested
+      (emit no evidence; Horizon marks them "not tested"). That confirmed number is the one we'll call.
+   5. **Cap ~3 paid lookups per person** even if none match.
+   - Call: `GET https://api.trestleiq.com/2.0/real_contact?phone=<E164>&name=<person's full name>` (plus, when
+     known, `&address.street_line_1=&address.city=&address.state_code=&address.postal_code=`), header
+     `x-api-key: <TRESTLE_API_KEY from /opt/data/.env>`. Real Contact returns liveness AND name-match in one
+     call. Match `name` to the person the phone is attributed to (claimant OR a specific heir).
+   - Emit ONE `phone_validation` per number **tested** (RAW facts; Horizon derives good/uncertain/bad):
+     `{ kind: 'phone_validation', value: { number, isValid, activityScore (=activity_score),
+     lineType (=line_type), carrier, nameMatch (=name_match), matchedName: <the person you checked it
+     against>, contactGrade (=contact_grade), provider: 'trestle', checkedAt: <ISO> }, provenance:
+     { sourceId: 'trestle', sourceType: 'other', url, retrievedAt, sourceText: <JSON> } }`.
+     (`matchedName` is what lets the durable store skip this number next time — for this person it's a
+     reuse, for a different person it's "belongs to someone else".)
+   - If `TRESTLE_API_KEY` is missing or a call errors, **skip silently** (phones stay `unverified`) — never block.
+
 e. **Property deep-dive — `property_records` goal ONLY.** Skip steps b–d (no obituary/heirs/phones).
    Work the subject parcel from `query.address`/`query.parcelId`, county registry first:
    1. **Parcel + owner-of-record + value.** `get_county_sources(state, county)` → GIS/ArcGIS REST or

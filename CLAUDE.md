@@ -21,6 +21,7 @@
 | `src/lib/db/summaries.ts` | AI summary reads/writes (human-facing layer) |
 | `src/lib/db/case-analysis.ts` | append-only AI-interpretation layer (Hermes + manual button) |
 | `src/lib/db/agent-audit.ts` | agent write audit log — before/after, correlationId |
+| `src/lib/db/research.ts` | research queue, evidence packages, dossiers, county sources, telemetry |
 | `src/lib/agent/guard.ts` | agent kill switch + request-meta / idempotency / correlation helpers |
 | `src/lib/hubspot/client.ts` | HubSpot API — rate limited, retried, HubSpotError |
 | `src/lib/hubspot/mapper.ts` | ONLY file knowing raw HubSpot property names |
@@ -44,6 +45,10 @@
 | `src/lib/case/events.ts` | `buildCaseEvents()` — merges DealActivity + ActivityEvent into CaseEvent[] |
 | `src/lib/case/story.ts` | `buildStoryDays()` — ET-timezone day grouping; `CATEGORY_LABELS` map |
 | `src/lib/case/state.ts` | `buildCurrentState()` — from latest `case_analyses` triage row (AiSummary fallback); `inferHealth()` |
+| `src/lib/research/` | Person/claimant research — immutable evidence → derived dossier |
+| `src/lib/research/types.ts` | `EvidencePackage` (immutable, Hermes-written) + `Dossier` (Horizon-derived) |
+| `src/lib/research/derive.ts` | `deriveDossier()` — multi-source ranking, confidence bands, conflict detection |
+| `src/lib/research/ingest.ts` | `ingestEvidencePackage()` — the only evidence→business-object path |
 | `src/lib/rules/` | Pure rule functions. `index.ts` → `evaluateAll`. |
 | `src/lib/rules/staleness.ts` | `checkStaleness` — stage stale by business days |
 | `src/lib/rules/agreement.ts` | `checkAgreement` — Agreement Sent no follow-up |
@@ -59,11 +64,12 @@
 | `src/lib/ai/errors.ts` | `AIError` (separate hierarchy) |
 | `src/lib/utils/format.ts` | `formatAmount`, `relativeDate`, `formatDate` |
 | `src/lib/utils/business-days.ts` | `businessDaysElapsed` — always America/New_York |
-| `src/lib/utils/rate-limiter.ts` | `TokenBucket` — in-memory, replace before AWS |
+| `src/lib/rate-limiters.ts` | Per-service `bottleneck` limiters — in-memory, replace before AWS |
 | `src/lib/utils/pipeline-group.ts` | `getPipelineGroup()` — stage ID → setup/outreach/case_mgmt/terminal |
 | `src/app/api/` | Next.js route handlers — thin only |
 | `src/app/dashboard/pipeline/` | Portfolio analytics page |
 | `src/app/dashboard/contacts/` | Contact quality page |
+| `src/app/dashboard/research/` | Research dossier view — master-detail, six-section dossier |
 | `src/components/DealSearch.tsx` | global deal search |
 | `src/components/analytics/` | DealBadges, SegmentBar, StatCard |
 | `src/proxy.ts` | Next.js 16 Middleware (was middleware.ts) |
@@ -141,7 +147,7 @@ When you search: mark what you confirmed, what you couldn't confirm, and what co
 Pipeline name:     Cases – Surplus Funds (pipeline ID from pipeline-stages.json)
 Total deals:       150 (2 pages of 100 in CRM search)
 Timezone:          America/New_York
-Tests:             631 passing
+Tests:             659 passing
 
 --- HubSpot ---
 HubSpot plan:      Starter — 100 req/10s, 250,000 req/day
@@ -325,8 +331,8 @@ return JSON.parse(JSON.stringify(v)) as Prisma.InputJsonValue
 
 **Boundary 1 — DB:** All DB reads/writes go through `src/lib/db/` functions. No direct `prisma` imports outside `src/lib/db/`. All `$transaction` calls go through `withTransaction()` / `withBatchTransaction()`.
 
-**Boundary 2 — External APIs:** All HubSpot calls through `src/lib/hubspot/client.ts`. All Anthropic calls through `src/lib/ai/client.ts`. New integrations go in `src/lib/integrations/<service-name>/` — one `request()` method, per-service TokenBucket, service-specific error class.
+**Boundary 2 — External APIs:** All HubSpot calls through `src/lib/hubspot/client.ts`. All Anthropic calls through `src/lib/ai/client.ts`. New integrations go in `src/lib/integrations/<service-name>/` — one `request()` method, a per-service `bottleneck` limiter (`src/lib/rate-limiters.ts`), service-specific error class.
 
 **Boundary 3 — Errors:** `src/lib/errors.ts` for IntegrationError hierarchy. `src/lib/ai/errors.ts` for AIError. Never import AIError from errors.ts.
 
-**AWS gate:** `TokenBucket` is in-memory and per-invocation — correct for Vercel serverless. Before AWS multi-instance: replace with DB-backed leaky bucket.
+**AWS gate:** The `bottleneck` limiters in `src/lib/rate-limiters.ts` are in-memory and per-invocation — correct for Vercel serverless. Before AWS multi-instance: replace with a DB-backed limiter.

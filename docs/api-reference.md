@@ -29,7 +29,7 @@ The mapper (`/src/lib/hubspot/mapper.ts`) translates raw API responses into inte
 | HubSpot Objects Batch Read — Tasks | Layer 2: batch fetch all tasks for a deal | 100 req/10s |
 | HubSpot Contacts Batch Read | Layer 2: batch fetch all contacts for a deal | 100 req/10s |
 | Anthropic Messages | Generate deal summaries and daily briefings | per-token pricing |
-| Vercel Cron | Schedule Layer 1 sync 4x/day | N/A |
+| Vercel Cron | Schedule Layer 1 sync once daily — see vercel.json | N/A |
 
 ---
 
@@ -38,12 +38,10 @@ The mapper (`/src/lib/hubspot/mapper.ts`) translates raw API responses into inte
 All HubSpot calls go through `/src/lib/hubspot/client.ts`. Implementation:
 
 ```
-Algorithm:        Token bucket
-Capacity:         3 tokens
-Refill rate:      3 tokens/second (30% of 10 req/s Starter limit)
-On empty bucket:  Queue request, wait for next token
-Retry on 429:     Exponential backoff — 1s, 2s, 4s, 8s, max 3 retries
-Jitter:           ±100ms on each refill to avoid synchronized bursts
+Library:          bottleneck — per-service limiters in src/lib/rate-limiters.ts
+Rate:             ~3 req/s (30% of the 10 req/s Starter limit)
+On limit:         Queue request, release at the next available slot
+Retry on 429:     Exponential backoff with retry (see rate-limiters.ts)
 
 Daily tracking:   Increment sync_log.api_calls_made on every request
 Warning trigger:  If daily total > 60,000 → log warning, disable scheduled syncs
@@ -311,7 +309,7 @@ Layer 2 step 2: fetch all activity objects of one type in a single call. One cal
 - `hs_call_direction`: `INBOUND` | `OUTBOUND`
 - `hs_call_disposition` is a UUID — map to label using call property schema options (confirmed M1)
 - JustCall logs "no answer" call attempts as Task objects (subject: "Follow Up Call"), not Call objects
-- `hs_email_direction`: `INCOMING_EMAIL` | `OUTGOING_EMAIL`
+- `hs_email_direction`: observed value is `"EMAIL"` in fixtures; full enum unconfirmed — do not branch on direction (see docs/research/field-mapping.md)
 - `hs_email_text` is accessible on Starter plan (confirmed M1)
 - `hs_task_status`: `NOT_STARTED` | `COMPLETED` | `DEFERRED` | `IN_PROGRESS`
 - Skip the batch call if IDs array is empty — `Promise.resolve({ results: [] })` instead

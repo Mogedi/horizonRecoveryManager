@@ -6,7 +6,7 @@ Owner-attention layer on top of HubSpot CRM. Answers: "What needs Mo's attention
 
 ## First-time setup
 
-1. Copy `.env.local.example` to `.env.local` and fill in the values (see below)
+1. Copy `.env.example` to `.env.local` and fill in the values (see below)
 2. `npm install`
 3. `npm run db:generate` — generate Prisma client
 4. `npm run db:migrate` — apply schema migrations

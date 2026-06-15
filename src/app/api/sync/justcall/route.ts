@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { syncJustCallSample, syncJustCallFull } from '@/lib/integrations/justcall/sync'
 import { prisma } from '@/lib/db/client'
 import { log } from '@/lib/logger'
+import { isAuthedOrAgent, unauthorizedResponse } from '@/lib/auth/require-session'
 
 // Ensure sync_sources table has the three canonical sources seeded.
 async function ensureSyncSourcesSeeded(): Promise<void> {
@@ -19,30 +20,9 @@ async function ensureSyncSourcesSeeded(): Promise<void> {
   }
 }
 
-function isAuthenticated(req: NextRequest): boolean {
-  // Cookie auth (browser requests)
-  const cookieHeader = req.headers.get('cookie') ?? ''
-  if (cookieHeader.includes('auth=')) return true
-
-  // Cron token auth (server-side requests)
-  const cronSecret = process.env.CRON_SECRET
-  if (cronSecret) {
-    const auth = req.headers.get('authorization')
-    if (auth === `Bearer ${cronSecret}`) return true
-  }
-
-  // Hermes agent token (server-side requests from the VPS scheduler)
-  const hermesToken = process.env.HERMES_TOKEN
-  if (hermesToken && req.headers.get('authorization') === `Bearer ${hermesToken}`) return true
-
-  return false
-}
-
 // GET — returns current JustCall sync status
 export async function GET(req: NextRequest) {
-  if (!isAuthenticated(req)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  if (!(await isAuthedOrAgent(req))) return unauthorizedResponse()
 
   await ensureSyncSourcesSeeded()
 
@@ -59,9 +39,7 @@ export async function GET(req: NextRequest) {
 // POST — trigger a JustCall sync
 // Body: { mode: 'sample' } — 'full' mode is blocked until Mo approves the sample
 export async function POST(req: NextRequest) {
-  if (!isAuthenticated(req)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  if (!(await isAuthedOrAgent(req))) return unauthorizedResponse()
 
   await ensureSyncSourcesSeeded()
 

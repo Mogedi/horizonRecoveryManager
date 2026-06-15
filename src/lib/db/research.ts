@@ -254,7 +254,7 @@ export async function getCostTrend(days = 60) {
 export interface RunCostByModel { model: string; usd: number; inTokens: number; outTokens: number }
 export interface RunTelemetry {
   key: string; sessionId: string | null; requestId: number | null; dossierId: number | null
-  name: string | null; goal: string | null
+  name: string | null; goal: string | null; caseType: string | null
   createdAt: Date; runSeconds: number; inTokens: number; outTokens: number; firecrawlCalls: number; usd: number
   byModel: RunCostByModel[]
 }
@@ -268,7 +268,7 @@ export async function getResearchRunTelemetry(limit = 60): Promise<RunTelemetry[
     const key = r.requestId != null ? `req:${r.requestId}` : (r.sessionId || `id:${r.id}`)
     let g = groups.get(key)
     if (!g) {
-      g = { key, sessionId: r.sessionId, requestId: r.requestId, dossierId: null, name: null, goal: null, createdAt: r.createdAt,
+      g = { key, sessionId: r.sessionId, requestId: r.requestId, dossierId: null, name: null, goal: null, caseType: null, createdAt: r.createdAt,
         runSeconds: 0, inTokens: 0, outTokens: 0, firecrawlCalls: 0, usd: 0, byModel: [], _models: new Map() }
       groups.set(key, g)
     }
@@ -297,6 +297,7 @@ export async function getResearchRunTelemetry(limit = 60): Promise<RunTelemetry[
       dossierId: req?.dossierId ?? null,
       name: (req?.query as { name?: string } | null)?.name ?? null,
       goal: req?.goal ?? null,
+      caseType: (req?.query as { caseType?: string } | null)?.caseType ?? null,
       usd: +g.usd.toFixed(4),
       byModel: [..._models.values()].map(m => ({ ...m, usd: +m.usd.toFixed(4) })).sort((a, b) => b.usd - a.usd),
     }

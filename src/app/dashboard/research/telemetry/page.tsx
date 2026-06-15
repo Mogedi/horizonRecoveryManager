@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { getResearchRunTelemetry, getCostTrend, getSourceHealth } from '@/lib/db/research'
 import { getRealSpend } from '@/lib/integrations/anthropic-admin/client'
+import { backtestCalibration, estimateRunCost, type RunCost } from '@/lib/research/cost-estimate'
 
 // Cost + spend telemetry for the research agent. One row per run, LLM cost split by model so the
 // Haiku-vs-Sonnet routing is visible. Server component — reads the DB directly (auth via middleware).
@@ -27,6 +28,15 @@ export default async function ResearchTelemetryPage() {
       : l.includes('sonnet') ? 'bg-indigo-100 text-indigo-700'
       : 'bg-gray-100 text-gray-600'
   }
+
+  // Cost estimator: backtested calibration (predicted vs actual, no leakage) + a-priori estimate per goal.
+  const history: RunCost[] = runs.filter(r => r.usd > 0).map(r => ({ id: r.key, goal: r.goal, caseType: r.caseType, usd: r.usd, at: r.createdAt.getTime() }))
+  const calib = backtestCalibration(history)
+  const predByRun = new Map(calib.points.map(p => [p.id, p]))
+  const goalEstimates = ([...new Set(history.map(h => h.goal).filter(Boolean))] as string[])
+    .map(g => ({ goal: g, est: estimateRunCost(g, null, history) }))
+    .filter(x => x.est.n >= 2)
+    .sort((a, b) => b.est.predicted - a.est.predicted)
 
   return (
     <div className="h-screen overflow-y-auto px-8 py-6">
@@ -91,6 +101,25 @@ export default async function ResearchTelemetryPage() {
         </div>
       )}
 
+      {/* Cost estimator */}
+      <h2 className="text-sm font-semibold text-gray-700 mb-2">Cost estimate vs actual</h2>
+      <div className="mb-3 max-w-3xl text-xs text-gray-600">
+        Estimator accuracy (backtest, no leakage):{' '}
+        {calib.n
+          ? <span><b>{calib.mape}%</b> avg error · bias {calib.bias > 0 ? '+' : ''}{calib.bias}% · n={calib.n}</span>
+          : <span className="text-gray-400">not enough history yet (need ≥2 prior runs of a goal)</span>}
+        <span className="text-gray-400"> — actuals are the source of truth; the estimate carries its own track record.</span>
+      </div>
+      {goalEstimates.length > 0 && (
+        <div className="mb-5 flex flex-wrap gap-2">
+          {goalEstimates.map(({ goal, est }) => (
+            <span key={goal} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-blue-50 text-blue-800 text-xs border border-blue-100">
+              <b>{goal}</b> next run ≈ {money(est.predicted)} <span className="text-blue-400">({money(est.low)}–{money(est.high)}, n={est.n})</span>
+            </span>
+          ))}
+        </div>
+      )}
+
       {/* Per-run table */}
       <h2 className="text-sm font-semibold text-gray-700 mb-2">Per-run cost <span className="font-normal text-gray-400">(self-reported)</span></h2>
       <div className="overflow-x-auto border border-gray-200 rounded-lg mb-8">
@@ -104,14 +133,19 @@ export default async function ResearchTelemetryPage() {
               <th className="text-right font-medium px-3 py-2">Tokens (in/out)</th>
               <th className="text-left font-medium px-3 py-2">Cost by model</th>
               <th className="text-right font-medium px-3 py-2">FC</th>
-              <th className="text-right font-medium px-3 py-2">Total</th>
+              <th className="text-right font-medium px-3 py-2">Predicted</th>
+              <th className="text-right font-medium px-3 py-2">Actual</th>
+              <th className="text-right font-medium px-3 py-2">Δ</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {runs.length === 0 && (
-              <tr><td colSpan={8} className="px-3 py-8 text-center text-gray-400">No cost rows yet. Run a research search and it will appear here.</td></tr>
+              <tr><td colSpan={10} className="px-3 py-8 text-center text-gray-400">No cost rows yet. Run a research search and it will appear here.</td></tr>
             )}
-            {runs.map(r => (
+            {runs.map(r => {
+              const p = predByRun.get(r.key)
+              const dColor = !p ? 'text-gray-300' : Math.abs(p.errorPct) < 25 ? 'text-emerald-600' : Math.abs(p.errorPct) < 50 ? 'text-amber-600' : 'text-red-600'
+              return (
               <tr key={r.key} className="hover:bg-gray-50">
                 <td className="px-3 py-2 text-gray-500 whitespace-nowrap">{fmtDate(r.createdAt)}</td>
                 <td className="px-3 py-2 text-gray-800">{r.name ?? <span className="text-gray-400">—</span>}</td>
@@ -128,9 +162,11 @@ export default async function ResearchTelemetryPage() {
                   </div>
                 </td>
                 <td className="px-3 py-2 text-right text-gray-400">{r.firecrawlCalls || '—'}</td>
+                <td className="px-3 py-2 text-right text-gray-500 whitespace-nowrap">{p ? money(p.predicted) : <span className="text-gray-300">—</span>}</td>
                 <td className="px-3 py-2 text-right font-medium text-gray-800 whitespace-nowrap">{money(r.usd)}</td>
+                <td className={`px-3 py-2 text-right whitespace-nowrap text-[11px] ${dColor}`}>{p ? `${p.errorPct > 0 ? '+' : ''}${p.errorPct}%` : '—'}</td>
               </tr>
-            ))}
+            )})}
           </tbody>
         </table>
       </div>

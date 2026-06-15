@@ -75,11 +75,11 @@ Business object definitions. Hermes reasons in these terms. Database table names
 ## CurrentState
 *The operational state of a case right now — health, blockers, next action.*
 
-**This is a view model — not a DB table.** Built on demand by `buildCurrentState()` in `src/lib/case/state.ts`, currently sourced from `AiSummary`.
+**This is a view model — not a DB table.** Built on demand by `buildCurrentState()` in `src/lib/case/state.ts`, sourced from the latest `case_analyses` triage row (falling back to `AiSummary` when no analysis exists).
 
 **Key fields:** `status` (one-sentence summary), `health` (active/waiting/blocked/on_track/unknown), `blocker`, `nextAction`, `lastMeaningfulActivity`, `openTaskCount`, `source` (ai/human)
 
-**Note:** Today this reads from `AiSummary`. Future: human edits and CaseFacts will also contribute.
+**Note:** Today this reads from the latest `case_analyses` triage analysis, with `AiSummary` as the fallback. Future: human edits and CaseFacts will also contribute.
 
 ---
 

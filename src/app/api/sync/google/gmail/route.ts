@@ -3,19 +3,10 @@ import { syncGmailSample, syncGmailFull, syncGmailBackfill } from '@/lib/integra
 import { isGoogleConfigured } from '@/lib/integrations/google/auth'
 import { prisma } from '@/lib/db/client'
 import { log } from '@/lib/logger'
-
-function isAuthenticated(req: NextRequest): boolean {
-  const cookieHeader = req.headers.get('cookie') ?? ''
-  if (cookieHeader.includes('auth=')) return true
-  const cronSecret = process.env.CRON_SECRET
-  if (cronSecret && req.headers.get('authorization') === `Bearer ${cronSecret}`) return true
-  const hermesToken = process.env.HERMES_TOKEN
-  if (hermesToken && req.headers.get('authorization') === `Bearer ${hermesToken}`) return true
-  return false
-}
+import { isAuthedOrAgent, unauthorizedResponse } from '@/lib/auth/require-session'
 
 export async function GET(req: NextRequest) {
-  if (!isAuthenticated(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!(await isAuthedOrAgent(req))) return unauthorizedResponse()
 
   if (!isGoogleConfigured()) {
     return NextResponse.json({ configured: false, message: 'Google credentials not configured' })
@@ -36,7 +27,7 @@ export async function GET(req: NextRequest) {
 // Body: { mode: 'sample' | 'full' }
 // SECURITY: 'full' mode is blocked in the UI until Mo approves the sample.
 export async function POST(req: NextRequest) {
-  if (!isAuthenticated(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!(await isAuthedOrAgent(req))) return unauthorizedResponse()
 
   if (!isGoogleConfigured()) {
     return NextResponse.json({ error: 'Google credentials not configured — see scripts/google-auth.mjs' }, { status: 400 })

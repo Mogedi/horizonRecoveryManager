@@ -28,7 +28,7 @@ describe('getResearchRunTelemetry', () => {
       { id: 2, sessionId: 's2', requestId: 7, model: 'claude-haiku-4-5', inTokens: 50, outTokens: 200, firecrawlCalls: 2, usd: 0.05, runSeconds: 480, createdAt: d('2026-06-13T05:59:00Z') },
       { id: 1, sessionId: 's1', requestId: 7, model: 'claude-sonnet-4-6', inTokens: 5, outTokens: 40, firecrawlCalls: 0, usd: 0.03, runSeconds: 100, createdAt: d('2026-06-13T05:58:00Z') },
     ])
-    mockReqFindMany.mockResolvedValue([{ id: 7, query: { name: 'Jane Doe' }, goal: 'find_heirs' }])
+    mockReqFindMany.mockResolvedValue([{ id: 7, query: { name: 'Jane Doe' }, goal: 'find_heirs', startedAt: d('2026-06-13T05:50:00Z'), dossierId: 11 }])
 
     const runs = await getResearchRunTelemetry(10)
 
@@ -36,6 +36,7 @@ describe('getResearchRunTelemetry', () => {
     const r = runs[0]
     expect(r.name).toBe('Jane Doe')
     expect(r.goal).toBe('find_heirs')
+    expect(r.dossierId).toBe(11)
     expect(r.usd).toBeCloseTo(0.28, 4)      // 0.20 + 0.05 + 0.03 — would be 0.20 under the old findFirst bug
     expect(r.inTokens).toBe(65)
     expect(r.firecrawlCalls).toBe(3)
@@ -57,5 +58,21 @@ describe('getResearchRunTelemetry', () => {
     expect(runs).toHaveLength(1)
     expect(runs[0].name).toBeNull()
     expect(runs[0].usd).toBeCloseTo(0.10, 4)
+  })
+
+  // Regression guard: cost-row createdAt is the SYNC time (batched), so ordering must use request.startedAt.
+  it('orders by the request run time (startedAt), not the batched cost-row sync time', async () => {
+    mockCostFindMany.mockResolvedValue([
+      { id: 20, sessionId: 'a', requestId: 1, model: 'claude-sonnet-4-6', inTokens: 1, outTokens: 1, firecrawlCalls: 0, usd: 0.10, runSeconds: 10, createdAt: d('2026-06-15T03:19:00Z') },
+      { id: 21, sessionId: 'b', requestId: 2, model: 'claude-sonnet-4-6', inTokens: 1, outTokens: 1, firecrawlCalls: 0, usd: 0.20, runSeconds: 10, createdAt: d('2026-06-15T03:19:00Z') },
+    ]) // same sync time on both
+    mockReqFindMany.mockResolvedValue([
+      { id: 1, query: { name: 'Earlier' }, goal: 'find_heirs', startedAt: d('2026-06-14T01:00:00Z'), dossierId: null },
+      { id: 2, query: { name: 'Later' }, goal: 'find_heirs', startedAt: d('2026-06-15T01:00:00Z'), dossierId: null },
+    ])
+
+    const runs = await getResearchRunTelemetry(10)
+
+    expect(runs.map(r => r.name)).toEqual(['Later', 'Earlier']) // newest run first, by startedAt
   })
 })

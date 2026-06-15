@@ -89,7 +89,9 @@ async function costSync() {
     } catch { /* ignore — requestId stays null */ }
 
     execSync(`docker exec ${container} ${HERMES} sessions export /opt/data/_costsync.jsonl`, { stdio: 'ignore' })
-    const raw = execSync(`docker exec ${container} cat /opt/data/_costsync.jsonl`).toString()
+    // maxBuffer: the session export grows past execSync's 1MB default → ENOBUFS, silently stopping all
+    // cost sync. 256MB headroom so it keeps working as sessions accumulate.
+    const raw = execSync(`docker exec ${container} cat /opt/data/_costsync.jsonl`, { maxBuffer: 256 * 1024 * 1024 }).toString()
     const cutoff = Date.now() - 6 * 3600 * 1000
     let synced = 0
     for (const line of raw.split('\n')) {

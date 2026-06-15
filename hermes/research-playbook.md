@@ -80,6 +80,23 @@ d. **Contacts — always get phones, from MULTIPLE sources.** We are always goin
      source separately (same number, different `sourceId`) — that's how corroboration is counted.
    - Set `contactMethodStatus: 'unverified'` on phones/emails (a later validation step flips it).
 
+d2. **Validate phones — Trestle Real Contact (cheap; do it for every keeper phone).** For each LIVING
+   person's phone numbers, confirm the line is live AND belongs to that person:
+   - `GET https://api.trestleiq.com/2.0/real_contact?phone=<E164>&name=<that person's full name>` plus,
+     when known, `&address.street_line_1=&address.city=&address.state_code=&address.postal_code=`.
+     Header: `x-api-key: <TRESTLE_API_KEY from /opt/data/.env>`. (Real Contact returns liveness AND
+     name-match in one ~$0.03 call — no separate validation call needed.)
+   - Emit ONE `phone_validation` evidence item per number with the RAW result (capture facts, don't judge):
+     `{ kind: 'phone_validation', value: { number, isValid, activityScore (=activity_score),
+     lineType (=line_type), carrier, nameMatch (=name_match), contactGrade (=contact_grade),
+     provider: 'trestle', checkedAt: <ISO> }, provenance: { sourceId: 'trestle', sourceType: 'other',
+     url, retrievedAt, sourceText: <the JSON response> } }`. Match `name` to the person the phone is
+     attributed to (claimant OR a specific heir) — Horizon compares it and **derives** good/uncertain/bad.
+   - **Budget ~$0.03/number:** validate keeper phones; skip obvious junk. If `TRESTLE_API_KEY` is missing
+     or the call errors, **skip silently** (phones stay `unverified`) — never block the run.
+   - If a person's best phone is disconnected/wrong-owner and budget remains, ONE extra people-search for
+     an alternate number is worth it; else record what you found and move on.
+
 e. **Property deep-dive — `property_records` goal ONLY.** Skip steps b–d (no obituary/heirs/phones).
    Work the subject parcel from `query.address`/`query.parcelId`, county registry first:
    1. **Parcel + owner-of-record + value.** `get_county_sources(state, county)` → GIS/ArcGIS REST or

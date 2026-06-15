@@ -21,14 +21,17 @@ Trestle's own recommended liveness rule: `is_valid === true && line_type !== "No
 
 Sources: [Phone Validation API](https://trestleiq.com/phone-validation-api/) · [Activity Score](https://trestleiq.com/knowledge-base/how-do-you-read-trestles-phone-activity-score/) · [Real Contact](https://blog.clickpointsoftware.com/trestle-real-contact) · [Reverse Phone](https://trestleiq.com/reverse-phone-api/) · [Pricing](https://trestleiq.com/pricing/) · [API docs (Redocly)](https://trestle-api.redoc.ly/) · [Postman collection](https://www.postman.com/trestleiq/trestle-identity-data-apis/overview)
 
-## 3. The cost-tiered strategy (the key idea)
-Two tiers, so we spend pennies and only go deep on numbers worth keeping:
-1. **Validate ALL captured phones** with Phone Validation ($0.015). Cheap enough to run on every number.
-   → gives liveness + an `activity_score` we can *rank* by.
-2. **Associate-check only the keepers** with Real Contact ($0.03) — the top 1–2 live numbers we'd actually
-   call. Confirms the phone matches the person. Don't pay $0.03 on numbers that already failed liveness.
-
-A typical case has ~2–5 phones → **~$0.03–0.15/case** all-in. Negligible, but tracked (see §7).
+## 3. Strategy — Real Contact is a superset (VERIFIED via live test 2026-06-15)
+Live test finding: **Real Contact ($0.03) already returns the liveness fields** (`is_valid`,
+`activity_score`, `line_type`) ALONGSIDE the association (`name_match`) and `contact_grade` — in ONE call.
+Since research always has a name to match against, we don't need a separate Phone Validation call:
+- **Primary: one Real Contact call per (phone, attributed person)** → liveness + association + grade together.
+  ~$0.03/phone → **$0.06–0.15/case** (2–5 phones). Negligible, but tracked (see §7).
+- **Phone Validation ($0.015, liveness-only) is optional** — only useful for numbers with no name to match,
+  and it requires enabling that product on the account (the trial key returns **403** for it until access is
+  requested in the Trestle portal). For our flow, skip it.
+- Match `name_match` against the person the phone is *attributed* to (claimant OR a specific heir — not always
+  the claimant). Reuse `nameKey()` for our own cross-check on top of Trestle's boolean.
 
 ## 4. Phone quality model (signals → verdict — DERIVED, not captured)
 Horizon derives a verdict band per phone from the stored validation facts:
@@ -108,10 +111,22 @@ not in the pure derivation step.
 `TRESTLE_API_KEY` → VPS `/opt/data/.env` (Hermes runtime) + local `.env.local`. **Never** in repo, docs,
 logs, or git. The key was visible in a setup screenshot shared in chat — rotate it once integrated.
 
-## 13. Open questions / to verify before building
-- Exact request/response **schema + auth header** format (verify against the Redocly docs / Postman).
-- Is there a **batch** endpoint (validate N numbers in one call) to cut overhead?
-- **Rate limits** on the trial vs paid plan (for the `bottleneck` limiter config).
-- Does **Real Contact** return a clean enough match grade, or do we need **Reverse Phone** owner-name +
-  `nameKey` compare for association? (Pick after one test call on a known-good and known-bad number.)
-- Trial = 13 days left; confirm which plan/limits we land on before relying on it in production.
+## 13. Verified API reference (June 2026)
+Confirmed from Trestle docs; test harness: `scripts/trestle-test.mjs` (reads `TRESTLE_API_KEY`).
+
+- **Phone Validation** (liveness, ~$0.015): `GET https://api.trestleiq.com/3.2/phone?phone=<E164>`
+  - Header: `x-api-key: <key>`. `phone` accepts E.164 or local (default +1).
+  - Returns: `is_valid`, `activity_score` (0–100; <30 ≈ disconnected, 70+ high confidence), `line_type`
+    (`Mobile`/`Landline`/`NonFixedVOIP`/…), `carrier`, `is_prepaid`, `country_calling_code`.
+  - Liveness rule: `is_valid && activity_score > 30 && line_type != "NonFixedVOIP"`.
+- **Real Contact** (association, ~$0.03): `GET https://api.trestleiq.com/2.0/real_contact?phone=&name=&address.street_line_1=&address.city=&address.state_code=&address.postal_code=`
+  - Header: `x-api-key`. Required: `phone` + `name` (or `first_name`/`last_name`). Optional: `email`,
+    `address.*`, `ip_address`, `add_ons` (e.g. `litigator_checks` — TCPA risk, useful for outreach).
+  - Returns `phone.{contact_grade A–F, is_valid, activity_score, line_type, name_match}` — **`name_match`
+    is the association signal** ("is who they say they are"); `contact_grade` is overall contactability.
+
+### Still to confirm (cheap, once the key is live)
+- **Batch** endpoint to validate N numbers in one call (cut per-call overhead)? — check docs/Postman.
+- **Rate limits** on trial vs paid (for the `bottleneck` limiter config).
+- Real-world `name_match`/`contact_grade` behavior on a known-good vs known-bad pair (run the harness).
+- Trial window — confirm plan/limits before production reliance.

@@ -39,6 +39,7 @@ const evidenceItem = z.discriminatedUnion('kind', [
   item('lien', z.object({ holder: z.string() }).loose()),
   item('tax_event', z.object({ kind: z.enum(['tax_sale', 'tax_deed', 'redemption', 'delinquency']) }).loose()),
   item('transaction', z.object({}).loose()), // all fields optional (date/type/grantor/grantee/book/page)
+  item('phone_validation', z.object({ number: z.string() }).loose()), // Trestle result; rest optional
   item('note', z.object({ text: z.string() }).loose()),
 ])
 

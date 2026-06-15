@@ -8,7 +8,7 @@ import type {
   ContactMethodStatus, ActionableContact, FamilyStructure, FamilyMember, Conflict, Completeness,
   TimelineStep, SourceIntelEntry, ChecklistItem, PropertyRecord, PropertyLien, PropertyTaxEvent,
   PropertyTransaction, PropertyLinkage, PropertyCoverage, CoverageItem, CoverageStatus, LinkageType,
-  RelationshipBasis, Band, EvidenceItem,
+  RelationshipBasis, Band, EvidenceItem, PhoneValidationValue, PhoneValidationDerived,
 } from './types'
 import { deriveBand, buildChecklist } from './confidence'
 
@@ -97,6 +97,51 @@ function rankContacts(map: Map<string, ContactAccum>): RankedContact[] {
     rankOrder[b.rank] - rankOrder[a.rank] ||
     recencyKey(b.lastReportedAt) - recencyKey(a.lastReportedAt) ||
     b.sources.length - a.sources.length)
+}
+
+// ── Phone validation (Trestle facts → derived verdict) ──────────────────────────
+const digits = (s: string) => s.replace(/\D/g, '')
+
+// Collect phone_validation evidence into a per-number map (latest checkedAt wins). Number-keyed, not
+// candidate-keyed: a validation applies to the number wherever it appears.
+function buildPhoneValidationMap(pkg: EvidencePackage): Map<string, PhoneValidationValue> {
+  const map = new Map<string, PhoneValidationValue>()
+  for (const it of pkg.evidence) {
+    if (it.kind !== 'phone_validation') continue
+    const key = digits(it.value.number)
+    if (!key) continue
+    const prev = map.get(key)
+    if (!prev || recencyKey(it.value.checkedAt) >= recencyKey(prev.checkedAt)) map.set(key, it.value)
+  }
+  return map
+}
+
+// DERIVE the verdict from raw Trestle facts (interpretation lives here, not in the evidence).
+// good = valid, active, not a virtual VOIP number; bad = invalid or disconnected; else uncertain.
+export function derivePhoneVerdict(v: PhoneValidationValue): { derived: PhoneValidationDerived; status: ContactMethodStatus } {
+  const lineType = v.lineType
+  const score = v.activityScore
+  let verdict: PhoneValidationDerived['verdict']
+  let status: ContactMethodStatus
+  if (v.isValid === false || score === 0) { verdict = 'bad'; status = 'invalid' }
+  else if (v.isValid === true && (score ?? 0) > 30 && lineType !== 'NonFixedVOIP') { verdict = 'good'; status = 'valid' }
+  else { verdict = 'uncertain'; status = 'stale' }
+  return {
+    derived: { verdict, activityScore: score, lineType, nameMatch: v.nameMatch, contactGrade: v.contactGrade, checkedAt: v.checkedAt },
+    status,
+  }
+}
+
+// Attach derived validation to ranked phones (by number). A validation verdict overrides the
+// contactMethodStatus carried on the phone evidence.
+function attachValidation(phones: RankedContact[], vmap: Map<string, PhoneValidationValue>): RankedContact[] {
+  if (!vmap.size) return phones
+  return phones.map((p) => {
+    const v = vmap.get(digits(p.value))
+    if (!v) return p
+    const { derived, status } = derivePhoneVerdict(v)
+    return { ...p, validation: derived, contactMethodStatus: status }
+  })
 }
 
 interface RichAggregate {
@@ -213,11 +258,11 @@ function scoreCandidate(q: PersonQuery, agg: RichAggregate): { justification: Ju
 }
 
 // ── B1 Actionable Contacts — living/unknown people with at least one contact method, all ranked. ──
-function buildActionableContacts(aggs: RichAggregate[]): ActionableContact[] {
+function buildActionableContacts(aggs: RichAggregate[], vmap: Map<string, PhoneValidationValue>): ActionableContact[] {
   return aggs
     .filter(a => a.deceasedStatus !== 'deceased' && (a.phoneMap.size || a.addrMap.size || a.emailMap.size))
     .map((a): ActionableContact => {
-      const phones = rankContacts(a.phoneMap)
+      const phones = attachValidation(rankContacts(a.phoneMap), vmap)
       const addresses = rankContacts(a.addrMap)
       const emails = rankContacts(a.emailMap)
       const corroborated = a.sources.length >= 2 ||
@@ -495,7 +540,8 @@ export function deriveDossier(pkg: EvidencePackage): Dossier {
     .map((c, i) => ({ person: c.name ?? c.localId, phones: c.phones, emails: c.emails, rank: i + 1 }))
 
   // v3 derived structures.
-  const actionableContacts = buildActionableContacts(aggs)
+  const phoneValidations = buildPhoneValidationMap(pkg)
+  const actionableContacts = buildActionableContacts(aggs, phoneValidations)
   const familyStructure = buildFamilyStructure(pkg)
   const conflicts = buildConflicts(pkg)
   const completeness = buildCompleteness(pkg, actionableContacts)

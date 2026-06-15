@@ -45,6 +45,29 @@ export type RelationCategory = 'parent' | 'sibling' | 'spouse' | 'child' | 'gran
 // Designed for the future phone-validation API: it flips unverified → valid/stale/invalid. Default 'unverified'.
 export type ContactMethodStatus = 'unverified' | 'valid' | 'stale' | 'invalid'
 
+// Phone-validation FACTS captured by the agent (e.g. Trestle Real Contact). Immutable; verdict is DERIVED.
+export interface PhoneValidationValue {
+  number: string
+  isValid?: boolean
+  activityScore?: number // 0–100; <30 ≈ disconnected (Trestle activity_score)
+  lineType?: string // Mobile | Landline | NonFixedVOIP | …
+  carrier?: string
+  nameMatch?: boolean // does the number belong to the person we asked about (Real Contact name_match)
+  contactGrade?: string // A–F overall contactability (Real Contact)
+  checkedAt?: string
+  provider?: string // 'trestle' | …
+}
+export type PhoneVerdict = 'good' | 'uncertain' | 'bad'
+// DERIVED phone verdict attached to a ranked phone (interpretation — re-derivable from the evidence).
+export interface PhoneValidationDerived {
+  verdict: PhoneVerdict
+  activityScore?: number
+  lineType?: string
+  nameMatch?: boolean
+  contactGrade?: string
+  checkedAt?: string
+}
+
 // ── Evidence (Hermes → Horizon) ────────────────────────────────────────────────
 // Every claim carries provenance. Evidence is the permanent asset; business objects are derived.
 export interface Provenance {
@@ -70,6 +93,7 @@ export type EvidenceItem =
   | { kind: 'lien'; value: LienValue; provenance: Provenance }
   | { kind: 'tax_event'; value: TaxEventValue; provenance: Provenance }
   | { kind: 'transaction'; value: TransactionValue; provenance: Provenance }
+  | { kind: 'phone_validation'; value: PhoneValidationValue; provenance: Provenance }
   | { kind: 'note'; value: { text: string }; provenance: Provenance }
 
 // Property-record facts (captured AS STATED; owner-match / surplus relevance are DERIVED, never here).
@@ -210,6 +234,7 @@ export interface RankedContact {
   strength: EvidenceStrength // strongest source backing it
   lastReportedAt?: string // recency signal, when the source provides it
   contactMethodStatus?: ContactMethodStatus
+  validation?: PhoneValidationDerived // phones only: derived from phone_validation evidence (Trestle)
   reason: string // transparent, human-readable ("2 sources, last reported 2024")
 }
 

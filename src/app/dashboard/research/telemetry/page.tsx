@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { getResearchRunTelemetry, getCostTrend, getSourceHealth } from '@/lib/db/research'
+import { getRealSpend } from '@/lib/integrations/anthropic-admin/client'
 
 // Cost + spend telemetry for the research agent. One row per run, LLM cost split by model so the
 // Haiku-vs-Sonnet routing is visible. Server component — reads the DB directly (auth via middleware).
@@ -12,11 +13,20 @@ const isCheap = (m: string) => m.toLowerCase().includes('haiku')
 const fmtDate = (d: Date) => new Date(d).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 
 export default async function ResearchTelemetryPage() {
-  const [runs, trend, health] = await Promise.all([
+  const [runs, trend, health, real, trend7] = await Promise.all([
     getResearchRunTelemetry(60),
     getCostTrend(60),
     getSourceHealth(30),
+    getRealSpend(7),
+    getCostTrend(7),
   ])
+  const modelChip = (m: string) => {
+    const l = m.toLowerCase()
+    return l.includes('haiku') ? 'bg-emerald-100 text-emerald-700'
+      : l.includes('opus') ? 'bg-purple-100 text-purple-700'
+      : l.includes('sonnet') ? 'bg-indigo-100 text-indigo-700'
+      : 'bg-gray-100 text-gray-600'
+  }
 
   return (
     <div className="h-screen overflow-y-auto px-8 py-6">
@@ -40,8 +50,49 @@ export default async function ResearchTelemetryPage() {
         calls below are a count, not a charge.
       </div>
 
+      {/* Real billed spend — Anthropic Admin API (the truth source) */}
+      <div className="flex items-baseline justify-between max-w-3xl mb-2">
+        <h2 className="text-sm font-semibold text-gray-700">Real Anthropic spend — last 7 days (billed by model)</h2>
+      </div>
+      {!real.available ? (
+        <div className="mb-8 text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-4 py-3 max-w-3xl">
+          Real-spend unavailable: {real.reason}. Set <code className="bg-gray-100 px-1 rounded">ANTHROPIC_ADMIN_KEY</code> (Console → Settings → Admin keys) to show actual billed cost by model.
+        </div>
+      ) : (
+        <div className="mb-8 max-w-3xl">
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-2">
+            <span className="text-2xl font-semibold text-gray-800">{money(real.totalUsd)}</span>
+            <span className="text-xs text-gray-500">
+              billed (all workspaces) · self-report (research_costs, 7d): {money(trend7.totalUsd)}
+              {trend7.totalUsd > 0 && <span className="ml-1 text-amber-700 font-medium">→ real is {(real.totalUsd / trend7.totalUsd).toFixed(1)}× the self-report</span>}
+            </span>
+          </div>
+          <div className="border border-gray-200 rounded-lg overflow-hidden">
+            {real.byWorkspace.map(w => (
+              <div key={w.workspaceId} className={`px-4 py-2 border-b border-gray-100 last:border-0 ${w.isHermes ? 'bg-emerald-50' : ''}`}>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-700">
+                    {w.label}
+                    {w.isHermes && <span className="ml-2 text-[10px] text-emerald-700 font-semibold tracking-wide">HERMES RESEARCH</span>}
+                  </span>
+                  <span className="font-medium text-gray-800">{money(w.usd)}</span>
+                </div>
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {w.byModel.map(m => (
+                    <span key={m.model} className={`inline-flex items-center px-1.5 py-0.5 rounded text-[11px] ${modelChip(m.model)}`} title={m.model}>
+                      {modelLabel(m.model)} {money(m.usd)}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="text-[11px] text-gray-400 mt-1">Source: Anthropic Admin Cost API — actual billed $ by model. Hermes research now isolates to its own workspace; the self-report below only sees research CLI runs.</p>
+        </div>
+      )}
+
       {/* Per-run table */}
-      <h2 className="text-sm font-semibold text-gray-700 mb-2">Per-run cost</h2>
+      <h2 className="text-sm font-semibold text-gray-700 mb-2">Per-run cost <span className="font-normal text-gray-400">(self-reported)</span></h2>
       <div className="overflow-x-auto border border-gray-200 rounded-lg mb-8">
         <table className="w-full text-sm">
           <thead className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wide">
